@@ -8,101 +8,101 @@
  * Aliases are registered only for backward compatibility (e.g., 'qwen3_coder' → 'qwen3_xml').
  */
 
-import { createDeepseekV3Parser, createDeepseekV31Parser } from './deepseek.js';
-import { createGenericParser } from './generic.js';
-import { createGlm45Parser, createGlm47Parser, createStep3Parser, createStep3p5Parser } from './glm-step.js';
-import { createHermesParser } from './hermes.js';
+import { createDeepseekV3Parser, createDeepseekV31Parser } from "./deepseek.js";
+import { createGenericParser } from "./generic.js";
+import { createGlm45Parser, createGlm47Parser, createStep3Parser, createStep3p5Parser } from "./glm-step.js";
+import { createHermesParser } from "./hermes.js";
 import {
-  createFunctionGemmaParser,
-  createGigachat3Parser,
-  createGranite4Parser,
-  createGranite20bFcParser,
-  createGraniteParser,
-  createHunyuanA13bParser,
-  createInternlmParser,
-  createJambaParser,
-  createKimiK2Parser,
-  createLongcatParser,
-  createMinimaxParser,
-  createOlmo3Parser,
-  createOpenaiPassthroughParser,
-} from './json-in-tags.js';
-import { createLlama3JsonParser } from './llama3-json.js';
-import { createMistralParser } from './mistral.js';
-import { createLlama4PythonicParser, createPythonicParser } from './pythonic.js';
-import { createQwen3XmlParser } from './qwen3-xml.js';
-import { toolCallParserRegistry } from './registry.js';
-import { createXlamParser } from './xlam.js';
+	createFunctionGemmaParser,
+	createGigachat3Parser,
+	createGranite4Parser,
+	createGranite20bFcParser,
+	createGraniteParser,
+	createHunyuanA13bParser,
+	createInternlmParser,
+	createJambaParser,
+	createKimiK2Parser,
+	createLongcatParser,
+	createMinimaxParser,
+	createOlmo3Parser,
+	createOpenaiPassthroughParser,
+} from "./json-in-tags.js";
+import { createLlama3JsonParser } from "./llama3-json.js";
+import { createMistralParser } from "./mistral.js";
+import { createLlama4PythonicParser, createPythonicParser } from "./pythonic.js";
+import { createQwen3XmlParser } from "./qwen3-xml.js";
+import { toolCallParserRegistry } from "./registry.js";
+import { createXlamParser } from "./xlam.js";
 
 // ─── Registration ─────────────────────────────────────────
 
 let registered = false;
 
 export function ensureParsersRegistered(): void {
-  if (registered) return;
-  registered = true;
+	if (registered) return;
+	registered = true;
 
-  // XML/tag-based parsers (highest priority for local models)
-  toolCallParserRegistry.register('qwen3_xml', createQwen3XmlParser);
-  toolCallParserRegistry.register('qwen3_coder', createQwen3XmlParser); // backward compat alias
-  toolCallParserRegistry.register('hermes', createHermesParser);
-  toolCallParserRegistry.register('step3', createStep3Parser);
-  toolCallParserRegistry.register('step3p5', createStep3p5Parser);
-  toolCallParserRegistry.register('functiongemma', createFunctionGemmaParser);
-  toolCallParserRegistry.register('gemma_native', createGenericParser);
-  toolCallParserRegistry.register('olmo3', createOlmo3Parser);
-  toolCallParserRegistry.register('glm45', createGlm45Parser);
-  toolCallParserRegistry.register('glm47', createGlm47Parser);
-  toolCallParserRegistry.register('gigachat3', createGigachat3Parser);
+	// XML/tag-based parsers (highest priority for local models)
+	toolCallParserRegistry.register("qwen3_xml", createQwen3XmlParser);
+	toolCallParserRegistry.register("qwen3_coder", createQwen3XmlParser); // backward compat alias
+	toolCallParserRegistry.register("hermes", createHermesParser);
+	toolCallParserRegistry.register("step3", createStep3Parser);
+	toolCallParserRegistry.register("step3p5", createStep3p5Parser);
+	toolCallParserRegistry.register("functiongemma", createFunctionGemmaParser);
+	toolCallParserRegistry.register("gemma_native", createGenericParser);
+	toolCallParserRegistry.register("olmo3", createOlmo3Parser);
+	toolCallParserRegistry.register("glm45", createGlm45Parser);
+	toolCallParserRegistry.register("glm47", createGlm47Parser);
+	toolCallParserRegistry.register("gigachat3", createGigachat3Parser);
 
-  // JSON-based parsers
-  toolCallParserRegistry.register('llama3_json', createLlama3JsonParser);
-  toolCallParserRegistry.register('mistral', createMistralParser);
-  toolCallParserRegistry.register('xlam', createXlamParser);
-  toolCallParserRegistry.register('granite', createGraniteParser);
-  toolCallParserRegistry.register('granite4', createGranite4Parser);
-  toolCallParserRegistry.register('granite-20b-fc', createGranite20bFcParser);
-  toolCallParserRegistry.register('internlm', createInternlmParser);
-  toolCallParserRegistry.register('jamba', createJambaParser);
-  toolCallParserRegistry.register('minimax', createMinimaxParser);
-  toolCallParserRegistry.register('kimi_k2', createKimiK2Parser);
-  toolCallParserRegistry.register('hunyuan_a13b', createHunyuanA13bParser);
-  toolCallParserRegistry.register('longcat', createLongcatParser);
-  toolCallParserRegistry.register('openai', createOpenaiPassthroughParser);
+	// JSON-based parsers
+	toolCallParserRegistry.register("llama3_json", createLlama3JsonParser);
+	toolCallParserRegistry.register("mistral", createMistralParser);
+	toolCallParserRegistry.register("xlam", createXlamParser);
+	toolCallParserRegistry.register("granite", createGraniteParser);
+	toolCallParserRegistry.register("granite4", createGranite4Parser);
+	toolCallParserRegistry.register("granite-20b-fc", createGranite20bFcParser);
+	toolCallParserRegistry.register("internlm", createInternlmParser);
+	toolCallParserRegistry.register("jamba", createJambaParser);
+	toolCallParserRegistry.register("minimax", createMinimaxParser);
+	toolCallParserRegistry.register("kimi_k2", createKimiK2Parser);
+	toolCallParserRegistry.register("hunyuan_a13b", createHunyuanA13bParser);
+	toolCallParserRegistry.register("longcat", createLongcatParser);
+	toolCallParserRegistry.register("openai", createOpenaiPassthroughParser);
 
-  // Pythonic parsers
-  toolCallParserRegistry.register('pythonic', createPythonicParser);
-  toolCallParserRegistry.register('llama4_pythonic', createLlama4PythonicParser);
+	// Pythonic parsers
+	toolCallParserRegistry.register("pythonic", createPythonicParser);
+	toolCallParserRegistry.register("llama4_pythonic", createLlama4PythonicParser);
 
-  // DeepSeek parsers
-  toolCallParserRegistry.register('deepseek_v3', createDeepseekV3Parser);
-  toolCallParserRegistry.register('deepseek_v31', createDeepseekV31Parser);
+	// DeepSeek parsers
+	toolCallParserRegistry.register("deepseek_v3", createDeepseekV3Parser);
+	toolCallParserRegistry.register("deepseek_v31", createDeepseekV31Parser);
 
-  // Generic fallback
-  toolCallParserRegistry.register('generic', createGenericParser);
+	// Generic fallback
+	toolCallParserRegistry.register("generic", createGenericParser);
 }
 
 // ─── Re-exports ───────────────────────────────────────────
 
-export { getToolCallParserRegistry, toolCallParserRegistry } from './registry.js';
+export { getToolCallParserRegistry, toolCallParserRegistry } from "./registry.js";
 export type {
-  ParsedToolCall,
-  ToolCallParseResult,
-  ToolCallParser,
-  ToolCallParserFactory,
-  ToolCallParserRegistry,
-} from './types.js';
-export { detectParserId } from './types.js';
+	ParsedToolCall,
+	ToolCallParseResult,
+	ToolCallParser,
+	ToolCallParserFactory,
+	ToolCallParserRegistry,
+} from "./types.js";
+export { detectParserId } from "./types.js";
 
 export {
-  coerceValue,
-  extractDelimitedBlocks,
-  extractNonToolContent,
-  fastJsonParse,
-  generateCallId,
-  makeCall,
-  parsePythonicArgs,
-  resetCallIdCounter,
-  safeJsonParse,
-  sanitizeReasoningTags,
-} from './utils.js';
+	coerceValue,
+	extractDelimitedBlocks,
+	extractNonToolContent,
+	fastJsonParse,
+	generateCallId,
+	makeCall,
+	parsePythonicArgs,
+	resetCallIdCounter,
+	safeJsonParse,
+	sanitizeReasoningTags,
+} from "./utils.js";

@@ -13,9 +13,7 @@ describe("OAuth device-code polling", () => {
 		const pollTimes: number[] = [];
 		const poll = vi.fn(async () => {
 			pollTimes.push(Date.now());
-			return pollTimes.length === 1
-				? { status: "pending" as const }
-				: { status: "complete" as const, value: "token" };
+			return pollTimes.length === 1 ? { status: "pending" as const } : { status: "complete" as const, value: "token" };
 		});
 
 		const resultPromise = pollOAuthDeviceCodeFlow({
@@ -32,10 +30,7 @@ describe("OAuth device-code polling", () => {
 
 		await vi.advanceTimersByTimeAsync(1);
 		await expect(resultPromise).resolves.toBe("token");
-		expect(pollTimes).toEqual([
-			new Date("2026-03-09T00:00:00Z").getTime(),
-			new Date("2026-03-09T00:00:02Z").getTime(),
-		]);
+		expect(pollTimes).toEqual([new Date("2026-03-09T00:00:00Z").getTime(), new Date("2026-03-09T00:00:02Z").getTime()]);
 	});
 
 	it("cancels an in-flight wait", async () => {

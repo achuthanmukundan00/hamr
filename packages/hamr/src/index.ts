@@ -8,18 +8,17 @@
  */
 
 // Re-export pi's public API for consumers who want direct access
-export { Agent, AgentHarness, runAgentLoop, agentLoop } from '@hamr/agent';
-export { stream, streamSimple, getModel, getModels, getProviders } from '@hamr/ai';
+export { Agent, AgentHarness, agentLoop, runAgentLoop } from "@hamr/agent";
+export { getModel, getModels, getProviders, stream, streamSimple } from "@hamr/ai";
 
 // Hamr's innovations (shipping)
-export { Hamr } from './hamr.js';
-export { createLocalModelStream } from './providers/local-openai.js';
-export { HolographicMemory } from './memory/HolographicMemory.js';
-export { RecoveryManager } from './recovery/RecoveryManager.js';
-
+export { Hamr } from "./hamr.js";
+export { HolographicMemory } from "./memory/HolographicMemory.js";
+export { createLocalModelStream } from "./providers/local-openai.js";
+export { RecoveryManager } from "./recovery/RecoveryManager.js";
+export type { HamrTheme } from "./tui/theme/hamr-theme.js";
 // TUI / theming
-export { loadTheme, listAvailableThemes } from './tui/theme/hamr-theme.js';
-export type { HamrTheme } from './tui/theme/hamr-theme.js';
+export { listAvailableThemes, loadTheme } from "./tui/theme/hamr-theme.js";
 
 // Tools: context-ledger, generated-content, paste-range in tools/
 // (ported to Rust; not wired into pi AgentHarness yet)

@@ -297,9 +297,9 @@ describe("harness compaction", () => {
 		expect(estimateTokens(branchSummaryMessage)).toBeGreaterThan(0);
 		expect(estimateTokens(compactionSummaryMessage)).toBeGreaterThan(0);
 		expect(estimateTokens({ role: "unknown", timestamp: Date.now() } as unknown as AgentMessage)).toBe(0);
-		expect(
-			getLastAssistantUsage([createMessageEntry(createUserMessage("user")), createMessageEntry(assistant)]),
-		).toBe(usage);
+		expect(getLastAssistantUsage([createMessageEntry(createUserMessage("user")), createMessageEntry(assistant)])).toBe(
+			usage,
+		);
 		expect(
 			getLastAssistantUsage([
 				createMessageEntry({ ...assistant, stopReason: "aborted" }),
@@ -508,16 +508,7 @@ describe("harness compaction", () => {
 		]);
 
 		const summary = getOrThrow(
-			await generateSummary(
-				messages,
-				model,
-				2000,
-				"test-key",
-				{ "x-test": "yes" },
-				undefined,
-				"focus",
-				"old summary",
-			),
+			await generateSummary(messages, model, 2000, "test-key", { "x-test": "yes" }, undefined, "focus", "old summary"),
 		);
 
 		expect(summary).toContain("Test summary");

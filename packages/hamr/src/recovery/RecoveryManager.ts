@@ -9,13 +9,13 @@
  */
 
 import type {
-  FailureScenario,
-  RecoverableError,
-  RecoveryAction,
-  RecoveryContext,
-  RecoveryConversation,
-  RecoveryResult,
-} from './types.js';
+	FailureScenario,
+	RecoverableError,
+	RecoveryAction,
+	RecoveryContext,
+	RecoveryConversation,
+	RecoveryResult,
+} from "./types.js";
 
 // ─── Constants ────────────────────────────────────────────
 
@@ -32,169 +32,169 @@ const MAX_MALFORMED_TOOL_CALL_ATTEMPTS = 2;
  * @public
  */
 export class RecoveryManager {
-  private recipes: Map<FailureScenario, RecoveryAction>;
-  private totalRecoveryAttempts = 0;
+	private recipes: Map<FailureScenario, RecoveryAction>;
+	private totalRecoveryAttempts = 0;
 
-  constructor() {
-    this.recipes = new Map();
-    this.registerDefaults();
-  }
+	constructor() {
+		this.recipes = new Map();
+		this.registerDefaults();
+	}
 
-  // ── Recipe registration ──────────────────────────────
+	// ── Recipe registration ──────────────────────────────
 
-  private registerDefaults(): void {
-    this.register({
-      scenario: 'empty_response',
-      maxAttempts: MAX_EMPTY_RESPONSE_ATTEMPTS,
-      execute: emptyResponseRecipe,
-    });
+	private registerDefaults(): void {
+		this.register({
+			scenario: "empty_response",
+			maxAttempts: MAX_EMPTY_RESPONSE_ATTEMPTS,
+			execute: emptyResponseRecipe,
+		});
 
-    this.register({
-      scenario: 'bash_failure',
-      maxAttempts: MAX_BASH_FAILURE_ATTEMPTS,
-      execute: bashFailureRecipe,
-    });
+		this.register({
+			scenario: "bash_failure",
+			maxAttempts: MAX_BASH_FAILURE_ATTEMPTS,
+			execute: bashFailureRecipe,
+		});
 
-    this.register({
-      scenario: 'context_exhaustion',
-      maxAttempts: MAX_CONTEXT_EXHAUSTION_ATTEMPTS,
-      execute: contextExhaustionRecipe,
-    });
+		this.register({
+			scenario: "context_exhaustion",
+			maxAttempts: MAX_CONTEXT_EXHAUSTION_ATTEMPTS,
+			execute: contextExhaustionRecipe,
+		});
 
-    this.register({
-      scenario: 'infinite_loop',
-      maxAttempts: MAX_INFINITE_LOOP_ATTEMPTS,
-      execute: infiniteLoopRecipe,
-    });
+		this.register({
+			scenario: "infinite_loop",
+			maxAttempts: MAX_INFINITE_LOOP_ATTEMPTS,
+			execute: infiniteLoopRecipe,
+		});
 
-    this.register({
-      scenario: 'malformed_tool_call',
-      maxAttempts: MAX_MALFORMED_TOOL_CALL_ATTEMPTS,
-      execute: malformedToolCallRecipe,
-    });
-  }
+		this.register({
+			scenario: "malformed_tool_call",
+			maxAttempts: MAX_MALFORMED_TOOL_CALL_ATTEMPTS,
+			execute: malformedToolCallRecipe,
+		});
+	}
 
-  register(recipe: RecoveryAction): void {
-    this.recipes.set(recipe.scenario, recipe);
-  }
+	register(recipe: RecoveryAction): void {
+		this.recipes.set(recipe.scenario, recipe);
+	}
 
-  // ── Recovery loop ────────────────────────────────────
+	// ── Recovery loop ────────────────────────────────────
 
-  /**
-   * Attempt recovery for a failure scenario.
-   * Returns the recovery result if a matching recipe exists and hasn't
-   * exceeded its max attempts. Returns null if recovery is not possible.
-   */
-  async attemptRecovery(context: RecoveryContext): Promise<RecoveryResult | null> {
-    const recipe = this.recipes.get(context.scenario);
-    if (!recipe) return null;
-    if (context.attempt >= recipe.maxAttempts) return null;
-    if (this.totalRecoveryAttempts >= MAX_RECOVERY_ATTEMPTS_PER_TURN) return null;
+	/**
+	 * Attempt recovery for a failure scenario.
+	 * Returns the recovery result if a matching recipe exists and hasn't
+	 * exceeded its max attempts. Returns null if recovery is not possible.
+	 */
+	async attemptRecovery(context: RecoveryContext): Promise<RecoveryResult | null> {
+		const recipe = this.recipes.get(context.scenario);
+		if (!recipe) return null;
+		if (context.attempt >= recipe.maxAttempts) return null;
+		if (this.totalRecoveryAttempts >= MAX_RECOVERY_ATTEMPTS_PER_TURN) return null;
 
-    this.totalRecoveryAttempts++;
-    return recipe.execute({ ...context, attempt: context.attempt });
-  }
+		this.totalRecoveryAttempts++;
+		return recipe.execute({ ...context, attempt: context.attempt });
+	}
 
-  /** Reset the per-turn attempt counter. */
-  resetForTurn(): void {
-    this.totalRecoveryAttempts = 0;
-  }
+	/** Reset the per-turn attempt counter. */
+	resetForTurn(): void {
+		this.totalRecoveryAttempts = 0;
+	}
 
-  /**
-   * Convert a RecoverableError into a RecoveryContext.
-   */
-  errorToContext(error: RecoverableError, conversation: RecoveryConversation, task: string): RecoveryContext {
-    return {
-      scenario: error.scenario,
-      conversation,
-      task,
-      attempt: 0,
-      details: error.details ?? error.message,
-      stderr: error.stderr,
-      repeatedAction: error.repeatedAction,
-    };
-  }
+	/**
+	 * Convert a RecoverableError into a RecoveryContext.
+	 */
+	errorToContext(error: RecoverableError, conversation: RecoveryConversation, task: string): RecoveryContext {
+		return {
+			scenario: error.scenario,
+			conversation,
+			task,
+			attempt: 0,
+			details: error.details ?? error.message,
+			stderr: error.stderr,
+			repeatedAction: error.repeatedAction,
+		};
+	}
 }
 
 // ─── Recipe implementations ──────────────────────────────
 
 async function emptyResponseRecipe(context: RecoveryContext): Promise<RecoveryResult> {
-  const nudge =
-    'Your last response was empty. Please continue from where you left off. ' +
-    'If the task is complete, explain what was done and stop. ' +
-    'If you need more information, use a read tool.';
+	const nudge =
+		"Your last response was empty. Please continue from where you left off. " +
+		"If the task is complete, explain what was done and stop. " +
+		"If you need more information, use a read tool.";
 
-  context.conversation.messages.push({ role: 'user', content: nudge });
+	context.conversation.messages.push({ role: "user", content: nudge });
 
-  return {
-    recovered: true,
-    injectedMessage: nudge,
-    conversation: context.conversation,
-  };
+	return {
+		recovered: true,
+		injectedMessage: nudge,
+		conversation: context.conversation,
+	};
 }
 
 async function bashFailureRecipe(context: RecoveryContext): Promise<RecoveryResult> {
-  const stderr = context.stderr || 'unknown error';
-  const nudge =
-    `The last bash command failed with error:\n${stderr}\n\n` +
-    'Fix the command and retry, or use a different approach. ' +
-    'If the failure is expected (e.g., a file not found), explain and continue.';
+	const stderr = context.stderr || "unknown error";
+	const nudge =
+		`The last bash command failed with error:\n${stderr}\n\n` +
+		"Fix the command and retry, or use a different approach. " +
+		"If the failure is expected (e.g., a file not found), explain and continue.";
 
-  context.conversation.messages.push({ role: 'user', content: nudge });
+	context.conversation.messages.push({ role: "user", content: nudge });
 
-  return {
-    recovered: true,
-    injectedMessage: nudge,
-    conversation: context.conversation,
-  };
+	return {
+		recovered: true,
+		injectedMessage: nudge,
+		conversation: context.conversation,
+	};
 }
 
 async function contextExhaustionRecipe(context: RecoveryContext): Promise<RecoveryResult> {
-  const nudge =
-    '⚠️ Context budget is running low. ' +
-    'Stop reading files. Use the information you already have. ' +
-    'Take action with bash, edit, or write tools now.';
+	const nudge =
+		"⚠️ Context budget is running low. " +
+		"Stop reading files. Use the information you already have. " +
+		"Take action with bash, edit, or write tools now.";
 
-  context.conversation.messages.push({ role: 'user', content: nudge });
+	context.conversation.messages.push({ role: "user", content: nudge });
 
-  return {
-    recovered: true,
-    injectedMessage: nudge,
-    conversation: context.conversation,
-  };
+	return {
+		recovered: true,
+		injectedMessage: nudge,
+		conversation: context.conversation,
+	};
 }
 
 async function infiniteLoopRecipe(context: RecoveryContext): Promise<RecoveryResult> {
-  const action = context.repeatedAction || 'the same action';
-  const nudge =
-    `You appear stuck repeating ${action}. ` +
-    'Try a fundamentally different approach. ' +
-    'If you are unsure how to proceed, explain what information you need.';
+	const action = context.repeatedAction || "the same action";
+	const nudge =
+		`You appear stuck repeating ${action}. ` +
+		"Try a fundamentally different approach. " +
+		"If you are unsure how to proceed, explain what information you need.";
 
-  context.conversation.messages.push({ role: 'user', content: nudge });
+	context.conversation.messages.push({ role: "user", content: nudge });
 
-  return {
-    recovered: true,
-    injectedMessage: nudge,
-    conversation: context.conversation,
-  };
+	return {
+		recovered: true,
+		injectedMessage: nudge,
+		conversation: context.conversation,
+	};
 }
 
 async function malformedToolCallRecipe(context: RecoveryContext): Promise<RecoveryResult> {
-  const details = context.details || 'unknown parse error';
-  const nudge =
-    `Your last tool call had a formatting error and could not be parsed.\n` +
-    `Error: ${details}\n\n` +
-    `Please retry using the EXACT required format:\n` +
-    `<tool_call>\n<function=NAME>\n<parameter=key>value</parameter>\n</function>\n</tool_call>\n\n` +
-    `The <function=...> wrapper is REQUIRED inside each <tool_call> block. ` +
-    `Do NOT skip it. Emit your tool call now in the correct format.`;
+	const details = context.details || "unknown parse error";
+	const nudge =
+		`Your last tool call had a formatting error and could not be parsed.\n` +
+		`Error: ${details}\n\n` +
+		`Please retry using the EXACT required format:\n` +
+		`<tool_call>\n<function=NAME>\n<parameter=key>value</parameter>\n</function>\n</tool_call>\n\n` +
+		`The <function=...> wrapper is REQUIRED inside each <tool_call> block. ` +
+		`Do NOT skip it. Emit your tool call now in the correct format.`;
 
-  context.conversation.messages.push({ role: 'user', content: nudge });
+	context.conversation.messages.push({ role: "user", content: nudge });
 
-  return {
-    recovered: true,
-    injectedMessage: nudge,
-    conversation: context.conversation,
-  };
+	return {
+		recovered: true,
+		injectedMessage: nudge,
+		conversation: context.conversation,
+	};
 }

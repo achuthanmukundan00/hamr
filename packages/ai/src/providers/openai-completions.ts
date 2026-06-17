@@ -298,11 +298,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 				}
 
 				if (choice.delta) {
-					if (
-						choice.delta.content !== null &&
-						choice.delta.content !== undefined &&
-						choice.delta.content.length > 0
-					) {
+					if (choice.delta.content !== null && choice.delta.content !== undefined && choice.delta.content.length > 0) {
 						const block = ensureTextBlock();
 						block.text += choice.delta.content;
 						stream.push({
@@ -376,9 +372,9 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 					if (reasoningDetails && Array.isArray(reasoningDetails)) {
 						for (const detail of reasoningDetails) {
 							if (detail.type === "reasoning.encrypted" && detail.id && detail.data) {
-								const matchingToolCall = output.content.find(
-									(b) => b.type === "toolCall" && b.id === detail.id,
-								) as ToolCall | undefined;
+								const matchingToolCall = output.content.find((b) => b.type === "toolCall" && b.id === detail.id) as
+									| ToolCall
+									| undefined;
 								if (matchingToolCall) {
 									matchingToolCall.thoughtSignature = JSON.stringify(detail);
 								}
@@ -583,8 +579,7 @@ function buildParams(
 			(params as any).thinking = { type: "disabled" };
 		}
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
-			(params as any).reasoning_effort =
-				model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
+			(params as any).reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
 		}
 	} else if (compat.thinkingFormat === "openrouter" && model.reasoning) {
 		// OpenRouter normalizes reasoning across providers via a nested reasoning object.
@@ -857,9 +852,7 @@ export function convertMessages(
 			if (nonEmptyThinkingBlocks.length > 0) {
 				if (compat.requiresThinkingAsText) {
 					// Convert thinking blocks to plain text (no tags to avoid model mimicking them)
-					const thinkingText = nonEmptyThinkingBlocks
-						.map((block) => sanitizeSurrogates(block.thinking))
-						.join("\n\n");
+					const thinkingText = nonEmptyThinkingBlocks.map((block) => sanitizeSurrogates(block.thinking)).join("\n\n");
 					assistantMsg.content = [{ type: "text", text: thinkingText }, ...assistantTextParts];
 				} else {
 					// Always send assistant content as a plain string (OpenAI Chat Completions
@@ -1191,8 +1184,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 			model.compat.requiresAssistantAfterToolResult ?? detected.requiresAssistantAfterToolResult,
 		requiresThinkingAsText: model.compat.requiresThinkingAsText ?? detected.requiresThinkingAsText,
 		requiresReasoningContentOnAssistantMessages:
-			model.compat.requiresReasoningContentOnAssistantMessages ??
-			detected.requiresReasoningContentOnAssistantMessages,
+			model.compat.requiresReasoningContentOnAssistantMessages ?? detected.requiresReasoningContentOnAssistantMessages,
 		thinkingFormat: model.compat.thinkingFormat ?? detected.thinkingFormat,
 		openRouterRouting: model.compat.openRouterRouting ?? {},
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,

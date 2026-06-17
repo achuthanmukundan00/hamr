@@ -576,9 +576,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 						const block: Block = {
 							type: "toolCall",
 							id: event.content_block.id,
-							name: isOAuth
-								? fromClaudeCodeName(event.content_block.name, context.tools)
-								: event.content_block.name,
+							name: isOAuth ? fromClaudeCodeName(event.content_block.name, context.tools) : event.content_block.name,
 							arguments: (event.content_block.input as Record<string, any>) ?? {},
 							partialJson: "",
 							index: event.index,
@@ -970,9 +968,7 @@ function buildParams(
 					// The Anthropic SDK types can lag newly supported effort values such as "xhigh".
 					params.output_config =
 						options.effort === "xhigh"
-							? ({ effort: options.effort } as unknown as NonNullable<
-									MessageCreateParamsStreaming["output_config"]
-								>)
+							? ({ effort: options.effort } as unknown as NonNullable<MessageCreateParamsStreaming["output_config"]>)
 							: { effort: options.effort };
 				}
 			} else {

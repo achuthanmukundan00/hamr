@@ -64,10 +64,7 @@ export class JsonlSessionRepo implements JsonlSessionRepoApi {
 
 	private async createSessionFilePath(cwd: string, sessionId: string, timestamp: string): Promise<string> {
 		return getFileSystemResultOrThrow(
-			await this.fs.joinPath([
-				await this.getSessionDir(cwd),
-				`${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`,
-			]),
+			await this.fs.joinPath([await this.getSessionDir(cwd), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`]),
 			`Failed to resolve session file path for ${sessionId}`,
 		);
 	}
@@ -90,9 +87,7 @@ export class JsonlSessionRepo implements JsonlSessionRepoApi {
 	}
 
 	async open(metadata: JsonlSessionMetadata): Promise<Session<JsonlSessionMetadata>> {
-		if (
-			!getFileSystemResultOrThrow(await this.fs.exists(metadata.path), `Failed to check session ${metadata.path}`)
-		) {
+		if (!getFileSystemResultOrThrow(await this.fs.exists(metadata.path), `Failed to check session ${metadata.path}`)) {
 			throw new SessionError("not_found", `Session not found: ${metadata.path}`);
 		}
 		const storage = await JsonlSessionStorage.open(this.fs, metadata.path);
@@ -106,10 +101,9 @@ export class JsonlSessionRepo implements JsonlSessionRepoApi {
 			if (!getFileSystemResultOrThrow(await this.fs.exists(dir), `Failed to check session directory ${dir}`)) {
 				continue;
 			}
-			const files = getFileSystemResultOrThrow(
-				await this.fs.listDir(dir),
-				`Failed to list sessions in ${dir}`,
-			).filter((file) => file.kind !== "directory" && file.name.endsWith(".jsonl"));
+			const files = getFileSystemResultOrThrow(await this.fs.listDir(dir), `Failed to list sessions in ${dir}`).filter(
+				(file) => file.kind !== "directory" && file.name.endsWith(".jsonl"),
+			);
 			for (const file of files) {
 				try {
 					sessions.push(await loadJsonlSessionMetadata(this.fs, file.path));
@@ -161,10 +155,7 @@ export class JsonlSessionRepo implements JsonlSessionRepoApi {
 	private async listSessionDirs(): Promise<string[]> {
 		const sessionsRoot = await this.getSessionsRoot();
 		if (
-			!getFileSystemResultOrThrow(
-				await this.fs.exists(sessionsRoot),
-				`Failed to check sessions root ${sessionsRoot}`,
-			)
+			!getFileSystemResultOrThrow(await this.fs.exists(sessionsRoot), `Failed to check sessions root ${sessionsRoot}`)
 		) {
 			return [];
 		}

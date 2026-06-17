@@ -1,10 +1,4 @@
-import {
-	type AssistantMessage,
-	type ImageContent,
-	type Model,
-	streamSimple,
-	type UserMessage,
-} from "@hamr/ai";
+import { type AssistantMessage, type ImageContent, type Model, streamSimple, type UserMessage } from "@hamr/ai";
 import { runAgentLoop } from "../agent-loop.ts";
 import type {
 	AgentContext,
@@ -471,8 +465,7 @@ export class AgentHarness<
 
 	private validateUniqueNames(names: string[], message: string): void {
 		const duplicates = findDuplicateNames(names);
-		if (duplicates.length > 0)
-			throw new AgentHarnessError("invalid_argument", `${message}: ${duplicates.join(", ")}`);
+		if (duplicates.length > 0) throw new AgentHarnessError("invalid_argument", `${message}: ${duplicates.join(", ")}`);
 	}
 
 	private validateToolNames(toolNames: string[], tools: Map<string, TTool> = this.tools): void {

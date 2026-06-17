@@ -183,9 +183,7 @@ describe("openai-completions empty tools handling", () => {
 		).result();
 
 		const clientOptions = mockState.lastClientOptions as { baseURL?: string };
-		expect(clientOptions.baseURL).toBe(
-			"https://gateway.ai.cloudflare.com/v1/provider-account/provider-gateway/compat",
-		);
+		expect(clientOptions.baseURL).toBe("https://gateway.ai.cloudflare.com/v1/provider-account/provider-gateway/compat");
 	});
 
 	it("preserves inline upstream Authorization for Cloudflare AI Gateway BYOK requests", async () => {

@@ -12,27 +12,27 @@
  * pending Rust port (spec 007).
  */
 
-import { AgentHarness } from '@hamr/agent';
-import type { AgentHarnessOptions } from '@hamr/agent';
+import type { AgentHarnessOptions } from "@hamr/agent";
+import { AgentHarness } from "@hamr/agent";
 
 export interface HamrOptions {
-  harness: AgentHarnessOptions;
-  localModelParsing?: boolean;
-  memoryDbPath?: string;
-  recovery?: boolean;
+	harness: AgentHarnessOptions;
+	localModelParsing?: boolean;
+	memoryDbPath?: string;
+	recovery?: boolean;
 }
 
 export class Hamr {
-  /** Create a pre-configured AgentHarness with Hamr innovations wired in. */
-  static create(options: HamrOptions): AgentHarness {
-    const harness = new AgentHarness(options.harness);
+	/** Create a pre-configured AgentHarness with Hamr innovations wired in. */
+	static create(options: HamrOptions): AgentHarness {
+		const harness = new AgentHarness(options.harness);
 
-    // TODO: Wire Hamr innovations as AgentHarness hooks:
-    // - FTS5 memory: register search_memory/save_memory tools + turn_end hook
-    // - Recovery: subscribe to turn_end, inject recovery messages on failure patterns
-    // - Deterministic compaction: on('context', ...) transformContext hook
-    // - Local-model parsers: set streamOptions for local-openai provider
+		// TODO: Wire Hamr innovations as AgentHarness hooks:
+		// - FTS5 memory: register search_memory/save_memory tools + turn_end hook
+		// - Recovery: subscribe to turn_end, inject recovery messages on failure patterns
+		// - Deterministic compaction: on('context', ...) transformContext hook
+		// - Local-model parsers: set streamOptions for local-openai provider
 
-    return harness;
-  }
+		return harness;
+	}
 }

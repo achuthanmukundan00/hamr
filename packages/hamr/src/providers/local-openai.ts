@@ -10,7 +10,7 @@
  * with JSON/XML repair fallback.
  */
 
-import type { AssistantMessage, Context, Message, Model, SimpleStreamOptions } from '@hamr/ai';
+import type { AssistantMessage, Context, Message, Model, SimpleStreamOptions } from "@hamr/ai";
 
 // We'll re-export parseModelOutput from the parsers module once wired up
 // import { parseModelOutput, detectParserId } from './parsers/index.js';
@@ -19,24 +19,24 @@ import type { AssistantMessage, Context, Message, Model, SimpleStreamOptions } f
  * Streaming response wrapper that injects parsed tool calls.
  */
 export async function* localModelStream(
-  model: Model<any>,
-  context: Context,
-  options: SimpleStreamOptions & { parserId?: string },
+	model: Model<any>,
+	context: Context,
+	options: SimpleStreamOptions & { parserId?: string },
 ): AsyncGenerator<any> {
-  // Delegate to pi's existing OpenAI-compatible stream.
-  // pi handles: HTTP dispatch, SSE parsing, retries, timeouts, auth.
-  const { stream } = await import('@hamr/ai');
-  const piResponse = stream(model, context, options as any);
+	// Delegate to pi's existing OpenAI-compatible stream.
+	// pi handles: HTTP dispatch, SSE parsing, retries, timeouts, auth.
+	const { stream } = await import("@hamr/ai");
+	const piResponse = stream(model, context, options as any);
 
-  // Pass through all events, but intercept the 'done' event to
-  // post-process and inject any parsed tool calls.
-  for await (const event of piResponse) {
-    yield event;
-  }
+	// Pass through all events, but intercept the 'done' event to
+	// post-process and inject any parsed tool calls.
+	for await (const event of piResponse) {
+		yield event;
+	}
 
-  // pi's stream.result() returns the final AssistantMessage
-  const result = await piResponse.result();
-  yield result;
+	// pi's stream.result() returns the final AssistantMessage
+	const result = await piResponse.result();
+	yield result;
 }
 
 /**
@@ -45,7 +45,7 @@ export async function* localModelStream(
  * native tool calling, post-process through Hamr's parser cascade.
  */
 export function createLocalModelStream(parserId?: string) {
-  return async (model: Model<any>, context: Context, options: SimpleStreamOptions) => {
-    return localModelStream(model, context, options as any);
-  };
+	return async (model: Model<any>, context: Context, options: SimpleStreamOptions) => {
+		return localModelStream(model, context, options as any);
+	};
 }

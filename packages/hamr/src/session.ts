@@ -9,14 +9,14 @@
  * extra tools (context-ledger, generated-content, paste-range).
  */
 
-import { AgentHarness } from '@hamr/agent';
-import type { AgentHarnessOptions } from '@hamr/agent';
+import type { AgentHarnessOptions } from "@hamr/agent";
+import { AgentHarness } from "@hamr/agent";
 
 export interface HamrSession {
-  harness: AgentHarness;
-  prompt: (text: string) => Promise<any>;
-  abort: () => Promise<void>;
-  dispose: () => void;
+	harness: AgentHarness;
+	prompt: (text: string) => Promise<any>;
+	abort: () => Promise<void>;
+	dispose: () => void;
 }
 
 /**
@@ -26,15 +26,17 @@ export interface HamrSession {
  * Hamr innovations are added as tools and hooks (TBD — wiring phase).
  */
 export function createSession(options: AgentHarnessOptions): HamrSession {
-  const harness = new AgentHarness(options);
+	const harness = new AgentHarness(options);
 
-  return {
-    harness,
-    prompt: (text: string) => harness.prompt(text),
-    abort: async () => { harness.abort(); },
-    dispose: () => {
-      // AgentHarness doesn't have an explicit dispose, but cleanup
-      // is handled by abort + session storage finalization
-    },
-  };
+	return {
+		harness,
+		prompt: (text: string) => harness.prompt(text),
+		abort: async () => {
+			harness.abort();
+		},
+		dispose: () => {
+			// AgentHarness doesn't have an explicit dispose, but cleanup
+			// is handled by abort + session storage finalization
+		},
+	};
 }

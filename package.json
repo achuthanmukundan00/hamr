@@ -3,15 +3,16 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "../sexy-tui-rs"
   ],
   "scripts": {
-    "clean": "npm run clean --workspaces --if-present",
-    "build": "npm run build --workspaces",
+    "clean": "cd packages/ai && npm run clean && cd ../agent && npm run clean && cd ../hamr && npm run clean",
+    "build": "cd packages/ai && npm run build && cd ../agent && npm run build && cd ../hamr && npm run build",
     "typecheck": "tsgo -p packages/ai/tsconfig.build.json --noEmit && tsgo -p packages/agent/tsconfig.build.json --noEmit && tsgo -p packages/hamr/tsconfig.build.json --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "test": "npm run test --workspaces --if-present",
+    "test": "cd packages/ai && npm run test && cd ../agent && npm run test && cd ../hamr && npm run test",
     "verify": "npm run typecheck && npm run lint && npm run build && npm run test",
     "hamr": "bun packages/hamr/dist/cli.js"
   },

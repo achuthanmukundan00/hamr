@@ -11,7 +11,7 @@
  * rest of the module graph loads fine regardless.
  */
 
-import type Database from 'better-sqlite3';
+import type Database from "better-sqlite3";
 
 let _Database: typeof Database | null | undefined;
 
@@ -22,28 +22,28 @@ let _Database: typeof Database | null | undefined;
  * Returns the Database constructor on success, null on failure.
  */
 export function loadBetterSqlite3(): typeof Database | null {
-  if (_Database !== undefined) return _Database;
+	if (_Database !== undefined) return _Database;
 
-  // better-sqlite3 is a native C++ addon. Bun does not support native
-  // addons, so return null early to let callers fall back gracefully.
-  if (
-    typeof (globalThis as Record<string, unknown>).Bun !== 'undefined' ||
-    typeof (process.versions as Record<string, string>).bun !== 'undefined'
-  ) {
-    _Database = null;
-    return null;
-  }
+	// better-sqlite3 is a native C++ addon. Bun does not support native
+	// addons, so return null early to let callers fall back gracefully.
+	if (
+		typeof (globalThis as Record<string, unknown>).Bun !== "undefined" ||
+		typeof (process.versions as Record<string, string>).bun !== "undefined"
+	) {
+		_Database = null;
+		return null;
+	}
 
-  try {
-    // Dynamic require — caught at runtime, doesn't block module loading
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require('better-sqlite3') as typeof Database;
-    _Database = mod;
-    return _Database;
-  } catch {
-    _Database = null;
-    return null;
-  }
+	try {
+		// Dynamic require — caught at runtime, doesn't block module loading
+		// eslint-disable-next-line @typescript-eslint/no-require-imports
+		const mod = require("better-sqlite3") as typeof Database;
+		_Database = mod;
+		return _Database;
+	} catch {
+		_Database = null;
+		return null;
+	}
 }
 
 /**

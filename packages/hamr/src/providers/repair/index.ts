@@ -9,9 +9,9 @@
  * silently producing broken results.
  */
 
-export type { RepairResult as JsonRepairResult } from './json-repair.js';
-export { repairJson } from './json-repair.js';
-export type { SanitizeResult } from './reasoning-sanitizer.js';
-export { sanitizeReasoning } from './reasoning-sanitizer.js';
-export type { RepairResult as XmlRepairResult } from './xml-repair.js';
-export { repairXml } from './xml-repair.js';
+export type { RepairResult as JsonRepairResult } from "./json-repair.js";
+export { repairJson } from "./json-repair.js";
+export type { SanitizeResult } from "./reasoning-sanitizer.js";
+export { sanitizeReasoning } from "./reasoning-sanitizer.js";
+export type { RepairResult as XmlRepairResult } from "./xml-repair.js";
+export { repairXml } from "./xml-repair.js";

@@ -142,10 +142,7 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 								});
 							} else {
 								currentBlock.text += part.text;
-								currentBlock.textSignature = retainThoughtSignature(
-									currentBlock.textSignature,
-									part.thoughtSignature,
-								);
+								currentBlock.textSignature = retainThoughtSignature(currentBlock.textSignature, part.thoughtSignature);
 								stream.push({
 									type: "text_delta",
 									contentIndex: blockIndex(),
@@ -213,10 +210,8 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 
 				if (chunk.usageMetadata) {
 					output.usage = {
-						input:
-							(chunk.usageMetadata.promptTokenCount || 0) - (chunk.usageMetadata.cachedContentTokenCount || 0),
-						output:
-							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
+						input: (chunk.usageMetadata.promptTokenCount || 0) - (chunk.usageMetadata.cachedContentTokenCount || 0),
+						output: (chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
 						cacheRead: chunk.usageMetadata.cachedContentTokenCount || 0,
 						cacheWrite: 0,
 						totalTokens: chunk.usageMetadata.totalTokenCount || 0,

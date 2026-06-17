@@ -30,7 +30,7 @@
     "cross-spawn": "7.0.6",
     "diff": "8.0.4",
     "proper-lockfile": "4.1.2",
-    "sexy-tui-rs": "file:../../sexy-tui-rs",
+    "sexy-tui-rs": "*",
     "toml": "^3.0.0",
     "typebox": "1.1.38"
   },

@@ -328,9 +328,7 @@ describe("AgentHarness", () => {
 				void harness.setModel(secondModel);
 				void harness.setThinkingLevel("high");
 				void harness.setResources({
-					skills: [
-						{ name: "prompt", description: "prompt", content: "second prompt", filePath: "/skills/prompt" },
-					],
+					skills: [{ name: "prompt", description: "prompt", content: "second prompt", filePath: "/skills/prompt" }],
 				});
 				void harness.setTools([calculateTool, getCurrentTimeTool], [getCurrentTimeTool.name]);
 			}

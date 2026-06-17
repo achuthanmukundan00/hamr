@@ -437,20 +437,14 @@ export function registerFauxProvider(options: RegisterFauxProviderOptions = {}):
 			try {
 				await streamOptions?.onResponse?.({ status: 200, headers: {} }, requestModel);
 				if (!step) {
-					let message = createErrorMessage(
-						new Error("No more faux responses queued"),
-						api,
-						provider,
-						requestModel.id,
-					);
+					let message = createErrorMessage(new Error("No more faux responses queued"), api, provider, requestModel.id);
 					message = withUsageEstimate(message, context, streamOptions, promptCache);
 					outer.push({ type: "error", reason: "error", error: message });
 					outer.end(message);
 					return;
 				}
 
-				const resolved =
-					typeof step === "function" ? await step(context, streamOptions, state, requestModel) : step;
+				const resolved = typeof step === "function" ? await step(context, streamOptions, state, requestModel) : step;
 				let message = cloneMessage(resolved, api, provider, requestModel.id);
 				message = withUsageEstimate(message, context, streamOptions, promptCache);
 				await streamWithDeltas(outer, message, minTokenSize, maxTokenSize, tokensPerSecond, streamOptions?.signal);
