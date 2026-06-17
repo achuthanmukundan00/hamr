@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.cache/
+*.tsbuildinfo
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+test-results/
+coverage/
+.DS_Store
+*.log
+.env
+.hamr.toml
+.pi/
+relay/

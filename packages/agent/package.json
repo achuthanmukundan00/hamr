@@ -1,0 +1,43 @@
+{
+  "name": "@hamr/agent",
+  "version": "0.1.0",
+  "description": "General-purpose agent with transport abstraction, state management, and attachment support — derived from @earendil-works/pi-agent-core",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "clean": "shx rm -rf dist",
+    "build": "tsgo -p tsconfig.build.json",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@hamr/ai": "*",
+    "ignore": "7.0.5",
+    "typebox": "1.1.38",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.0.0"
+  },
+  "author": "Hamr contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/achuthanmukundan00/hamr.git",
+    "directory": "packages/agent"
+  }
+}

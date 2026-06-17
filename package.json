@@ -1,0 +1,38 @@
+{
+  "name": "hamr-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "clean": "npm run clean --workspaces --if-present",
+    "build": "npm run build --workspaces",
+    "typecheck": "tsgo --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "npm run test --workspaces --if-present",
+    "verify": "npm run typecheck && npm run lint && npm run build && npm run test",
+    "hamr": "bun packages/hamr/dist/cli.js"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.0",
+    "@types/node": "^22.0.0",
+    "@typescript/native-preview": "^7.0.0-dev",
+    "shx": "0.4.0",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "packageManager": "bun@1.3.14",
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1070.0",
+    "@google/genai": "^2.8.0",
+    "@mistralai/mistralai": "^2.2.6",
+    "@smithy/node-http-handler": "^4.8.0",
+    "@smithy/types": "^4.15.0",
+    "http-proxy-agent": "^9.1.0",
+    "https-proxy-agent": "^9.1.0"
+  }
+}

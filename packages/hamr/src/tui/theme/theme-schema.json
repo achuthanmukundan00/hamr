@@ -1,0 +1,176 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HAMR Theme",
+  "description": "Theme schema for HAMR coding agent TUI",
+  "type": "object",
+  "required": ["name", "colors"],
+  "properties": {
+    "$schema": { "type": "string", "description": "JSON schema reference" },
+    "name": { "type": "string", "description": "Theme name" },
+    "modelAdaptive": {
+      "type": "boolean",
+      "description": "When true (default), model accent colors influence prompt cards, thinking headers, and event titles. Set false for static theme-only coloring.",
+      "default": true
+    },
+    "vars": {
+      "type": "object",
+      "description": "Reusable color variables",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+          },
+          { "type": "integer", "minimum": 0, "maximum": 255, "description": "256-color palette index" }
+        ]
+      }
+    },
+    "colors": {
+      "type": "object",
+      "description": "Theme color definitions (foreground + background tokens)",
+      "required": [
+        "accent",
+        "border",
+        "borderAccent",
+        "borderMuted",
+        "success",
+        "error",
+        "warning",
+        "muted",
+        "dim",
+        "text",
+        "thinkingText",
+        "selectedBg",
+        "userMessageBg",
+        "userMessageText",
+        "toolPendingBg",
+        "toolSuccessBg",
+        "toolErrorBg",
+        "toolWarningBg",
+        "toolTitle",
+        "toolOutput",
+        "thinkingBg",
+        "surfaceBg",
+        "cardBg",
+        "statusBarBg",
+        "editorBg",
+        "editorFg",
+        "editorCursor",
+        "editorSelection",
+        "editorLineNumber",
+        "mdHeading",
+        "mdLink",
+        "mdLinkUrl",
+        "mdCode",
+        "mdCodeBlock",
+        "mdCodeBlockBorder",
+        "mdQuote",
+        "mdQuoteBorder",
+        "mdHr",
+        "mdListBullet",
+        "toolDiffAdded",
+        "toolDiffRemoved",
+        "toolDiffContext",
+        "syntaxComment",
+        "syntaxKeyword",
+        "syntaxFunction",
+        "syntaxVariable",
+        "syntaxString",
+        "syntaxNumber",
+        "syntaxType",
+        "syntaxOperator",
+        "syntaxPunctuation"
+      ],
+      "properties": {
+        "accent": { "$ref": "#/$defs/colorValue", "description": "Primary accent (titles, highlights)" },
+        "border": { "$ref": "#/$defs/colorValue", "description": "Normal borders" },
+        "borderAccent": { "$ref": "#/$defs/colorValue", "description": "Highlighted borders" },
+        "borderMuted": { "$ref": "#/$defs/colorValue", "description": "Subtle/muted borders" },
+        "success": { "$ref": "#/$defs/colorValue", "description": "Success states (result cards)" },
+        "error": { "$ref": "#/$defs/colorValue", "description": "Error states" },
+        "warning": { "$ref": "#/$defs/colorValue", "description": "Warning states (approvals, blocked)" },
+        "muted": { "$ref": "#/$defs/colorValue", "description": "Secondary/dimmed text" },
+        "dim": { "$ref": "#/$defs/colorValue", "description": "Very dimmed text" },
+        "text": { "$ref": "#/$defs/colorValue", "description": "Default text color" },
+        "thinkingText": { "$ref": "#/$defs/colorValue", "description": "Thinking/reasoning content text" },
+
+        "selectedBg": { "$ref": "#/$defs/colorValue", "description": "Selected item background" },
+        "userMessageBg": { "$ref": "#/$defs/colorValue", "description": "Prompt card background" },
+        "userMessageText": { "$ref": "#/$defs/colorValue", "description": "Prompt card text" },
+        "toolPendingBg": { "$ref": "#/$defs/colorValue", "description": "Tool card background (pending)" },
+        "toolSuccessBg": { "$ref": "#/$defs/colorValue", "description": "Result card background (success)" },
+        "toolErrorBg": { "$ref": "#/$defs/colorValue", "description": "Result card background (error)" },
+        "toolWarningBg": { "$ref": "#/$defs/colorValue", "description": "Approval/warning card background" },
+        "toolTitle": { "$ref": "#/$defs/colorValue", "description": "Tool card title text" },
+        "toolOutput": { "$ref": "#/$defs/colorValue", "description": "Tool card output text" },
+        "thinkingBg": { "$ref": "#/$defs/colorValue", "description": "Thinking section background" },
+        "surfaceBg": { "$ref": "#/$defs/colorValue", "description": "Status bar, dashboard backgrounds" },
+        "cardBg": { "$ref": "#/$defs/colorValue", "description": "General card background" },
+        "statusBarBg": { "$ref": "#/$defs/colorValue", "description": "Status bar background" },
+
+        "editorBg": { "$ref": "#/$defs/colorValue", "description": "Editor background" },
+        "editorFg": { "$ref": "#/$defs/colorValue", "description": "Editor text" },
+        "editorCursor": { "$ref": "#/$defs/colorValue", "description": "Editor cursor" },
+        "editorSelection": { "$ref": "#/$defs/colorValue", "description": "Editor selection highlight" },
+        "editorLineNumber": { "$ref": "#/$defs/colorValue", "description": "Editor line number" },
+
+        "mdHeading": { "$ref": "#/$defs/colorValue", "description": "Markdown heading" },
+        "mdLink": { "$ref": "#/$defs/colorValue", "description": "Markdown link text" },
+        "mdLinkUrl": { "$ref": "#/$defs/colorValue", "description": "Markdown link URL" },
+        "mdCode": { "$ref": "#/$defs/colorValue", "description": "Markdown inline code" },
+        "mdCodeBlock": { "$ref": "#/$defs/colorValue", "description": "Markdown code block content" },
+        "mdCodeBlockBorder": { "$ref": "#/$defs/colorValue", "description": "Markdown code block border" },
+        "mdQuote": { "$ref": "#/$defs/colorValue", "description": "Markdown blockquote text" },
+        "mdQuoteBorder": { "$ref": "#/$defs/colorValue", "description": "Markdown blockquote border" },
+        "mdHr": { "$ref": "#/$defs/colorValue", "description": "Markdown horizontal rule" },
+        "mdListBullet": { "$ref": "#/$defs/colorValue", "description": "Markdown list bullet" },
+
+        "toolDiffAdded": { "$ref": "#/$defs/colorValue", "description": "Added lines in diffs" },
+        "toolDiffRemoved": { "$ref": "#/$defs/colorValue", "description": "Removed lines in diffs" },
+        "toolDiffContext": { "$ref": "#/$defs/colorValue", "description": "Context lines in diffs" },
+
+        "syntaxComment": { "$ref": "#/$defs/colorValue", "description": "Syntax: comments" },
+        "syntaxKeyword": { "$ref": "#/$defs/colorValue", "description": "Syntax: keywords" },
+        "syntaxFunction": { "$ref": "#/$defs/colorValue", "description": "Syntax: functions" },
+        "syntaxVariable": { "$ref": "#/$defs/colorValue", "description": "Syntax: variables" },
+        "syntaxString": { "$ref": "#/$defs/colorValue", "description": "Syntax: strings" },
+        "syntaxNumber": { "$ref": "#/$defs/colorValue", "description": "Syntax: numbers" },
+        "syntaxType": { "$ref": "#/$defs/colorValue", "description": "Syntax: types" },
+        "syntaxOperator": { "$ref": "#/$defs/colorValue", "description": "Syntax: operators" },
+        "syntaxPunctuation": { "$ref": "#/$defs/colorValue", "description": "Syntax: punctuation" },
+
+        "customMessageBg": { "$ref": "#/$defs/colorValue", "description": "Pi-compat: custom message background" },
+        "customMessageText": { "$ref": "#/$defs/colorValue", "description": "Pi-compat: custom message text" },
+        "customMessageLabel": { "$ref": "#/$defs/colorValue", "description": "Pi-compat: custom message label" },
+        "thinkingOff": { "$ref": "#/$defs/colorValue", "description": "Pi-compat: thinking level border (off)" },
+        "thinkingMinimal": {
+          "$ref": "#/$defs/colorValue",
+          "description": "Pi-compat: thinking level border (minimal)"
+        },
+        "thinkingLow": { "$ref": "#/$defs/colorValue", "description": "Pi-compat: thinking level border (low)" },
+        "thinkingMedium": { "$ref": "#/$defs/colorValue", "description": "Pi-compat: thinking level border (medium)" },
+        "thinkingHigh": { "$ref": "#/$defs/colorValue", "description": "Pi-compat: thinking level border (high)" },
+        "thinkingXhigh": { "$ref": "#/$defs/colorValue", "description": "Pi-compat: thinking level border (xhigh)" },
+        "bashMode": { "$ref": "#/$defs/colorValue", "description": "Pi-compat: bash mode editor border" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "colorValue": {
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Hex color (#RRGGBB), variable reference (var name), or empty string for terminal default"
+        },
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "256-color palette index (0-255)"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "name": "@hamr/ai",
+  "version": "0.1.0",
+  "description": "Unified LLM API with automatic model discovery, provider configuration, and local-model tool-call parsers — derived from @earendil-works/pi-ai",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./anthropic": {
+      "types": "./dist/providers/anthropic.d.ts",
+      "import": "./dist/providers/anthropic.js"
+    },
+    "./openai-completions": {
+      "types": "./dist/providers/openai-completions.d.ts",
+      "import": "./dist/providers/openai-completions.js"
+    },
+    "./openai-responses": {
+      "types": "./dist/providers/openai-responses.d.ts",
+      "import": "./dist/providers/openai-responses.js"
+    },
+    "./local-openai": {
+      "types": "./dist/providers/local-openai.d.ts",
+      "import": "./dist/providers/local-openai.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "shx rm -rf dist",
+    "generate-models": "node scripts/generate-models.ts",
+    "build": "npm run generate-models && tsgo -p tsconfig.build.json",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.91.1",
+    "openai": "6.26.0",
+    "partial-json": "0.1.7",
+    "typebox": "1.1.38"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.0",
+    "vitest": "^3.0.0"
+  },
+  "author": "Hamr contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/achuthanmukundan00/hamr.git",
+    "directory": "packages/ai"
+  }
+}
