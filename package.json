@@ -8,7 +8,7 @@
   "scripts": {
     "clean": "npm run clean --workspaces --if-present",
     "build": "npm run build --workspaces",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsgo -p packages/ai/tsconfig.build.json --noEmit && tsgo -p packages/agent/tsconfig.build.json --noEmit && tsgo -p packages/hamr/tsconfig.build.json --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "test": "npm run test --workspaces --if-present",
