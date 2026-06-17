@@ -6,7 +6,9 @@
       "@hamr/agent": ["../agent/dist/index.d.ts"],
       "@hamr/agent/*": ["../agent/dist/*.d.ts"],
       "@hamr/ai": ["../ai/dist/index.d.ts"],
-      "@hamr/ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"]
+      "@hamr/ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"],
+      "@hamr/coding-agent": ["../coding-agent/dist/index.d.ts"],
+      "@hamr/tui": ["../tui/dist/index.d.ts"]
     },
     "rootDir": "./src"
   },

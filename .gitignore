@@ -12,3 +12,7 @@ coverage/
 .hamr.toml
 .pi/
 relay/
+
+# hamr runtime state + run artifacts
+.hamr/
+hamr-session-*.html

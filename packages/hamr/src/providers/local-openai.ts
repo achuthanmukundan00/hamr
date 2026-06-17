@@ -13,7 +13,7 @@
 import type { AssistantMessage, Context, Message, Model, SimpleStreamOptions } from "@hamr/ai";
 
 // We'll re-export parseModelOutput from the parsers module once wired up
-// import { parseModelOutput, detectParserId } from './parsers/index.js';
+// import { parseModelOutput, detectParserId } from './parsers/index.ts';
 
 /**
  * Streaming response wrapper that injects parsed tool calls.

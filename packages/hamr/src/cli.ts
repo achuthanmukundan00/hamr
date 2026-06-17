@@ -1,38 +1,52 @@
 #!/usr/bin/env node
 /**
- * hamr — CLI entry point.
+ * hamr CLI compatibility wrapper.
  *
- * pi handles: config loading, model resolution, session management,
- * auth, skills, prompt templates, extensions, trust management.
- *
- * Hamr adds: TUI rendering (via pi's TUI with Hamr themes),
- * local-model provider fallback, memory tools.
+ * The app runtime is pi's coding-agent main() with Hamr package metadata,
+ * themes, local-model parsing, memory, and orchestration hooks layered in.
  */
 
-import { createSession } from "./session.js";
+import { main as runCodingAgent } from "@hamr/coding-agent";
 
-async function main() {
-	const args = process.argv.slice(2);
-
-	// pi reads .pi/config.toml, models.json, .env automatically.
-	// Model resolution: --model flag > config default > provider default.
-	// For now, let pi's defaults handle everything.
-	const session = createSession({
-		// TODO: wire config loading from .pi/ or .hamr/
-		// pi's SDK handles this via ModelRegistry, AuthStorage, SettingsManager.
-		// For MVP, pass model + tools explicitly or let pi discover.
-	} as any);
-
-	if (args[0] === "run") {
-		const task = args.slice(1).join(" ");
-		const result = await session.prompt(task);
-		process.exit(0);
+function normalizeArgs(args: string[]): string[] {
+	const [command, ...rest] = args;
+	if (command === "chat") {
+		return rest;
+	}
+	if (command !== "run") {
+		return args;
 	}
 
-	// Interactive TUI — pi's TUI handles everything
-	// TODO: boot pi's interactive mode with Hamr themes
-	console.log("hamr chat — TUI mode coming soon (pi TUI + Hamr themes)");
-	process.exit(0);
+	const normalized: string[] = [];
+	let task: string | undefined;
+	for (let i = 0; i < rest.length; i++) {
+		const arg = rest[i]!;
+		if (arg === "--task") {
+			task = rest[++i];
+		} else if (arg.startsWith("--task=")) {
+			task = arg.slice("--task=".length);
+		} else {
+			normalized.push(arg);
+		}
+	}
+
+	if (!task) {
+		const positional = normalized.filter((arg) => !arg.startsWith("-"));
+		task = positional.join(" ").trim();
+		for (const arg of positional) {
+			const index = normalized.indexOf(arg);
+			if (index >= 0) normalized.splice(index, 1);
+		}
+	}
+
+	return task ? [...normalized, "--print", task] : [...normalized, "--print"];
+}
+
+async function main(): Promise<void> {
+	process.title = "hamr";
+	process.env.HAMR_CODING_AGENT = "true";
+	process.env.PI_CODING_AGENT = "true";
+	await runCodingAgent(normalizeArgs(process.argv.slice(2)));
 }
 
 main().catch((err: Error) => {

@@ -25,6 +25,7 @@
   "dependencies": {
     "@hamr/agent": "*",
     "@hamr/ai": "*",
+    "@hamr/coding-agent": "*",
     "chalk": "5.6.2",
     "commander": "^14.0.0",
     "cross-spawn": "7.0.6",

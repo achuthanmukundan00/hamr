@@ -7,14 +7,14 @@
     "../sexy-tui-rs"
   ],
   "scripts": {
-    "clean": "cd packages/ai && npm run clean && cd ../agent && npm run clean && cd ../hamr && npm run clean",
-    "build": "cd packages/ai && npm run build && cd ../agent && npm run build && cd ../hamr && npm run build",
-    "typecheck": "tsgo -p packages/ai/tsconfig.build.json --noEmit && tsgo -p packages/agent/tsconfig.build.json --noEmit && tsgo -p packages/hamr/tsconfig.build.json --noEmit",
+    "clean": "cd packages/tui && npm run clean && cd ../ai && npm run clean && cd ../agent && npm run clean && cd ../coding-agent && npm run clean",
+    "build": "cd packages/tui && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build",
+    "typecheck": "tsgo -p packages/tui/tsconfig.build.json && tsgo -p packages/ai/tsconfig.build.json && tsgo -p packages/agent/tsconfig.build.json && tsgo -p packages/coding-agent/tsconfig.build.json --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "test": "cd packages/ai && npm run test && cd ../agent && npm run test && cd ../hamr && npm run test",
+    "test": "cd packages/tui && npm run test && cd ../ai && npm run test && cd ../agent && npm run test && cd ../coding-agent && npm run test",
     "verify": "npm run typecheck && npm run lint && npm run build && npm run test",
-    "hamr": "bun packages/hamr/dist/cli.js"
+    "hamr": "node packages/coding-agent/dist/cli.js"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
@@ -26,7 +26,7 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "packageManager": "bun@1.3.14",
+  "packageManager": "npm@11.6.2",
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1070.0",
     "@google/genai": "^2.8.0",

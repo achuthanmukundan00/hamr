@@ -1,0 +1,107 @@
+import { Key } from "@hamr/tui";
+import type { Component, TUI } from "@hamr/tui";
+import type { Theme } from "../modes/interactive/theme/theme.ts";
+import type { ExtensionContext, ExtensionAPI } from "../core/extensions/types.ts";
+import type { ReadonlyFooterDataProvider } from "../core/footer-data-provider.ts";
+
+class PersistentFooterComponent implements Component {
+	private ctx: ExtensionContext;
+	private theme: Theme;
+	private footerData: ReadonlyFooterDataProvider;
+
+	constructor(ctx: ExtensionContext, theme: Theme, footerData: ReadonlyFooterDataProvider) {
+		this.ctx = ctx;
+		this.theme = theme;
+		this.footerData = footerData;
+	}
+
+	invalidate(): void {}
+	dispose(): void {}
+
+	render(width: number): string[] {
+		const lines: string[] = [];
+		const th = this.theme;
+
+		const editorText = this.ctx.ui.getEditorText();
+		const promptPrefix = "persistent> ";
+		const promptStr = editorText.length > 0
+			? `${promptPrefix}${editorText}`
+			: `${promptPrefix}${th.fg("dim", "type a message...")}`;
+		lines.push(promptStr.length > width ? promptStr.slice(0, width) : promptStr);
+
+		const cwd = this.ctx.cwd;
+		const branch = this.footerData.getGitBranch();
+		const pwdStr = branch ? `${cwd} (${branch})` : cwd;
+		lines.push(th.fg("dim", pwdStr.length > width ? pwdStr.slice(0, width) : pwdStr));
+
+		const modelName = this.ctx.model?.id ?? "no-model";
+		let statsLine = modelName;
+		try {
+			const usage = this.ctx.getContextUsage();
+			if (usage) {
+				const pct = usage.percent !== null ? `${usage.percent.toFixed(1)}%` : "?";
+				const windowStr = usage.contextWindow > 0
+					? usage.contextWindow < 1000 ? String(usage.contextWindow) : `${Math.round(usage.contextWindow / 1000)}k`
+					: "?";
+				statsLine = `${modelName} | ${pct}/${windowStr}`;
+			}
+		} catch {}
+		lines.push(th.fg("dim", statsLine.length > width ? statsLine.slice(0, width) : statsLine));
+
+		const extensionStatuses = this.footerData.getExtensionStatuses();
+		if (extensionStatuses.size > 0) {
+			const sortedStatuses = Array.from(extensionStatuses.entries())
+				.sort((a, b) => a[0].localeCompare(b[0]))
+				.map((entry) => entry[1]);
+			const statusLine = sortedStatuses.join(" ");
+			lines.push(statusLine.length > width ? statusLine.slice(0, width) : statusLine);
+		}
+
+		return lines;
+	}
+}
+
+export function createPersistentEditorExtension(): (pi: ExtensionAPI) => void {
+	let persistentEnabled = false;
+
+	return function persistentEditorExtension(pi: ExtensionAPI): void {
+		function togglePersistentMode(ctx: ExtensionContext): void {
+			persistentEnabled = !persistentEnabled;
+			if (persistentEnabled) {
+				enablePersistentMode(ctx);
+			} else {
+				disablePersistentMode(ctx);
+			}
+		}
+
+		function enablePersistentMode(ctx: ExtensionContext): void {
+			const th = ctx.ui.theme;
+			ctx.ui.setFooter(
+				(_tui: TUI, theme: Theme, footerData: ReadonlyFooterDataProvider) =>
+					new PersistentFooterComponent(ctx, theme, footerData),
+			);
+			ctx.ui.setStatus("persistent", th.fg("accent", "anchor"));
+			ctx.ui.notify(`Persistent editor ${th.fg("success", "enabled")} (Ctrl+U to toggle)`, "info");
+		}
+
+		function disablePersistentMode(ctx: ExtensionContext): void {
+			ctx.ui.setFooter(undefined);
+			ctx.ui.setStatus("persistent", undefined);
+			ctx.ui.notify(`Persistent editor ${ctx.ui.theme.fg("muted", "disabled")}`, "info");
+		}
+
+		pi.registerShortcut(Key.ctrl("u"), {
+			description: "Toggle persistent editor mode (anchor editor at bottom)",
+			handler: async (ctx: ExtensionContext): Promise<void> => {
+				togglePersistentMode(ctx);
+			},
+		});
+
+		pi.registerCommand("persistent-editor", {
+			description: "Toggle persistent editor mode (anchor editor at bottom)",
+			handler: async (_args: string, ctx: ExtensionContext): Promise<void> => {
+				togglePersistentMode(ctx);
+			},
+		});
+	};
+}
