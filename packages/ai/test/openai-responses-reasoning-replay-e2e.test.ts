@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { getModel } from "../src/models.ts";
 import { complete, getEnvApiKey } from "../src/stream.ts";
 import type { AssistantMessage, Context, Message, Tool, ToolCall } from "../src/types.ts";
+import { hasAnthropicCredentials } from "./credentials.ts";
 
 const testToolSchema = Type.Object({
 	value: Type.Number({ description: "A number to double" }),
@@ -14,7 +15,7 @@ const testTool: Tool<typeof testToolSchema> = {
 	parameters: testToolSchema,
 };
 
-describe.skipIf(!process.env.OPENAI_API_KEY || !process.env.ANTHROPIC_API_KEY)(
+describe.skipIf(!process.env.OPENAI_API_KEY || !hasAnthropicCredentials())(
 	"OpenAI Responses reasoning replay e2e",
 	() => {
 		it("skips reasoning-only history after an aborted turn", { retry: 2 }, async () => {
@@ -47,7 +48,7 @@ describe.skipIf(!process.env.OPENAI_API_KEY || !process.env.ANTHROPIC_API_KEY)(
 			const thinkingBlock = assistantResponse.content.find(
 				(block) => block.type === "thinking" && block.thinkingSignature,
 			);
-			if (!thinkingBlock || thinkingBlock.type !== "thinking") {
+			if (thinkingBlock?.type !== "thinking") {
 				throw new Error("Missing thinking signature from OpenAI Responses");
 			}
 

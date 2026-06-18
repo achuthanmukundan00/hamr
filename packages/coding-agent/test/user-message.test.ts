@@ -22,4 +22,16 @@ describe("UserMessageComponent", () => {
 		expect(lines[2].startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
 		expect(lines[2].endsWith(BG_RESET)).toBe(true);
 	});
+
+	test("uses the neutral prompt surface instead of tinting the whole card with model color", () => {
+		initTheme("dark");
+
+		const component = new UserMessageComponent("hello", undefined, "#f06030", "M");
+		const rendered = component.render(40).join("\n");
+
+		expect(rendered).toContain("PROMPT");
+		expect(rendered).toContain("hello");
+		expect(rendered).not.toContain("\x1b[48;2;29;12;6m");
+		expect(rendered).toContain("\x1b[48;2;52;53;65m");
+	});
 });

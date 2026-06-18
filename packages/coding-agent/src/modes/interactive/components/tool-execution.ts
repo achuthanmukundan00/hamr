@@ -10,6 +10,7 @@ export interface ToolExecutionOptions {
 	imageWidthCells?: number;
 }
 
+
 export class ToolExecutionComponent extends Container {
 	private contentBox: Box;
 	private contentText: Text;
@@ -60,13 +61,15 @@ export class ToolExecutionComponent extends Container {
 		this.ui = ui;
 		this.cwd = cwd;
 
-		this.addChild(new Spacer(1));
-
 		// Always create all shell variants. contentBox is used for default renderer-based composition.
 		// selfRenderContainer is used when the tool renders its own framing.
 		// contentText is reserved for generic fallback rendering when no tool definition exists.
-		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
-		this.contentText = new Text("", 1, 1, (text: string) => theme.bg("toolPendingBg", text));
+		// theme.cards.toolIndent aligns default tool content with the message
+		// cards' content margin (PROMPT/RESPONSE headings). Self-rendering tools
+		// get the same indent applied in render().
+		const toolIndent = theme.cards.toolIndent;
+		this.contentBox = new Box(toolIndent, 1, (text: string) => theme.bg("toolPendingBg", text));
+		this.contentText = new Text("", toolIndent, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.selfRenderContainer = new Container();
 
 		if (this.hasRendererDefinition()) {
@@ -224,7 +227,13 @@ export class ToolExecutionComponent extends Container {
 		}
 
 		if (this.hasRendererDefinition() && this.getRenderShell() === "self") {
-			const contentLines = this.selfRenderContainer.render(width);
+			// Self-rendering tools (search_memory, read, image view, diffs, …) draw
+			// their own framing, so they bypass the padded contentBox. Indent their
+			// output here so every tool obeys the same content margin as the cards.
+			const toolIndent = theme.cards.toolIndent;
+			const innerWidth = Math.max(1, width - toolIndent);
+			const pad = " ".repeat(toolIndent);
+			const contentLines = this.selfRenderContainer.render(innerWidth);
 			if (contentLines.length === 0 && this.imageComponents.length === 0) {
 				return [];
 			}
@@ -232,16 +241,16 @@ export class ToolExecutionComponent extends Container {
 			const lines: string[] = [];
 			if (contentLines.length > 0) {
 				lines.push("");
-				lines.push(...contentLines);
+				lines.push(...contentLines.map((line) => (line.length > 0 ? pad + line : line)));
 			}
 			for (let i = 0; i < this.imageComponents.length; i++) {
 				const spacer = this.imageSpacers[i];
 				if (spacer) {
-					lines.push(...spacer.render(width));
+					lines.push(...spacer.render(innerWidth).map((line) => (line.length > 0 ? pad + line : line)));
 				}
 				const imageComponent = this.imageComponents[i];
 				if (imageComponent) {
-					lines.push(...imageComponent.render(width));
+					lines.push(...imageComponent.render(innerWidth).map((line) => (line.length > 0 ? pad + line : line)));
 				}
 			}
 			return lines;

@@ -3,6 +3,7 @@ import { getModel } from "../src/models.ts";
 import { complete } from "../src/stream.ts";
 import type { Api, Context, Model, StreamOptions } from "../src/types.ts";
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
+import { hasAnthropicCredentials } from "./credentials.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
@@ -70,7 +71,7 @@ describe("responseId E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Provider", () => {
+	describe.skipIf(!hasAnthropicCredentials())("Anthropic Provider", () => {
 		const llm = getModel("anthropic", "claude-sonnet-4-5");
 
 		it("should expose responseId", { retry: 3, timeout: 30000 }, async () => {

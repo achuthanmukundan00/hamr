@@ -1,7 +1,21 @@
 {
   "$schema": "./theme-schema.json",
   "name": "hamr",
-  "layout": { "cardPadX": 2, "cardPadY": 1 },
+  "modelAdaptive": true,
+  "cards": {
+    "showHeadings": true,
+    "headingGlyph": "model",
+    "promptLabel": "PROMPT",
+    "responseLabel": "RESPONSE",
+    "thoughtLabel": "THOUGHT",
+    "headingIndent": 1,
+    "bodyIndent": 3,
+    "toolIndent": 2,
+    "cardPadX": 1,
+    "cardPadY": 1,
+    "thinkingShaded": false,
+    "gaplessCards": true
+  },
   "vars": {
     "cyan": "#00d7ff",
     "blue": "#5f87ff",
@@ -41,7 +55,7 @@
     "customMessageText": "text",
     "customMessageLabel": "#9575cd",
     "toolPendingBg": "toolPendingBg",
-    "toolSuccessBg": "toolSuccessBg",
+    "toolSuccessBg": "cardBg",
     "toolErrorBg": "toolErrorBg",
     "toolWarningBg": "toolPendingBg",
     "toolTitle": "text",

@@ -8,7 +8,7 @@ Pi packages bundle extensions, skills, prompt templates, and themes so you can s
 
 - [Install and Manage](#install-and-manage)
 - [Package Sources](#package-sources)
-- [Creating a Pi Package](#creating-a-pi-package)
+- [Creating a Pi Package](#creating-a-hamr-package)
 - [Package Structure](#package-structure)
 - [Dependencies](#dependencies)
 - [Package Filtering](#package-filtering)
@@ -38,7 +38,7 @@ pi update --extension npm:@foo/bar
 
 These commands manage pi packages, not the pi CLI installation. To uninstall pi itself, see [Quickstart](quickstart.md#uninstall).
 
-By default, `install` and `remove` write to user settings (`~/.pi/agent/settings.json`). Use `-l` to write to project settings (`.pi/settings.json`) instead. Project settings can be shared with your team, and pi installs any missing packages automatically on startup after the project is trusted.
+By default, `install` and `remove` write to user settings (`~/.hamr/agent/settings.json`). Use `-l` to write to project settings (`.hamr/settings.json`) instead. Project settings can be shared with your team, and pi installs any missing packages automatically on startup after the project is trusted.
 
 To try a package without installing it, use `--extension` or `-e`. This installs to a temporary directory for the current run only:
 
@@ -59,8 +59,8 @@ npm:pkg
 ```
 
 - Versioned specs are pinned and skipped by package updates (`pi update`, `pi update --extensions`).
-- User installs go under `~/.pi/agent/npm/`.
-- Project installs go under `.pi/npm/`.
+- User installs go under `~/.hamr/agent/npm/`.
+- Project installs go under `.hamr/npm/`.
 - Set `npmCommand` in `settings.json` to pin npm package lookup and install operations to a specific wrapper command such as `mise` or `asdf`.
 
 Example:
@@ -87,7 +87,7 @@ ssh://git@github.com/user/repo@v1
 - For non-interactive runs (for example CI), you can set `GIT_TERMINAL_PROMPT=0` to disable credential prompts and set `GIT_SSH_COMMAND` (for example `ssh -o BatchMode=yes -o ConnectTimeout=5`) to fail fast.
 - Refs are pinned tags or commits. `pi update` and `pi update --extensions` do not move them to newer refs, but they do reconcile an existing clone to the configured ref.
 - Use `pi install git:host/user/repo@new-ref` to update settings and move an existing package to a new pinned ref.
-- Cloned to `~/.pi/agent/git/<host>/<path>` (global) or `.pi/git/<host>/<path>` (project).
+- Cloned to `~/.hamr/agent/git/<host>/<path>` (global) or `.hamr/git/<host>/<path>` (project).
 - When reconciliation changes the checkout, pi resets and cleans the clone, then runs `npm install` if `package.json` exists.
 
 **SSH examples:**
@@ -113,12 +113,12 @@ Local paths point to files or directories on disk and are added to settings with
 
 ## Creating a Pi Package
 
-Add a `pi` manifest to `package.json` or use conventional directories. Include the `pi-package` keyword for discoverability.
+Add a `pi` manifest to `package.json` or use conventional directories. Include the `hamr-package` keyword for discoverability.
 
 ```json
 {
   "name": "my-package",
-  "keywords": ["pi-package"],
+  "keywords": ["hamr-package"],
   "pi": {
     "extensions": ["./extensions"],
     "skills": ["./skills"],
@@ -132,12 +132,12 @@ Paths are relative to the package root. Arrays support glob patterns and `!exclu
 
 ### Gallery Metadata
 
-The [package gallery](https://pi.dev/packages) displays packages tagged with `pi-package`. Add `video` or `image` fields to show a preview:
+The [package gallery](https://hamr.dev/packages) displays packages tagged with `hamr-package`. Add `video` or `image` fields to show a preview:
 
 ```json
 {
   "name": "my-package",
-  "keywords": ["pi-package"],
+  "keywords": ["hamr-package"],
   "pi": {
     "extensions": ["./extensions"],
     "video": "https://example.com/demo.mp4",
@@ -215,7 +215,7 @@ Filter what a package loads using the object form in settings:
 
 ## Enable and Disable Resources
 
-Use `pi config` to enable or disable extensions, skills, prompt templates, and themes from installed packages and local directories. Works for both global (`~/.pi/agent`) and project (`.pi/`) scopes.
+Use `pi config` to enable or disable extensions, skills, prompt templates, and themes from installed packages and local directories. Works for both global (`~/.hamr/agent`) and project (`.hamr/`) scopes.
 
 ## Scope and Deduplication
 

@@ -1,0 +1,76 @@
+--- a/packages/coding-agent/src/modes/interactive/theme/theme.ts
++++ b/packages/coding-agent/src/modes/interactive/theme/theme.ts
+@@ -526,6 +526,58 @@
+ 			return fgAnsi("#61afef", this.mode);
+ 		}
+ 
++		/**
++		 * Returns the hex color (without ANSI wrapping) for a model's brand identity.
++		 * Mirrors modelColor() hex lookups but returns raw hex for use in custom
++		 * styling (editor borders, per-message accents, etc.).
++		 */
++		modelHexColor(provider: string, modelLabel?: string): string | undefined {
++			if (!this.modelAdaptive) return undefined;
++			const label = modelLabel?.toLowerCase() ?? "";
++			const prov = provider.toLowerCase();
++
++			if (label) {
++				if (
++					label.includes("claude") ||
++					label.includes("haiku") ||
++					label.includes("sonnet") ||
++					label.includes("opus") ||
++					label.includes("fable") ||
++					label.includes("mythos")
++				) {
++					return "#d08030";
++				}
++				if (label.includes("mistral") || label.includes("codestral") || label.includes("devstral")) {
++					return "#f06030";
++				}
++				if (label.includes("deepseek")) {
++					return "#005faf";
++				}
++				if (label.includes("gemma")) {
++					return "#5098e8";
++				}
++				if (label.includes("gemini")) {
++					return "#4285f4";
++				}
++				if (label.includes("qwen")) {
++					return "#875fff";
++				}
++				if (label.includes("glm")) {
++					return "#00afaf";
++				}
++				if (label.includes("llama") || label.includes("meta")) {
++					return "#0087ff";
++				}
++				if (label.includes("minimax")) {
++					return "#ff4444";
++				}
++				if (label.includes("grok") || label.includes("xai")) {
++					return "#eeeeee";
++				}
++				if (label.includes("moonshot") || label.includes("kimi")) {
++					return "#aaaaaa";
++				}
++				if (label.includes("gpt") || label.includes("openai") || label.startsWith("o1") || label.startsWith("o3")) {
++					return "#cccccc";
++				}
++			}
++
++			if (prov === "anthropic") return "#d08030";
++			if (prov === "openai") return "#cccccc";
++			if (prov === "google" || prov === "gemini") return "#4285f4";
++			if (prov === "mistral" || prov === "codestral" || prov === "devstral") return "#f06030";
++			if (prov === "deepseek") return "#005faf";
++			if (prov === "groq") return "#eeeeee";
++			if (prov === "moonshot" || prov === "kimi") return "#aaaaaa";
++
++			return "#61afef";
++		}
++
+ 	}
+ 
+ 	// ============================================================================

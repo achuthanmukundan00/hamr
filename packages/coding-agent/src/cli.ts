@@ -7,10 +7,11 @@
  */
 import { APP_NAME } from "./config.ts";
 import { configureHttpDispatcher } from "./core/http-dispatcher.ts";
-import { hamrBuiltinExtension } from "./hamr/extension.ts";
+import { hamrDefaultExtensions } from "./hamr/extensions/index.ts";
 import { main } from "./main.ts";
 
 process.title = APP_NAME;
+process.env.HAMR_CODING_AGENT = "true";
 process.env.PI_CODING_AGENT = "true";
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
@@ -39,4 +40,4 @@ function normalizeHamrArgs(args: string[]): string[] {
 	return normalized;
 }
 
-main(normalizeHamrArgs(process.argv.slice(2)), { extensionFactories: [hamrBuiltinExtension] });
+main(normalizeHamrArgs(process.argv.slice(2)), { extensionFactories: hamrDefaultExtensions });

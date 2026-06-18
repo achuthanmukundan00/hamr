@@ -41,6 +41,13 @@ const DEFAULT_PROJECT_TRUST_BY_LABEL = new Map(
 	Object.entries(DEFAULT_PROJECT_TRUST_LABELS).map(([value, label]) => [label, value as DefaultProjectTrust]),
 );
 
+function hexToAnsiFg(hex: string): string {
+	const r = parseInt(hex.slice(1, 3), 16);
+	const g = parseInt(hex.slice(3, 5), 16);
+	const b = parseInt(hex.slice(5, 7), 16);
+	return `\x1b[38;2;${r};${g};${b}m`;
+}
+
 export interface SettingsConfig {
 	autoCompact: boolean;
 	showImages: boolean;
@@ -69,6 +76,8 @@ export interface SettingsConfig {
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
 	warnings: WarningSettings;
+	/** Active model's brand accent hex (e.g. "#d08030"). Used to tint section titles when modelAdaptive is true. */
+	modelAccent?: string;
 }
 
 export interface SettingsCallbacks {
@@ -157,11 +166,16 @@ class SelectSubmenu extends Container {
 		onSelect: (value: string) => void,
 		onCancel: () => void,
 		onSelectionChange?: (value: string) => void,
+		modelAccent?: string,
 	) {
 		super();
 
-		// Title
-		this.addChild(new Text(theme.bold(theme.fg("accent", title)), 0, 0));
+		// Title — uses model brand color when modelAdaptive, theme accent otherwise
+		const titleColor =
+			modelAccent && theme.modelAdaptive
+				? (s: string) => `${hexToAnsiFg(modelAccent)}${s}\x1b[39m`
+				: (s: string) => theme.fg("accent", s);
+		this.addChild(new Text(theme.bold(titleColor(title)), 0, 0));
 
 		// Description
 		if (description) {
@@ -222,114 +236,16 @@ export class SettingsSelectorComponent extends Container {
 		const supportsImages = getCapabilities().images;
 		const followUpKey = keyDisplayText("app.message.followUp");
 		let currentWarnings = { ...config.warnings };
+		const accent = config.modelAccent;
 
 		const items: SettingItem[] = [
-			{
-				id: "autocompact",
-				label: "Auto-compact",
-				description: "Automatically compact context when it gets too large",
-				currentValue: config.autoCompact ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "steering-mode",
-				label: "Steering mode",
-				description:
-					"Enter while streaming queues steering messages. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.",
-				currentValue: config.steeringMode,
-				values: ["one-at-a-time", "all"],
-			},
-			{
-				id: "follow-up-mode",
-				label: "Follow-up mode",
-				description: `${followUpKey} queues follow-up messages until agent stops. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.`,
-				currentValue: config.followUpMode,
-				values: ["one-at-a-time", "all"],
-			},
-			{
-				id: "transport",
-				label: "Transport",
-				description: "Preferred transport for providers that support multiple transports",
-				currentValue: config.transport,
-				values: ["sse", "websocket", "websocket-cached", "auto"],
-			},
-			{
-				id: "http-idle-timeout",
-				label: "HTTP idle timeout",
-				description:
-					"Maximum idle gap while waiting for HTTP headers or body chunks. Disable for local models that pause longer than five minutes.",
-				currentValue: formatHttpIdleTimeoutMs(config.httpIdleTimeoutMs),
-				values: HTTP_IDLE_TIMEOUT_CHOICES.map((choice) => choice.label),
-			},
-			{
-				id: "hide-thinking",
-				label: "Hide thinking",
-				description: "Hide thinking blocks in assistant responses",
-				currentValue: config.hideThinkingBlock ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "collapse-changelog",
-				label: "Collapse changelog",
-				description: "Show condensed changelog after updates",
-				currentValue: config.collapseChangelog ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "quiet-startup",
-				label: "Quiet startup",
-				description: "Disable verbose printing at startup",
-				currentValue: config.quietStartup ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "install-telemetry",
-				label: "Install telemetry",
-				description: "Send an anonymous version/update ping after changelog-detected updates",
-				currentValue: config.enableInstallTelemetry ? "true" : "false",
-				values: ["true", "false"],
-			},
-			{
-				id: "default-project-trust",
-				label: "Default project trust",
-				description: "Fallback behavior when no extension or saved trust decision decides project trust",
-				currentValue: DEFAULT_PROJECT_TRUST_LABELS[config.defaultProjectTrust],
-				values: Object.values(DEFAULT_PROJECT_TRUST_LABELS),
-			},
-			{
-				id: "double-escape-action",
-				label: "Double-escape action",
-				description: "Action when pressing Escape twice with empty editor",
-				currentValue: config.doubleEscapeAction,
-				values: ["tree", "fork", "none"],
-			},
-			{
-				id: "tree-filter-mode",
-				label: "Tree filter mode",
-				description: "Default filter when opening /tree",
-				currentValue: config.treeFilterMode,
-				values: ["default", "no-tools", "user-only", "labeled-only", "all"],
-			},
-			{
-				id: "warnings",
-				label: "Warnings",
-				description: "Enable or disable individual warnings",
-				currentValue: "configure",
-				submenu: (_currentValue, done) =>
-					new WarningSettingsSubmenu(
-						currentWarnings,
-						(warnings) => {
-							currentWarnings = warnings;
-							callbacks.onWarningsChange(warnings);
-						},
-						() => done(),
-					),
-			},
+			// ── Model ──
 			{
 				id: "thinking",
 				label: "Thinking level",
 				description: "Reasoning depth for thinking-capable models",
 				currentValue: config.thinkingLevel,
+				section: "Model",
 				submenu: (currentValue, done) =>
 					new SelectSubmenu(
 						"Thinking Level",
@@ -345,13 +261,24 @@ export class SettingsSelectorComponent extends Container {
 							done(value);
 						},
 						() => done(),
+						undefined,
+						accent,
 					),
 			},
+			{
+				id: "transport",
+				label: "Transport",
+				description: "Preferred transport for providers that support multiple transports",
+				currentValue: config.transport,
+				values: ["sse", "websocket", "websocket-cached", "auto"],
+			},
+			// ── Display ──
 			{
 				id: "theme",
 				label: "Theme",
 				description: "Color theme for the interface",
 				currentValue: config.currentTheme,
+				section: "Display",
 				submenu: (currentValue, done) =>
 					new SelectSubmenu(
 						"Theme",
@@ -374,21 +301,135 @@ export class SettingsSelectorComponent extends Container {
 							// Preview theme on selection change
 							callbacks.onThemePreview?.(value);
 						},
+						accent,
 					),
+			},
+			{
+				id: "hide-thinking",
+				label: "Hide thinking",
+				description: "Hide thinking blocks in assistant responses",
+				currentValue: config.hideThinkingBlock ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "collapse-changelog",
+				label: "Collapse changelog",
+				description: "Show condensed changelog after updates",
+				currentValue: config.collapseChangelog ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "tree-filter-mode",
+				label: "Tree filter mode",
+				description: "Default filter when opening /tree",
+				currentValue: config.treeFilterMode,
+				values: ["default", "no-tools", "user-only", "labeled-only", "all"],
+			},
+			{
+				id: "autocompact",
+				label: "Auto-compact",
+				description: "Automatically compact context when it gets too large",
+				currentValue: config.autoCompact ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "clear-on-shrink",
+				label: "Clear on shrink",
+				description: "Clear empty rows when content shrinks (may cause flicker)",
+				currentValue: config.clearOnShrink ? "true" : "false",
+				values: ["true", "false"],
+			},
+			// ── Session ──
+			{
+				id: "steering-mode",
+				label: "Steering mode",
+				description:
+					"Enter while streaming queues steering messages. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.",
+				currentValue: config.steeringMode,
+				values: ["one-at-a-time", "all"],
+				section: "Session",
+			},
+			{
+				id: "follow-up-mode",
+				label: "Follow-up mode",
+				description: `${followUpKey} queues follow-up messages until agent stops. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.`,
+				currentValue: config.followUpMode,
+				values: ["one-at-a-time", "all"],
+			},
+			{
+				id: "double-escape-action",
+				label: "Double-escape action",
+				description: "Action when pressing Escape twice with empty editor",
+				currentValue: config.doubleEscapeAction,
+				values: ["tree", "fork", "none"],
+			},
+			{
+				id: "quiet-startup",
+				label: "Quiet startup",
+				description: "Disable verbose printing at startup",
+				currentValue: config.quietStartup ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "skill-commands",
+				label: "Skill commands",
+				description: "Register skills as /skill:name commands",
+				currentValue: config.enableSkillCommands ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "install-telemetry",
+				label: "Install telemetry",
+				description: "Send an anonymous version/update ping after changelog-detected updates",
+				currentValue: config.enableInstallTelemetry ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "default-project-trust",
+				label: "Default project trust",
+				description: "Fallback behavior when no extension or saved trust decision decides project trust",
+				currentValue: DEFAULT_PROJECT_TRUST_LABELS[config.defaultProjectTrust],
+				values: Object.values(DEFAULT_PROJECT_TRUST_LABELS),
+			},
+			{
+				id: "warnings",
+				label: "Warnings",
+				description: "Enable or disable individual warnings",
+				currentValue: "configure",
+				submenu: (_currentValue, done) =>
+					new WarningSettingsSubmenu(
+						currentWarnings,
+						(warnings) => {
+							currentWarnings = warnings;
+							callbacks.onWarningsChange(warnings);
+						},
+						() => done(),
+					),
+			},
+			// ── Network ──
+			{
+				id: "http-idle-timeout",
+				label: "HTTP idle timeout",
+				description:
+					"Maximum idle gap while waiting for HTTP headers or body chunks. Disable for local models that pause longer than five minutes.",
+				currentValue: formatHttpIdleTimeoutMs(config.httpIdleTimeoutMs),
+				values: HTTP_IDLE_TIMEOUT_CHOICES.map((choice) => choice.label),
+				section: "Network",
 			},
 		];
 
-		// Only show image toggle if terminal supports it
+		// Insert conditional display items after theme (index 2 in base).
+		// Image toggles only when terminal supports it.
+		let insertAt = items.findIndex((i) => i.id === "theme") + 1;
 		if (supportsImages) {
-			// Insert after autocompact
-			items.splice(1, 0, {
+			items.splice(insertAt++, 0, {
 				id: "show-images",
 				label: "Show images",
 				description: "Render images inline in terminal",
 				currentValue: config.showImages ? "true" : "false",
 				values: ["true", "false"],
 			});
-			items.splice(2, 0, {
+			items.splice(insertAt++, 0, {
 				id: "image-width-cells",
 				label: "Image width",
 				description: "Preferred inline image width in terminal cells",
@@ -396,79 +437,42 @@ export class SettingsSelectorComponent extends Container {
 				values: ["60", "80", "120"],
 			});
 		}
-
-		// Image auto-resize toggle (always available, affects both attached and read images)
-		items.splice(supportsImages ? 3 : 1, 0, {
+		items.splice(insertAt++, 0, {
 			id: "auto-resize-images",
 			label: "Auto-resize images",
 			description: "Resize large images to 2000x2000 max for better model compatibility",
 			currentValue: config.autoResizeImages ? "true" : "false",
 			values: ["true", "false"],
 		});
-
-		// Block images toggle (always available, insert after auto-resize-images)
-		const autoResizeIndex = items.findIndex((item) => item.id === "auto-resize-images");
-		items.splice(autoResizeIndex + 1, 0, {
+		items.splice(insertAt++, 0, {
 			id: "block-images",
 			label: "Block images",
 			description: "Prevent images from being sent to LLM providers",
 			currentValue: config.blockImages ? "true" : "false",
 			values: ["true", "false"],
 		});
-
-		// Skill commands toggle (insert after block-images)
-		const blockImagesIndex = items.findIndex((item) => item.id === "block-images");
-		items.splice(blockImagesIndex + 1, 0, {
-			id: "skill-commands",
-			label: "Skill commands",
-			description: "Register skills as /skill:name commands",
-			currentValue: config.enableSkillCommands ? "true" : "false",
-			values: ["true", "false"],
-		});
-
-		// Hardware cursor toggle (insert after skill-commands)
-		const skillCommandsIndex = items.findIndex((item) => item.id === "skill-commands");
-		items.splice(skillCommandsIndex + 1, 0, {
+		items.splice(insertAt++, 0, {
 			id: "show-hardware-cursor",
 			label: "Show hardware cursor",
 			description: "Show the terminal cursor while still positioning it for IME support",
 			currentValue: config.showHardwareCursor ? "true" : "false",
 			values: ["true", "false"],
 		});
-
-		// Editor padding toggle (insert after show-hardware-cursor)
-		const hardwareCursorIndex = items.findIndex((item) => item.id === "show-hardware-cursor");
-		items.splice(hardwareCursorIndex + 1, 0, {
+		items.splice(insertAt++, 0, {
 			id: "editor-padding",
 			label: "Editor padding",
 			description: "Horizontal padding for input editor (0-3)",
 			currentValue: String(config.editorPaddingX),
 			values: ["0", "1", "2", "3"],
 		});
-
-		// Autocomplete max visible toggle (insert after editor-padding)
-		const editorPaddingIndex = items.findIndex((item) => item.id === "editor-padding");
-		items.splice(editorPaddingIndex + 1, 0, {
+		items.splice(insertAt++, 0, {
 			id: "autocomplete-max-visible",
 			label: "Autocomplete max items",
 			description: "Max visible items in autocomplete dropdown (3-20)",
 			currentValue: String(config.autocompleteMaxVisible),
 			values: ["3", "5", "7", "10", "15", "20"],
 		});
-
-		// Clear on shrink toggle (insert after autocomplete-max-visible)
-		const autocompleteIndex = items.findIndex((item) => item.id === "autocomplete-max-visible");
-		items.splice(autocompleteIndex + 1, 0, {
-			id: "clear-on-shrink",
-			label: "Clear on shrink",
-			description: "Clear empty rows when content shrinks (may cause flicker)",
-			currentValue: config.clearOnShrink ? "true" : "false",
-			values: ["true", "false"],
-		});
-
-		// Terminal progress toggle (insert after clear-on-shrink)
-		const clearOnShrinkIndex = items.findIndex((item) => item.id === "clear-on-shrink");
-		items.splice(clearOnShrinkIndex + 1, 0, {
+		items.splice(insertAt++, 0, {
 			id: "terminal-progress",
 			label: "Terminal progress",
 			description: "Show OSC 9;4 progress indicators in the terminal tab bar",

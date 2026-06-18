@@ -16,7 +16,9 @@
 		"toolPendingBg": "#e8e8f0",
 		"toolSuccessBg": "#e8f0e8",
 		"toolErrorBg": "#f0e8e8",
-		"customMsgBg": "#ede7f6"
+		"customMsgBg": "#ede7f6",
+		"pageBg": "#f8f8f8",
+		"cardBg": "#ffffff"
 	},
 	"colors": {
 		"accent": "teal",
@@ -75,7 +77,20 @@
 		"thinkingHigh": "#875f87",
 		"thinkingXhigh": "#8b008b",
 
-		"bashMode": "green"
+		"bashMode": "green",
+
+		"toolDiffAddedBg": "#e0ffe0",
+		"toolDiffRemovedBg": "#ffe0e0",
+		"toolWarningBg": "toolPendingBg",
+		"editorBg": "pageBg",
+		"editorFg": "text",
+		"editorCursor": "accent",
+		"editorSelection": "selectedBg",
+		"editorLineNumber": "dimGray",
+		"statusBarBg": "#f0f0f0",
+		"surfaceBg": "cardBg",
+		"cardBg": "cardBg",
+		"thinkingBg": "#f0f0f0"
 	},
 	"export": {
 		"pageBg": "#f8f8f8",

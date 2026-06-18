@@ -109,6 +109,7 @@ export class FooterDataProvider {
 	private reftableWatcher: FSWatcher | null = null;
 	private reftableTablesListWatcher: FSWatcher | null = null;
 	private reftableTablesListPath: string | null = null;
+	private reftableTablesListWatchFileListener: ((current: Stats, previous: Stats) => void) | null = null;
 	private branchChangeCallbacks = new Set<() => void>();
 	private availableProviderCount = 0;
 	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -199,10 +200,13 @@ export class FooterDataProvider {
 	}
 
 	private scheduleRefresh(): void {
-		if (this.disposed || this.refreshTimer) return;
+		if (this.disposed) return;
 		if (this.refreshInFlight) {
 			this.refreshPending = true;
 			return;
+		}
+		if (this.refreshTimer) {
+			clearTimeout(this.refreshTimer);
 		}
 		this.refreshTimer = setTimeout(() => {
 			this.refreshTimer = null;
@@ -279,9 +283,14 @@ export class FooterDataProvider {
 		closeWatcher(this.reftableTablesListWatcher);
 		this.reftableTablesListWatcher = null;
 		if (this.reftableTablesListPath) {
-			unwatchFile(this.reftableTablesListPath);
+			if (this.reftableTablesListWatchFileListener) {
+				unwatchFile(this.reftableTablesListPath, this.reftableTablesListWatchFileListener);
+			} else {
+				unwatchFile(this.reftableTablesListPath);
+			}
 			this.reftableTablesListPath = null;
 		}
+		this.reftableTablesListWatchFileListener = null;
 		if (this.gitWatcherRetryTimer) {
 			clearTimeout(this.gitWatcherRetryTimer);
 			this.gitWatcherRetryTimer = null;
@@ -345,7 +354,7 @@ export class FooterDataProvider {
 		if (existsSync(reftableDir)) {
 			this.reftableWatcher = watchWithErrorHandler(
 				reftableDir,
-				() => {
+				(_eventType, _filename) => {
 					this.scheduleRefresh();
 				},
 				() => this.handleGitWatcherError(),
@@ -367,7 +376,7 @@ export class FooterDataProvider {
 				if (!this.reftableTablesListWatcher) {
 					return;
 				}
-				watchFile(tablesListPath, { interval: 250 }, (current, previous) => {
+				this.reftableTablesListWatchFileListener = (current, previous) => {
 					if (
 						current.mtimeMs !== previous.mtimeMs ||
 						current.ctimeMs !== previous.ctimeMs ||
@@ -375,7 +384,8 @@ export class FooterDataProvider {
 					) {
 						this.scheduleRefresh();
 					}
-				});
+				};
+				watchFile(tablesListPath, { interval: 250 }, this.reftableTablesListWatchFileListener);
 			}
 		}
 	}

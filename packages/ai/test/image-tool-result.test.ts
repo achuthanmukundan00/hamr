@@ -10,6 +10,7 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
+import { hasAnthropicCredentials } from "./credentials.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
@@ -66,7 +67,7 @@ async function handleToolWithImageResult<TApi extends Api>(model: Model<TApi>, o
 	// Find the tool call
 	const toolCall = firstResponse.content.find((b) => b.type === "toolCall");
 	expect(toolCall).toBeTruthy();
-	if (!toolCall || toolCall.type !== "toolCall") {
+	if (toolCall?.type !== "toolCall") {
 		throw new Error("Expected tool call");
 	}
 	expect(toolCall.name).toBe("get_circle");
@@ -158,7 +159,7 @@ async function handleToolWithTextAndImageResult<TApi extends Api>(
 	// Find the tool call
 	const toolCall = firstResponse.content.find((b) => b.type === "toolCall");
 	expect(toolCall).toBeTruthy();
-	if (!toolCall || toolCall.type !== "toolCall") {
+	if (toolCall?.type !== "toolCall") {
 		throw new Error("Expected tool call");
 	}
 	expect(toolCall.name).toBe("get_circle_with_description");
@@ -262,7 +263,7 @@ describe("Tool Results with Images", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Provider (claude-haiku-4-5)", () => {
+	describe.skipIf(!hasAnthropicCredentials())("Anthropic Provider (claude-haiku-4-5)", () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
 
 		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {

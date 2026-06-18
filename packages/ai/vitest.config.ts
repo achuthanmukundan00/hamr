@@ -5,5 +5,6 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     testTimeout: 30000, // 30 seconds for API calls
+    setupFiles: ['./test/setup.ts'],
   }
 });

@@ -77,10 +77,12 @@ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
 	"app.thinking.toggle",
 	"app.editor.external",
 	"app.message.followUp",
+	"app.message.dequeue",
 	"tui.input.submit",
 	"tui.select.confirm",
 	"tui.select.cancel",
 	"tui.input.copy",
+	"tui.editor.deleteToLineStart",
 	"tui.editor.deleteToLineEnd",
 ] as const;
 
@@ -483,12 +485,15 @@ export class ExtensionRunner {
 					continue;
 				}
 
-				if (builtInKeybinding?.restrictOverride === false) {
-					addDiagnostic(
-						`Extension shortcut conflict: '${key}' is built-in shortcut for ${builtInKeybinding.keybinding} and ${shortcut.extensionPath}. Using ${shortcut.extensionPath}.`,
-						shortcut.extensionPath,
-					);
-				}
+				// A built-in with `restrictOverride === false` is, by design, overridable
+				// by extensions (only RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS are
+				// protected). Many such built-ins are also context-scoped — e.g. the
+				// app.tree.filter.* shortcuts only apply inside the tree selector, and the
+				// keybinding map intentionally reuses keys across contexts (ctrl+d is both
+				// session.delete and tree.filter.default). A global extension shortcut that
+				// shares one of these keys therefore does not actually conflict, so we don't
+				// surface a startup warning for these intended overrides; the extension
+				// simply wins below.
 
 				const existingExtensionShortcut = extensionShortcuts.get(normalizedKey);
 				if (existingExtensionShortcut) {

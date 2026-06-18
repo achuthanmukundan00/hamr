@@ -76,9 +76,59 @@ function isImageContentBlock(block: { type: string }): block is ImageContent {
 	return block.type === "image";
 }
 
+function mergeAdjacentUserMessages(messages: Message[]): Message[] {
+	const merged: Message[] = [];
+
+	for (const message of messages) {
+		const previous = merged[merged.length - 1];
+		if (message.role === "user" && previous?.role === "user") {
+			previous.content = mergeUserMessageContent(previous.content, message.content);
+			continue;
+		}
+		merged.push(message);
+	}
+
+	return merged;
+}
+
+function mergeUserMessageContent(
+	left: string | (TextContent | ImageContent)[],
+	right: string | (TextContent | ImageContent)[],
+): string | (TextContent | ImageContent)[] {
+	if (typeof left === "string" && typeof right === "string") {
+		if (left.length === 0) return right;
+		if (right.length === 0) return left;
+		return `${left}\n\n${right}`;
+	}
+
+	const leftBlocks: (TextContent | ImageContent)[] =
+		typeof left === "string"
+			? left.length > 0
+				? [{ type: "text", text: left } satisfies TextContent]
+				: []
+			: [...left];
+	const rightBlocks: (TextContent | ImageContent)[] =
+		typeof right === "string"
+			? right.length > 0
+				? [{ type: "text", text: right } satisfies TextContent]
+				: []
+			: [...right];
+
+	if (leftBlocks.length === 0) return rightBlocks;
+	if (rightBlocks.length === 0) return leftBlocks;
+
+	return [...leftBlocks, { type: "text", text: "\n\n" } satisfies TextContent, ...rightBlocks];
+}
+
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+}
+
+interface RawHttpResult {
+	status: number;
+	bodyText: string;
+	headers: Record<string, string>;
 }
 
 interface OpenAICompatCacheControl {
@@ -138,18 +188,22 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 
 		try {
 			const apiKey = options?.apiKey;
-			if (!apiKey) {
+			if (apiKey === undefined || apiKey === null) {
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 			const compat = getCompat(model);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
-			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
-			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, compat, options?.env);
 			let params = buildParams(model, context, options, compat, cacheRetention);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
 			}
+			if (shouldUseRawOpenAICompatibleHttp(model, apiKey, options?.headers)) {
+				await streamOpenAICompatibleWithRawHttp(model, params, output, stream, options);
+				return;
+			}
+			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
+			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, compat, options?.env);
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
@@ -429,7 +483,7 @@ export const streamSimpleOpenAICompletions: StreamFunction<"openai-completions",
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
-	if (!apiKey) {
+	if (apiKey === undefined || apiKey === null) {
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
@@ -444,6 +498,250 @@ export const streamSimpleOpenAICompletions: StreamFunction<"openai-completions",
 		toolChoice,
 	} satisfies OpenAICompletionsOptions);
 };
+
+function shouldUseRawOpenAICompatibleHttp(
+	model: Model<"openai-completions">,
+	apiKey: string,
+	headers?: Record<string, string>,
+): boolean {
+	if (model.provider === "relay" || apiKey === "not-needed") {
+		return true;
+	}
+	if (!headers) {
+		return false;
+	}
+	const headerNames = new Set(Object.keys(headers).map((name) => name.toLowerCase()));
+	return headerNames.has("cf-access-client-id") || headerNames.has("cf-access-client-secret");
+}
+
+function buildRawOpenAICompatibleHeaders(apiKey: string, headers?: Record<string, string>): Record<string, string> {
+	const merged: Record<string, string> = {
+		Accept: "application/json",
+		"Content-Type": "application/json",
+		...(headers ?? {}),
+	};
+	if (apiKey !== "not-needed" && !("Authorization" in merged) && !("authorization" in merged)) {
+		merged.Authorization = `Bearer ${apiKey}`;
+	}
+	return merged;
+}
+
+async function dispatchRawOpenAICompatibleHttp(
+	url: string,
+	body: unknown,
+	headers: Record<string, string>,
+	timeoutMs: number,
+	externalSignal?: AbortSignal,
+): Promise<RawHttpResult> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	const onExternalAbort = () => controller.abort();
+
+	if (externalSignal) {
+		if (externalSignal.aborted) {
+			clearTimeout(timer);
+			throw new Error("Request was aborted");
+		}
+		externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+	}
+
+	try {
+		const response = await fetch(url, {
+			method: "POST",
+			headers,
+			body: JSON.stringify(body),
+			signal: controller.signal,
+		});
+		return {
+			status: response.status,
+			bodyText: await response.text(),
+			headers: headersToRecord(response.headers),
+		};
+	} catch (error) {
+		if (error instanceof DOMException && error.name === "AbortError") {
+			throw new Error(externalSignal?.aborted ? "Request was aborted" : `Request timed out after ${timeoutMs}ms`);
+		}
+		throw error;
+	} finally {
+		clearTimeout(timer);
+		externalSignal?.removeEventListener("abort", onExternalAbort);
+	}
+}
+
+function parseRawOpenAICompatibleError(status: number, bodyText: string): Error {
+	let detail = bodyText.trim();
+	try {
+		const parsed = JSON.parse(bodyText) as Record<string, unknown>;
+		if (parsed.error && typeof parsed.error === "object" && "message" in parsed.error) {
+			detail = String((parsed.error as Record<string, unknown>).message ?? detail);
+		} else if (typeof parsed.message === "string" && parsed.message.trim().length > 0) {
+			detail = parsed.message;
+		}
+	} catch {
+		// Keep the raw body for non-JSON providers / proxies.
+	}
+	return new Error(detail ? `${status} ${detail}` : `Provider error (${status})`);
+}
+
+function pushRawTextBlock(output: AssistantMessage, stream: AssistantMessageEventStream, text: string): void {
+	const block: TextContent = { type: "text", text };
+	output.content.push(block);
+	const contentIndex = output.content.length - 1;
+	stream.push({ type: "text_start", contentIndex, partial: output });
+	stream.push({ type: "text_delta", contentIndex, delta: text, partial: output });
+	stream.push({ type: "text_end", contentIndex, content: text, partial: output });
+}
+
+function pushRawThinkingBlock(
+	output: AssistantMessage,
+	stream: AssistantMessageEventStream,
+	thinking: string,
+	signature: string,
+): void {
+	const block: ThinkingContent = { type: "thinking", thinking, thinkingSignature: signature };
+	output.content.push(block);
+	const contentIndex = output.content.length - 1;
+	stream.push({ type: "thinking_start", contentIndex, partial: output });
+	stream.push({ type: "thinking_delta", contentIndex, delta: thinking, partial: output });
+	stream.push({ type: "thinking_end", contentIndex, content: thinking, partial: output });
+}
+
+function pushRawToolCallBlocks(
+	output: AssistantMessage,
+	stream: AssistantMessageEventStream,
+	toolCalls: unknown,
+): void {
+	if (!Array.isArray(toolCalls)) {
+		return;
+	}
+	for (const rawToolCall of toolCalls) {
+		const toolCallRecord = rawToolCall as {
+			id?: unknown;
+			function?: { name?: unknown; arguments?: unknown };
+		};
+		const rawArguments = toolCallRecord.function?.arguments;
+		const delta =
+			typeof rawArguments === "string"
+				? rawArguments
+				: rawArguments && typeof rawArguments === "object" && !Array.isArray(rawArguments)
+					? JSON.stringify(rawArguments)
+					: "";
+		const block: ToolCall = {
+			type: "toolCall",
+			id: typeof toolCallRecord.id === "string" ? toolCallRecord.id : "",
+			name: typeof toolCallRecord.function?.name === "string" ? toolCallRecord.function.name : "",
+			arguments:
+				typeof rawArguments === "string"
+					? parseStreamingJson(rawArguments)
+					: rawArguments && typeof rawArguments === "object" && !Array.isArray(rawArguments)
+						? (rawArguments as Record<string, unknown>)
+						: {},
+		};
+		output.content.push(block);
+		const contentIndex = output.content.length - 1;
+		stream.push({ type: "toolcall_start", contentIndex, partial: output });
+		stream.push({ type: "toolcall_delta", contentIndex, delta, partial: output });
+		stream.push({ type: "toolcall_end", contentIndex, toolCall: block, partial: output });
+	}
+}
+
+async function streamOpenAICompatibleWithRawHttp(
+	model: Model<"openai-completions">,
+	params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+	output: AssistantMessage,
+	stream: AssistantMessageEventStream,
+	options?: OpenAICompletionsOptions,
+): Promise<void> {
+	const body = { ...params, stream: false } as Record<string, unknown>;
+	delete body.stream_options;
+
+	const headers = buildRawOpenAICompatibleHeaders(options?.apiKey ?? "", options?.headers);
+	const timeoutMs = options?.timeoutMs ?? 600000;
+	const response = await dispatchRawOpenAICompatibleHttp(
+		`${model.baseUrl.replace(/\/+$/, "")}/chat/completions`,
+		body,
+		headers,
+		timeoutMs,
+		options?.signal,
+	);
+
+	await options?.onResponse?.({ status: response.status, headers: response.headers }, model);
+	if (response.status < 200 || response.status >= 300) {
+		throw parseRawOpenAICompatibleError(response.status, response.bodyText);
+	}
+
+	const parsed = JSON.parse(response.bodyText) as {
+		id?: string;
+		model?: string;
+		choices?: Array<{
+			message?: {
+				content?: string | null;
+				reasoning_content?: string;
+				reasoning?: string;
+				reasoning_text?: string;
+				tool_calls?: unknown;
+			};
+			finish_reason?: string | null;
+			usage?: unknown;
+		}>;
+		usage?: unknown;
+	};
+
+	output.responseId = typeof parsed.id === "string" ? parsed.id : undefined;
+	if (typeof parsed.model === "string" && parsed.model.length > 0 && parsed.model !== model.id) {
+		output.responseModel = parsed.model;
+	}
+
+	const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
+	if (parsed.usage) {
+		output.usage = parseChunkUsage(parsed.usage as Record<string, unknown>, model);
+	} else {
+		const choiceUsage = (choice as { usage?: Record<string, unknown> } | undefined)?.usage;
+		if (choiceUsage) {
+			output.usage = parseChunkUsage(choiceUsage, model);
+		}
+	}
+
+	const finishReasonResult = mapStopReason(choice?.finish_reason ?? "stop");
+	output.stopReason = finishReasonResult.stopReason;
+	if (finishReasonResult.errorMessage) {
+		output.errorMessage = finishReasonResult.errorMessage;
+	}
+
+	stream.push({ type: "start", partial: output });
+
+	const message = choice?.message;
+	const reasoning =
+		typeof message?.reasoning_content === "string" && message.reasoning_content.trim().length > 0
+			? message.reasoning_content
+			: typeof message?.reasoning === "string" && message.reasoning.trim().length > 0
+				? message.reasoning
+				: typeof message?.reasoning_text === "string" && message.reasoning_text.trim().length > 0
+					? message.reasoning_text
+					: undefined;
+	if (reasoning) {
+		pushRawThinkingBlock(output, stream, reasoning, "reasoning_content");
+	}
+
+	if (typeof message?.content === "string" && message.content.trim().length > 0) {
+		pushRawTextBlock(output, stream, message.content);
+	}
+
+	pushRawToolCallBlocks(output, stream, message?.tool_calls);
+
+	if (options?.signal?.aborted) {
+		throw new Error("Request was aborted");
+	}
+	if (output.stopReason === "aborted") {
+		throw new Error("Request was aborted");
+	}
+	if (output.stopReason === "error") {
+		throw new Error(output.errorMessage || "Provider returned an error stop reason");
+	}
+
+	stream.push({ type: "done", reason: output.stopReason, message: output });
+	stream.end();
+}
 
 function createClient(
 	model: Model<"openai-completions">,
@@ -482,10 +780,12 @@ function createClient(
 					Authorization: headers.Authorization ?? null,
 					"cf-aig-authorization": `Bearer ${apiKey}`,
 				}
-			: headers;
+			: apiKey === "not-needed"
+				? { ...headers, Authorization: null }
+				: headers;
 
 	return new OpenAI({
-		apiKey,
+		apiKey: apiKey === "not-needed" ? "" : apiKey,
 		baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model, env) : model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders,
@@ -778,7 +1078,9 @@ export function convertMessages(
 		return id;
 	};
 
-	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
+	const transformedMessages = mergeAdjacentUserMessages(
+		transformMessages(context.messages, model, (id) => normalizeToolCallId(id)),
+	);
 
 	if (context.systemPrompt) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;

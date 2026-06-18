@@ -2,132 +2,115 @@
  * Tests for compaction extension events (before_compact / compact).
  */
 
-import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Agent } from "@hamr/agent";
-import { getModel } from "@hamr/ai";
+import { type AssistantMessage, createAssistantMessageEventStream, fauxAssistantMessage } from "@hamr/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AgentSession } from "../src/core/agent-session.ts";
-import { AuthStorage } from "../src/core/auth-storage.ts";
-import {
-	createExtensionRuntime,
-	type Extension,
-	type SessionBeforeCompactEvent,
-	type SessionCompactEvent,
-	type SessionEvent,
-} from "../src/core/extensions/index.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
-import { SessionManager } from "../src/core/session-manager.ts";
-import { SettingsManager } from "../src/core/settings-manager.ts";
-import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
-import { createCodingTools } from "../src/index.ts";
-import { createTestResourceLoader } from "./utilities.ts";
+import type { AgentSession } from "../src/core/agent-session.ts";
+import type { SessionBeforeCompactEvent, SessionCompactEvent, SessionEvent } from "../src/core/extensions/index.ts";
+import type { ExtensionFactory } from "../src/index.ts";
+import { createHarness, type Harness } from "./suite/harness.ts";
 
-const API_KEY = process.env.ANTHROPIC_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
-
-describe.skipIf(!API_KEY)("Compaction extensions", () => {
+describe("Compaction extensions", () => {
+	let harness: Harness | undefined;
 	let session: AgentSession;
-	let tempDir: string;
 	let capturedEvents: SessionEvent[];
 
 	beforeEach(() => {
-		tempDir = join(tmpdir(), `pi-compaction-extensions-test-${Date.now()}`);
-		mkdirSync(tempDir, { recursive: true });
 		capturedEvents = [];
 	});
 
-	afterEach(async () => {
-		if (session) {
-			session.dispose();
-		}
-		if (tempDir && existsSync(tempDir)) {
-			rmSync(tempDir, { recursive: true });
-		}
+	afterEach(() => {
+		harness?.cleanup();
+		harness = undefined;
 	});
+
+	function createUsage(totalTokens: number) {
+		return {
+			input: totalTokens,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+	}
+
+	function createAssistant(harness: Harness): AssistantMessage {
+		const model = harness.getModel();
+		return {
+			...fauxAssistantMessage("assistant response"),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: createUsage(100),
+			stopReason: "stop",
+			timestamp: Date.now() - 500,
+		};
+	}
+
+	function seedCompactableSession(harness: Harness): void {
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "message to compact" }],
+			timestamp: Date.now() - 1000,
+		});
+		harness.sessionManager.appendMessage(createAssistant(harness));
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+	}
+
+	function useSummaryStreamFn(harness: Harness, summary: string): void {
+		harness.session.agent.streamFn = (model) => {
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				stream.push({
+					type: "done",
+					reason: "stop",
+					message: {
+						...fauxAssistantMessage(summary),
+						api: model.api,
+						provider: model.provider,
+						model: model.id,
+						usage: createUsage(10),
+					},
+				});
+			});
+			return stream;
+		};
+	}
 
 	function createExtension(
 		onBeforeCompact?: (event: SessionBeforeCompactEvent) => { cancel?: boolean; compaction?: any } | undefined,
 		onCompact?: (event: SessionCompactEvent) => void,
-	): Extension {
-		const handlers = new Map<string, ((event: any, ctx: any) => Promise<any>)[]>();
-
-		handlers.set("session_before_compact", [
-			async (event: SessionBeforeCompactEvent) => {
+	): ExtensionFactory {
+		return (pi) => {
+			pi.on("session_before_compact", async (event) => {
 				capturedEvents.push(event);
 				if (onBeforeCompact) {
 					return onBeforeCompact(event);
 				}
 				return undefined;
-			},
-		]);
+			});
 
-		handlers.set("session_compact", [
-			async (event: SessionCompactEvent) => {
+			pi.on("session_compact", async (event) => {
 				capturedEvents.push(event);
 				if (onCompact) {
 					onCompact(event);
 				}
 				return undefined;
-			},
-		]);
-
-		return {
-			path: "test-extension",
-			resolvedPath: "/test/test-extension.ts",
-			sourceInfo: createSyntheticSourceInfo("<test:test-extension>", { source: "test" }),
-			handlers,
-			tools: new Map(),
-			messageRenderers: new Map(),
-			commands: new Map(),
-			flags: new Map(),
-			shortcuts: new Map(),
+			});
 		};
 	}
 
-	function createSession(extensions: Extension[]) {
-		const model = getModel("anthropic", "claude-sonnet-4-5")!;
-		const agent = new Agent({
-			getApiKey: () => API_KEY,
-			initialState: {
-				model,
-				systemPrompt: "You are a helpful assistant. Be concise.",
-				tools: createCodingTools(process.cwd()),
-			},
-		});
-
-		const sessionManager = SessionManager.create(tempDir);
-		const settingsManager = SettingsManager.create(tempDir, tempDir);
-		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = ModelRegistry.create(authStorage);
-
-		const runtime = createExtensionRuntime();
-		const resourceLoader = {
-			...createTestResourceLoader(),
-			getExtensions: () => ({ extensions, errors: [], runtime }),
-		};
-
-		session = new AgentSession({
-			agent,
-			sessionManager,
-			settingsManager,
-			cwd: tempDir,
-			modelRegistry,
-			resourceLoader,
-		});
-
+	async function createSession(extensionFactories: ExtensionFactory[]) {
+		harness = await createHarness({ extensionFactories });
+		session = harness.session;
+		seedCompactableSession(harness);
+		useSummaryStreamFn(harness, "Generated test summary");
 		return session;
 	}
 
 	it("should emit before_compact and compact events", async () => {
 		const extension = createExtension();
-		createSession([extension]);
-
-		await session.prompt("What is 2+2? Reply with just the number.");
-		await session.agent.waitForIdle();
-
-		await session.prompt("What is 3+3? Reply with just the number.");
-		await session.agent.waitForIdle();
+		await createSession([extension]);
 
 		await session.compact();
 
@@ -157,10 +140,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 
 	it("should allow extensions to cancel compaction", async () => {
 		const extension = createExtension(() => ({ cancel: true }));
-		createSession([extension]);
-
-		await session.prompt("What is 2+2? Reply with just the number.");
-		await session.agent.waitForIdle();
+		await createSession([extension]);
 
 		await expect(session.compact()).rejects.toThrow("Compaction cancelled");
 
@@ -183,13 +163,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			}
 			return undefined;
 		});
-		createSession([extension]);
-
-		await session.prompt("What is 2+2? Reply with just the number.");
-		await session.agent.waitForIdle();
-
-		await session.prompt("What is 3+3? Reply with just the number.");
-		await session.agent.waitForIdle();
+		await createSession([extension]);
 
 		const result = await session.compact();
 
@@ -207,10 +181,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 
 	it("should include entries in compact event after compaction is saved", async () => {
 		const extension = createExtension();
-		createSession([extension]);
-
-		await session.prompt("What is 2+2? Reply with just the number.");
-		await session.agent.waitForIdle();
+		await createSession([extension]);
 
 		await session.compact();
 
@@ -227,41 +198,19 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 	}, 120000);
 
 	it("should continue with default compaction if extension throws error", async () => {
-		const throwingExtension: Extension = {
-			path: "throwing-extension",
-			resolvedPath: "/test/throwing-extension.ts",
-			sourceInfo: createSyntheticSourceInfo("<test:throwing-extension>", { source: "test" }),
-			handlers: new Map<string, ((event: any, ctx: any) => Promise<any>)[]>([
-				[
-					"session_before_compact",
-					[
-						async (event: SessionBeforeCompactEvent) => {
-							capturedEvents.push(event);
-							throw new Error("Extension intentionally throws");
-						},
-					],
-				],
-				[
-					"session_compact",
-					[
-						async (event: SessionCompactEvent) => {
-							capturedEvents.push(event);
-							return undefined;
-						},
-					],
-				],
-			]),
-			tools: new Map(),
-			messageRenderers: new Map(),
-			commands: new Map(),
-			flags: new Map(),
-			shortcuts: new Map(),
+		const throwingExtension: ExtensionFactory = (pi) => {
+			pi.on("session_before_compact", async (event) => {
+				capturedEvents.push(event);
+				throw new Error("Extension intentionally throws");
+			});
+
+			pi.on("session_compact", async (event) => {
+				capturedEvents.push(event);
+				return undefined;
+			});
 		};
 
-		createSession([throwingExtension]);
-
-		await session.prompt("What is 2+2? Reply with just the number.");
-		await session.agent.waitForIdle();
+		await createSession([throwingExtension]);
 
 		const result = await session.compact();
 
@@ -276,72 +225,31 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 	it("should call multiple extensions in order", async () => {
 		const callOrder: string[] = [];
 
-		const extension1: Extension = {
-			path: "extension1",
-			resolvedPath: "/test/extension1.ts",
-			sourceInfo: createSyntheticSourceInfo("<test:extension1>", { source: "test" }),
-			handlers: new Map<string, ((event: any, ctx: any) => Promise<any>)[]>([
-				[
-					"session_before_compact",
-					[
-						async () => {
-							callOrder.push("extension1-before");
-							return undefined;
-						},
-					],
-				],
-				[
-					"session_compact",
-					[
-						async () => {
-							callOrder.push("extension1-after");
-							return undefined;
-						},
-					],
-				],
-			]),
-			tools: new Map(),
-			messageRenderers: new Map(),
-			commands: new Map(),
-			flags: new Map(),
-			shortcuts: new Map(),
+		const extension1: ExtensionFactory = (pi) => {
+			pi.on("session_before_compact", async () => {
+				callOrder.push("extension1-before");
+				return undefined;
+			});
+
+			pi.on("session_compact", async () => {
+				callOrder.push("extension1-after");
+				return undefined;
+			});
 		};
 
-		const extension2: Extension = {
-			path: "extension2",
-			resolvedPath: "/test/extension2.ts",
-			sourceInfo: createSyntheticSourceInfo("<test:extension2>", { source: "test" }),
-			handlers: new Map<string, ((event: any, ctx: any) => Promise<any>)[]>([
-				[
-					"session_before_compact",
-					[
-						async () => {
-							callOrder.push("extension2-before");
-							return undefined;
-						},
-					],
-				],
-				[
-					"session_compact",
-					[
-						async () => {
-							callOrder.push("extension2-after");
-							return undefined;
-						},
-					],
-				],
-			]),
-			tools: new Map(),
-			messageRenderers: new Map(),
-			commands: new Map(),
-			flags: new Map(),
-			shortcuts: new Map(),
+		const extension2: ExtensionFactory = (pi) => {
+			pi.on("session_before_compact", async () => {
+				callOrder.push("extension2-before");
+				return undefined;
+			});
+
+			pi.on("session_compact", async () => {
+				callOrder.push("extension2-after");
+				return undefined;
+			});
 		};
 
-		createSession([extension1, extension2]);
-
-		await session.prompt("What is 2+2? Reply with just the number.");
-		await session.agent.waitForIdle();
+		await createSession([extension1, extension2]);
 
 		await session.compact();
 
@@ -355,13 +263,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			capturedBeforeEvent = event;
 			return undefined;
 		});
-		createSession([extension]);
-
-		await session.prompt("What is 2+2? Reply with just the number.");
-		await session.agent.waitForIdle();
-
-		await session.prompt("What is 3+3? Reply with just the number.");
-		await session.agent.waitForIdle();
+		await createSession([extension]);
 
 		await session.compact();
 
@@ -402,10 +304,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			}
 			return undefined;
 		});
-		createSession([extension]);
-
-		await session.prompt("What is 2+2? Reply with just the number.");
-		await session.agent.waitForIdle();
+		await createSession([extension]);
 
 		const result = await session.compact();
 

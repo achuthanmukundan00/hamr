@@ -17,12 +17,15 @@ export interface SettingItem {
 	values?: string[];
 	/** If provided, Enter opens this submenu. Receives current value and done callback. */
 	submenu?: (currentValue: string, done: (selectedValue?: string) => void) => Component;
+	/** Optional section header rendered above this item. Only rendered when it differs from the previous item's section. */
+	section?: string;
 }
 
 export interface SettingsListTheme {
 	label: (text: string, selected: boolean) => string;
 	value: (text: string, selected: boolean) => string;
 	description: (text: string) => string;
+	section: (text: string) => string;
 	cursor: string;
 	hint: (text: string) => string;
 }
@@ -120,10 +123,19 @@ export class SettingsList implements Component {
 		// Calculate max label width for alignment
 		const maxLabelWidth = Math.min(30, Math.max(...this.items.map((item) => visibleWidth(item.label))));
 
-		// Render visible items
+		// Render visible items with section headers
+		let lastSection: string | undefined;
 		for (let i = startIndex; i < endIndex; i++) {
 			const item = displayItems[i];
 			if (!item) continue;
+
+			// Render section header when section changes
+			if (item.section && item.section !== lastSection) {
+				lastSection = item.section;
+				lines.push("");
+				lines.push(this.theme.section(`  ${item.section}`));
+				lines.push("");
+			}
 
 			const isSelected = i === this.selectedIndex;
 			const prefix = isSelected ? this.theme.cursor : "  ";

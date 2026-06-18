@@ -9,6 +9,7 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { hasAnthropicCredentials } from "./credentials.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Empty schema for test tools - must be proper OBJECT type for Cloud Code Assist
@@ -350,7 +351,7 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Provider Unicode Handling", () => {
+	describe.skipIf(!hasAnthropicCredentials())("Anthropic Provider Unicode Handling", () => {
 		const llm = getModel("anthropic", "claude-haiku-4-5");
 
 		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {

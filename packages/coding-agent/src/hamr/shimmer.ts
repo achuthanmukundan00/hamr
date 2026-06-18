@@ -1,10 +1,8 @@
 import type { Component } from "@hamr/tui";
-import type { Theme } from "../modes/interactive/theme/theme.ts";
 import type { WorkingIndicatorOptions } from "../core/extensions/types.ts";
+import type { Theme } from "../modes/interactive/theme/theme.ts";
 
-export const SHIMMER_FRAMES: string[] = [
-	"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂", "▁",
-];
+export const SHIMMER_FRAMES: string[] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂", "▁"];
 
 export const RAINBOW_FRAMES: string[] = [
 	"\x1b[31m█\x1b[0m",
@@ -13,6 +11,15 @@ export const RAINBOW_FRAMES: string[] = [
 	"\x1b[36m█\x1b[0m",
 	"\x1b[34m█\x1b[0m",
 	"\x1b[35m█\x1b[0m",
+];
+
+export const RAINBOW_WORD_FRAMES: string[] = [
+	"\x1b[31m● thinking\x1b[0m",
+	"\x1b[33m● thinking\x1b[0m",
+	"\x1b[32m● thinking\x1b[0m",
+	"\x1b[36m● thinking\x1b[0m",
+	"\x1b[34m● thinking\x1b[0m",
+	"\x1b[35m● thinking\x1b[0m",
 ];
 
 export function createShimmerIndicator(thinkingMode?: boolean): WorkingIndicatorOptions {
@@ -29,11 +36,7 @@ export class ShimmerComponent implements Component {
 	private readonly intervalMs: number;
 	private readonly startTime: number;
 
-	constructor(
-		text: string,
-		theme: Theme,
-		options?: { shimmerFrames?: string[]; intervalMs?: number },
-	) {
+	constructor(text: string, theme: Theme, options?: { shimmerFrames?: string[]; intervalMs?: number }) {
 		this.text = text;
 		this.theme = theme;
 		this.frames = options?.shimmerFrames ?? SHIMMER_FRAMES;

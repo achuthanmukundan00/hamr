@@ -47,8 +47,9 @@ export class BashExecutionComponent extends Container {
 		this.contentContainer = new Container();
 		this.addChild(this.contentContainer);
 
-		// Command header
-		const header = new Text(theme.fg(colorKey, theme.bold(`$ ${command}`)), 1, 0);
+		// Command header. Content indents to theme.cards.toolIndent so bash blocks share the
+		// same left margin as the message cards (PROMPT/RESPONSE headings).
+		const header = new Text(theme.fg(colorKey, theme.bold(`$ ${command}`)), theme.cards.toolIndent, 0);
 		this.contentContainer.addChild(header);
 
 		// Loader
@@ -135,7 +136,7 @@ export class BashExecutionComponent extends Container {
 		this.contentContainer.clear();
 
 		// Command header
-		const header = new Text(theme.fg("bashMode", theme.bold(`$ ${this.command}`)), 1, 0);
+		const header = new Text(theme.fg("bashMode", theme.bold(`$ ${this.command}`)), theme.cards.toolIndent, 0);
 		this.contentContainer.addChild(header);
 
 		// Output
@@ -143,7 +144,7 @@ export class BashExecutionComponent extends Container {
 			if (this.expanded) {
 				// Show all lines
 				const displayText = availableLines.map((line) => theme.fg("muted", line)).join("\n");
-				this.contentContainer.addChild(new Text(`\n${displayText}`, 1, 0));
+				this.contentContainer.addChild(new Text(`\n${displayText}`, theme.cards.toolIndent, 0));
 			} else {
 				// Use shared visual truncation utility with width-aware caching
 				const styledOutput = previewLogicalLines.map((line) => theme.fg("muted", line)).join("\n");
@@ -153,7 +154,7 @@ export class BashExecutionComponent extends Container {
 				this.contentContainer.addChild({
 					render: (width: number) => {
 						if (cachedLines === undefined || cachedWidth !== width) {
-							const result = truncateToVisualLines(styledInput, PREVIEW_LINES, width, 1);
+							const result = truncateToVisualLines(styledInput, PREVIEW_LINES, width, theme.cards.toolIndent);
 							cachedLines = result.visualLines;
 							cachedWidth = width;
 						}
@@ -199,7 +200,7 @@ export class BashExecutionComponent extends Container {
 			}
 
 			if (statusParts.length > 0) {
-				this.contentContainer.addChild(new Text(`\n${statusParts.join("\n")}`, 1, 0));
+				this.contentContainer.addChild(new Text(`\n${statusParts.join("\n")}`, theme.cards.toolIndent, 0));
 			}
 		}
 	}

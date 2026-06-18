@@ -14,6 +14,7 @@ import { StringEnum } from "../src/utils/typebox-helpers.ts";
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
+import { hasAnthropicCredentials } from "./credentials.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -498,7 +499,7 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Provider (claude-haiku-4-5)", () => {
+	describe.skipIf(!hasAnthropicCredentials())("Anthropic Provider (claude-haiku-4-5)", () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
@@ -699,11 +700,12 @@ describe("Generate E2E Tests", () => {
 		},
 	);
 
-	describe.skipIf(!hasCloudflareAiGatewayCredentials() || !process.env.ANTHROPIC_API_KEY)(
+	describe.skipIf(!hasCloudflareAiGatewayCredentials() || !hasAnthropicCredentials())(
 		"Cloudflare AI Gateway → Anthropic BYOK (claude-sonnet-4-5 via /anthropic messages)",
 		() => {
 			const llm = getModel("cloudflare-ai-gateway", "claude-sonnet-4-5");
-			const options = { headers: { Authorization: `Bearer ${process.env.ANTHROPIC_API_KEY}` } };
+			const apiKey = process.env.ANTHROPIC_API_KEY!;
+			const options = { headers: { Authorization: `Bearer ${apiKey}` } };
 			const thinkingOptions = {
 				...options,
 				thinkingEnabled: true,

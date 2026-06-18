@@ -13,6 +13,38 @@
 			"type": "string",
 			"description": "Theme name"
 		},
+		"modelAdaptive": {
+			"type": "boolean",
+			"description": "Tint accents/cards with the active model's brand color"
+		},
+		"layout": {
+			"type": "object",
+			"description": "Legacy card padding (superseded by `cards`, still honored)",
+			"properties": {
+				"cardPadX": { "type": "number" },
+				"cardPadY": { "type": "number" }
+			},
+			"additionalProperties": false
+		},
+		"cards": {
+			"type": "object",
+			"description": "Message-card presentation (labels, glyph, indents, padding, shading). Omitted keys fall back to defaults so themes degrade gracefully.",
+			"properties": {
+				"showHeadings": { "type": "boolean", "description": "Render the glyph + label heading above card bodies" },
+				"headingGlyph": { "type": "string", "description": "\"model\" → active model glyph; \"\" → none; any other string → literal glyph" },
+				"promptLabel": { "type": "string" },
+				"responseLabel": { "type": "string" },
+				"thoughtLabel": { "type": "string" },
+				"headingIndent": { "type": "number", "description": "Left padding of the heading label within the card" },
+				"bodyIndent": { "type": "number", "description": "Left padding of the body within the card" },
+				"toolIndent": { "type": "number", "description": "Left indent for tool/bash output" },
+				"cardPadX": { "type": "number", "description": "Card horizontal padding (wins over layout.cardPadX)" },
+				"cardPadY": { "type": "number", "description": "Card vertical padding (wins over layout.cardPadY)" },
+				"thinkingShaded": { "type": "boolean", "description": "Whether the THOUGHT card uses the model-accent shaded background" },
+				"gaplessCards": { "type": "boolean", "description": "When true, no spacer is inserted between consecutive cards" }
+			},
+			"additionalProperties": false
+		},
 		"vars": {
 			"type": "object",
 			"description": "Reusable color variables",
@@ -85,7 +117,19 @@
 				"thinkingMedium",
 				"thinkingHigh",
 				"thinkingXhigh",
-				"bashMode"
+				"bashMode",
+				"toolDiffAddedBg",
+				"toolDiffRemovedBg",
+				"toolWarningBg",
+				"editorBg",
+				"editorFg",
+				"editorCursor",
+				"editorSelection",
+				"editorLineNumber",
+				"statusBarBg",
+				"surfaceBg",
+				"cardBg",
+				"thinkingBg"
 			],
 			"properties": {
 				"accent": {
@@ -291,6 +335,54 @@
 				"bashMode": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Editor border color in bash mode"
+				},
+				"toolDiffAddedBg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Background for added lines in tool diffs"
+				},
+				"toolDiffRemovedBg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Background for removed lines in tool diffs"
+				},
+				"toolWarningBg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Tool execution box (warning state)"
+				},
+				"editorBg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Editor background color"
+				},
+				"editorFg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Editor text/foreground color"
+				},
+				"editorCursor": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Editor cursor color"
+				},
+				"editorSelection": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Editor text selection background"
+				},
+				"editorLineNumber": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Editor line number color"
+				},
+				"statusBarBg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Status bar background color"
+				},
+				"surfaceBg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Surface/panel background color"
+				},
+				"cardBg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Card/container background color"
+				},
+				"thinkingBg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Thinking block background color"
 				}
 			},
 			"additionalProperties": false

@@ -61,13 +61,24 @@ function hasVertexAdcCredentials(env?: ProviderEnv): boolean {
 	return cachedVertexAdcCredentialsExists;
 }
 
-function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
+/** Returns true when ANTHROPIC_BASE_URL points to DeepSeek's Anthropic-compatible endpoint. */
+export function isAnthropicBaseUrlDeepSeek(env?: ProviderEnv): boolean {
+	const baseUrl = getProviderEnvValue("ANTHROPIC_BASE_URL", env);
+	return !!baseUrl && baseUrl.includes("deepseek.com");
+}
+
+function getApiKeyEnvVars(provider: string, env?: ProviderEnv): readonly string[] | undefined {
 	if (provider === "github-copilot") {
 		return ["COPILOT_GITHUB_TOKEN"];
 	}
 
-	// ANTHROPIC_OAUTH_TOKEN takes precedence over ANTHROPIC_API_KEY
+	// ANTHROPIC_OAUTH_TOKEN takes precedence over ANTHROPIC_API_KEY.
+	// If ANTHROPIC_BASE_URL points to DeepSeek, the ANTHROPIC_API_KEY is actually
+	// a DeepSeek key and should not be treated as an Anthropic credential.
 	if (provider === "anthropic") {
+		if (isAnthropicBaseUrlDeepSeek(env)) {
+			return ["ANTHROPIC_OAUTH_TOKEN"];
+		}
 		return ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
 	}
 
@@ -119,8 +130,17 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 export function findEnvKeys(provider: KnownProvider, env?: ProviderEnv): string[] | undefined;
 export function findEnvKeys(provider: string, env?: ProviderEnv): string[] | undefined;
 export function findEnvKeys(provider: string, env?: ProviderEnv): string[] | undefined {
-	const envVars = getApiKeyEnvVars(provider);
+	let envVars = getApiKeyEnvVars(provider, env);
 	if (!envVars) return undefined;
+
+	// When ANTHROPIC_BASE_URL points to DeepSeek, ANTHROPIC_API_KEY is a DeepSeek credential.
+	// Make it available for the deepseek provider.
+	if (provider === "deepseek" && isAnthropicBaseUrlDeepSeek(env)) {
+		const anthropicKey = getProviderEnvValue("ANTHROPIC_API_KEY", env);
+		if (anthropicKey) {
+			envVars = [...envVars, "ANTHROPIC_API_KEY"];
+		}
+	}
 
 	const found = envVars.filter((envVar) => !!getProviderEnvValue(envVar, env));
 	return found.length > 0 ? found : undefined;

@@ -303,22 +303,52 @@ export class HolographicMemory {
 					}
 				}
 
-				// Extract error/failure lines as key findings
+				// Extract meaningful lines: decisions, errors, files.
+				// Priority order ensures resumed agents get actionable context, not just error dumps.
+				const intentMarkers = [
+					"i'll",
+					"i will",
+					"let me",
+					"let's",
+					"plan to",
+					"going to",
+					"approach",
+					"decided",
+					"my plan",
+					"the fix",
+					"fix is",
+					"solution is",
+					"next step",
+					"will need to",
+				];
 				const lines = entry.content.split("\n");
 				for (const line of lines) {
-					const lower = line.toLowerCase();
-					if (
-						(lower.includes("error") || lower.includes("fail") || lower.includes("success")) &&
-						line.length > 20 &&
-						line.length < 500 &&
-						!seenFindings.has(line)
-					) {
-						seenFindings.add(line);
-						keyFindings.push(line.trim());
-						if (keyFindings.length >= 10) break;
+					const trimmed = line.trim();
+					if (trimmed.length < 20 || trimmed.length > 500 || seenFindings.has(trimmed)) continue;
+					const lower = trimmed.toLowerCase();
+
+					// Priority 1: decisions and plans (what the model intends to do)
+					if (intentMarkers.some((m) => lower.includes(m))) {
+						seenFindings.add(trimmed);
+						keyFindings.push(trimmed);
 					}
+					// Priority 2: errors, warnings, failures, successes (with structural context)
+					else if (
+						(lower.includes("error") || lower.includes("fail") || lower.includes("success")) &&
+						(lower.includes(":") || lower.includes("at ") || lower.includes("in "))
+					) {
+						seenFindings.add(trimmed);
+						keyFindings.push(trimmed);
+					}
+					// Priority 3: file paths mentioned in content
+					else if (/[/\w]+\.[a-z]{2,6}\b/.test(trimmed) && trimmed.includes("/")) {
+						seenFindings.add(trimmed);
+						keyFindings.push(trimmed);
+					}
+
+					if (keyFindings.length >= 15) break;
 				}
-				if (keyFindings.length >= 10) break;
+				if (keyFindings.length >= 15) break;
 			}
 
 			// Get counts — single combined query instead of two separate ones

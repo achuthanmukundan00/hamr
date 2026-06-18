@@ -48,28 +48,28 @@ function getDefaultAttributionHeaders(
 
 	if (isOpenRouterModel(model)) {
 		return {
-			"HTTP-Referer": "https://pi.dev",
-			"X-OpenRouter-Title": "pi",
+			"HTTP-Referer": "https://hamr.dev",
+			"X-OpenRouter-Title": "hamr",
 			"X-OpenRouter-Categories": "cli-agent",
 		};
 	}
 
 	if (isNvidiaNimModel(model)) {
 		return {
-			"X-BILLING-INVOKE-ORIGIN": "Pi",
+			"X-BILLING-INVOKE-ORIGIN": "Hamr",
 		};
 	}
 
 	if (isCloudflareModel(model)) {
 		return {
-			"User-Agent": "pi-coding-agent",
+			"User-Agent": "hamr-coding-agent",
 		};
 	}
 
 	if (isVercelGatewayModel(model)) {
 		return {
-			"http-referer": "https://pi.dev",
-			"x-title": "pi",
+			"http-referer": "https://hamr.dev",
+			"x-title": "hamr",
 		};
 	}
 
@@ -81,7 +81,7 @@ function getSessionHeaders(model: Model<Api>, sessionId: string | undefined): Re
 	if (model.provider !== "opencode" && model.provider !== "opencode-go" && !matchesHost(model.baseUrl, OPENCODE_HOST)) {
 		return undefined;
 	}
-	return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
+	return { "x-opencode-session": sessionId, "x-opencode-client": "hamr" };
 }
 
 export function mergeProviderAttributionHeaders(

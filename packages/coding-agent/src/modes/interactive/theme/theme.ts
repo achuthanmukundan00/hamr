@@ -11,7 +11,7 @@ import {
 import chalk from "chalk";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
-import { APP_NAME, getCustomThemesDir, getThemesDir } from "../../../config.ts";
+import { getCustomThemesDir, getThemesDir } from "../../../config.ts";
 import type { SourceInfo } from "../../../core/source-info.ts";
 import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.ts";
 import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.ts";
@@ -30,6 +30,7 @@ type ColorValue = Static<typeof ColorValueSchema>;
 const ThemeJsonSchema = Type.Object({
 	$schema: Type.Optional(Type.String()),
 	name: Type.String(),
+	modelAdaptive: Type.Optional(Type.Boolean()),
 	vars: Type.Optional(Type.Record(Type.String(), ColorValueSchema)),
 	colors: Type.Object({
 		// Core UI (10 colors)
@@ -67,10 +68,12 @@ const ThemeJsonSchema = Type.Object({
 		mdQuoteBorder: ColorValueSchema,
 		mdHr: ColorValueSchema,
 		mdListBullet: ColorValueSchema,
-		// Tool Diffs (3 colors)
+		// Tool Diffs (5 colors)
 		toolDiffAdded: ColorValueSchema,
 		toolDiffRemoved: ColorValueSchema,
 		toolDiffContext: ColorValueSchema,
+		toolDiffAddedBg: ColorValueSchema,
+		toolDiffRemovedBg: ColorValueSchema,
 		// Syntax Highlighting (9 colors)
 		syntaxComment: ColorValueSchema,
 		syntaxKeyword: ColorValueSchema,
@@ -90,6 +93,17 @@ const ThemeJsonSchema = Type.Object({
 		thinkingXhigh: ColorValueSchema,
 		// Bash Mode (1 color)
 		bashMode: ColorValueSchema,
+		// Extended UI (12 colors — present for future use; pi TUI doesn't consume these yet)
+		editorBg: ColorValueSchema,
+		editorFg: ColorValueSchema,
+		editorCursor: ColorValueSchema,
+		editorSelection: ColorValueSchema,
+		editorLineNumber: ColorValueSchema,
+		statusBarBg: ColorValueSchema,
+		surfaceBg: ColorValueSchema,
+		cardBg: ColorValueSchema,
+		thinkingBg: ColorValueSchema,
+		toolWarningBg: ColorValueSchema,
 	}),
 	export: Type.Optional(
 		Type.Object({
@@ -98,9 +112,96 @@ const ThemeJsonSchema = Type.Object({
 			infoBg: Type.Optional(ColorValueSchema),
 		}),
 	),
+	// Legacy layout block (card padding). Superseded by `cards` but still honored.
+	layout: Type.Optional(
+		Type.Object({
+			cardPadX: Type.Optional(Type.Number()),
+			cardPadY: Type.Optional(Type.Number()),
+		}),
+	),
+	// Message-card presentation. All optional; omitted keys fall back to
+	// DEFAULT_CARD_CONFIG so themes that don't know about cards degrade to the
+	// stock layout. This is what makes the "hamr look" a portable theme.
+	cards: Type.Optional(
+		Type.Object({
+			showHeadings: Type.Optional(Type.Boolean()),
+			headingGlyph: Type.Optional(Type.String()),
+			promptLabel: Type.Optional(Type.String()),
+			responseLabel: Type.Optional(Type.String()),
+			thoughtLabel: Type.Optional(Type.String()),
+			headingIndent: Type.Optional(Type.Number()),
+			bodyIndent: Type.Optional(Type.Number()),
+			toolIndent: Type.Optional(Type.Number()),
+			cardPadX: Type.Optional(Type.Number()),
+			cardPadY: Type.Optional(Type.Number()),
+			thinkingShaded: Type.Optional(Type.Boolean()),
+			gaplessCards: Type.Optional(Type.Boolean()),
+		}),
+	),
 });
 
 type ThemeJson = Static<typeof ThemeJsonSchema>;
+
+/**
+ * Resolved message-card presentation. Drives how user/assistant/tool cards are
+ * laid out (labels, glyph, indents, padding, shading) so the look lives in the
+ * theme (data) rather than hardcoded in the components.
+ */
+export interface CardConfig {
+	/** Whether to render the glyph + label heading above card bodies. */
+	showHeadings: boolean;
+	/** "model" → active model glyph; "" → no glyph; any other string → literal glyph. */
+	headingGlyph: string;
+	promptLabel: string;
+	responseLabel: string;
+	thoughtLabel: string;
+	/** Left padding of the heading label within the card. */
+	headingIndent: number;
+	/** Left padding of the body (markdown) within the card. */
+	bodyIndent: number;
+	/** Left indent applied to tool/bash output so it shares the card margin. */
+	toolIndent: number;
+	/** Horizontal/vertical padding of the card Box. */
+	cardPadX: number;
+	cardPadY: number;
+	/** Whether the THOUGHT card uses the model-accent shaded background. */
+	thinkingShaded: boolean;
+	/** When true, no spacer is inserted between consecutive cards. */
+	gaplessCards: boolean;
+}
+
+export const DEFAULT_CARD_CONFIG: CardConfig = {
+	showHeadings: true,
+	headingGlyph: "model",
+	promptLabel: "PROMPT",
+	responseLabel: "RESPONSE",
+	thoughtLabel: "THOUGHT",
+	headingIndent: 1,
+	bodyIndent: 3,
+	toolIndent: 2,
+	cardPadX: 1,
+	cardPadY: 1,
+	thinkingShaded: false,
+	gaplessCards: true,
+};
+
+/**
+ * Merge a theme JSON's `cards` (and legacy `layout`) blocks over the defaults.
+ * `cards.cardPadX/Y` win over the legacy `layout.cardPadX/Y`.
+ */
+export function resolveCardConfig(json: {
+	layout?: { cardPadX?: number; cardPadY?: number };
+	cards?: Partial<CardConfig>;
+}): CardConfig {
+	const layout = json.layout ?? {};
+	const cards = json.cards ?? {};
+	return {
+		...DEFAULT_CARD_CONFIG,
+		...cards,
+		cardPadX: cards.cardPadX ?? layout.cardPadX ?? DEFAULT_CARD_CONFIG.cardPadX,
+		cardPadY: cards.cardPadY ?? layout.cardPadY ?? DEFAULT_CARD_CONFIG.cardPadY,
+	};
+}
 
 const validateThemeJson = Compile(ThemeJsonSchema);
 
@@ -149,7 +250,10 @@ export type ThemeColor =
 	| "thinkingMedium"
 	| "thinkingHigh"
 	| "thinkingXhigh"
-	| "bashMode";
+	| "bashMode"
+	| "editorFg"
+	| "editorCursor"
+	| "editorLineNumber";
 
 export type ThemeBg =
 	| "selectedBg"
@@ -157,9 +261,152 @@ export type ThemeBg =
 	| "customMessageBg"
 	| "toolPendingBg"
 	| "toolSuccessBg"
-	| "toolErrorBg";
+	| "toolErrorBg"
+	| "toolDiffAddedBg"
+	| "toolDiffRemovedBg"
+	| "toolWarningBg"
+	| "editorBg"
+	| "editorSelection"
+	| "statusBarBg"
+	| "surfaceBg"
+	| "cardBg"
+	| "thinkingBg";
 
 type ColorMode = "truecolor" | "256color";
+
+export interface ModelBrand {
+	color: string;
+	emoji: string;
+	nerd: string;
+	unicode: string;
+	ascii: string;
+}
+
+const NERD = {
+	asterisk: "\u{F06C4}",
+	flower: "\u{F024A}",
+	dolphin: "\u{F18B4}",
+	closeThick: "\u{F1398}",
+	creation: "\u{F0674}",
+	fire: "\u{F0238}",
+	hexagram: "\u{F0AC9}",
+	brain: "\u{F09D1}",
+	infinity: "\u{F06E4}",
+	triangle: "\u{F0536}",
+	moonCrescent: "\u{F0F65}",
+	robot: "\u{F06A9}",
+} as const;
+
+function modelBrandFor(provider: string, modelLabel?: string): ModelBrand {
+	const lower = `${provider} ${modelLabel ?? ""}`.toLowerCase();
+	if (
+		lower.includes("claude") ||
+		lower.includes("opus") ||
+		lower.includes("sonnet") ||
+		lower.includes("haiku") ||
+		lower.includes("fable") ||
+		lower.includes("mythos") ||
+		lower.includes("anthropic")
+	) {
+		return { color: "#d08030", emoji: NERD.asterisk, nerd: NERD.asterisk, unicode: "✳", ascii: "C" };
+	}
+	if (lower.includes("mistral") || lower.includes("codestral") || lower.includes("devstral")) {
+		return { color: "#f06030", emoji: NERD.fire, nerd: NERD.fire, unicode: "◧", ascii: "M" };
+	}
+	if (lower.includes("deepseek")) {
+		return { color: "#005faf", emoji: "🐋", nerd: NERD.dolphin, unicode: "◗", ascii: "D" };
+	}
+	if (lower.includes("gemma")) {
+		return { color: "#5098e8", emoji: NERD.creation, nerd: NERD.creation, unicode: "✧", ascii: "g" };
+	}
+	if (lower.includes("gemini") || lower.includes("google")) {
+		return { color: "#4285f4", emoji: NERD.creation, nerd: NERD.creation, unicode: "✦", ascii: "G" };
+	}
+	if (lower.includes("qwen")) {
+		return { color: "#875fff", emoji: NERD.hexagram, nerd: NERD.hexagram, unicode: "⬡", ascii: "Q" };
+	}
+	if (lower.includes("glm") || lower.includes("zhipu") || lower.includes("zai")) {
+		return { color: "#00afaf", emoji: NERD.brain, nerd: NERD.brain, unicode: "◎", ascii: "Z" };
+	}
+	if (lower.includes("llama") || lower.includes("meta")) {
+		return { color: "#0087ff", emoji: NERD.infinity, nerd: NERD.infinity, unicode: "∞", ascii: "L" };
+	}
+	if (lower.includes("minimax")) {
+		return { color: "#ff4444", emoji: NERD.triangle, nerd: NERD.triangle, unicode: "▽", ascii: "I" };
+	}
+	if (lower.includes("grok") || lower.includes("xai") || lower.includes("groq")) {
+		return { color: "#eeeeee", emoji: NERD.closeThick, nerd: NERD.closeThick, unicode: "✕", ascii: "X" };
+	}
+	if (lower.includes("moonshot") || lower.includes("kimi")) {
+		return { color: "#aaaaaa", emoji: NERD.moonCrescent, nerd: NERD.moonCrescent, unicode: "☾", ascii: "K" };
+	}
+	if (lower.includes("gpt") || lower.includes("openai") || lower.includes("codex") || /^o[13](?:\b|-)/.test(lower)) {
+		return { color: "#cccccc", emoji: NERD.flower, nerd: NERD.flower, unicode: "❁", ascii: "O" };
+	}
+	return { color: "#61afef", emoji: NERD.robot, nerd: NERD.robot, unicode: "◆", ascii: "?" };
+}
+
+function prefersAsciiGlyph(): boolean {
+	const term = process.env.TERM?.toLowerCase() ?? "";
+	return term === "dumb" || process.env.NO_COLOR === "1";
+}
+
+/**
+ * Which glyph tier the terminal can render, best-to-worst.
+ *
+ * Detection order (first match wins):
+ *   "emoji" — terminals known to render emoji-width glyphs correctly
+ *   "nerd"  — terminals known to support Nerd Font / Powerline symbols
+ *   "unicode"— fallback: most terminals render ◆ ◦ ● etc. safely
+ *   "ascii" — dumb terminals / NO_COLOR / explicit opt-down
+ */
+function detectGlyphTier(): "emoji" | "nerd" | "unicode" | "ascii" {
+	// Explicit env overrides always win (opt-down or opt-up).
+	if (process.env.HAMR_EMOJI_MODEL_GLYPHS === "1") return "emoji";
+	if (process.env.HAMR_NERD_FONT === "1") return "nerd";
+
+	if (prefersAsciiGlyph()) return "ascii";
+
+	const termProgram = process.env.TERM_PROGRAM?.toLowerCase() ?? "";
+	const term = process.env.TERM?.toLowerCase() ?? "";
+
+	// Terminals with known-good emoji rendering.
+	const emojiTerminals = new Set([
+		"iterm2", // macOS iTerm2
+		"apple_terminal", // macOS Terminal.app (>= 10.15)
+		"kitty", // Kitty
+		"ghostty", // Ghostty
+		"wezterm", // WezTerm
+		"warp", // Warp
+		"tabby", // Tabby/Terminus
+		"hyper", // Hyper.js
+		"vscode", // VS Code integrated terminal
+		"cursor", // Cursor IDE terminal
+		"windsurf", // Windsurf IDE terminal
+	]);
+	if (emojiTerminals.has(termProgram)) return "emoji";
+
+	// Check TERM for Kitty protocol.
+	if (term.startsWith("xterm-kitty")) return "emoji";
+
+	// Terminals that support Nerd Font / Powerline symbols.
+	const nerdTerminals = new Set(["alacritty", "rio"]);
+	if (nerdTerminals.has(termProgram)) return "nerd";
+
+	// Truecolor terminals likely support at least unicode glyphs.
+	const colorterm = process.env.COLORTERM?.toLowerCase() ?? "";
+	if (colorterm === "truecolor" || colorterm === "24bit") {
+		// Most truecolor terminals also support nerd/emoji, but be conservative.
+		return "nerd";
+	}
+
+	return "unicode";
+}
+
+function getGlyphTier(): "emoji" | "nerd" | "unicode" {
+	const tier = detectGlyphTier();
+	return tier === "ascii" ? "unicode" : tier;
+}
 
 // ============================================================================
 // Color Utilities
@@ -305,13 +552,35 @@ function resolveVarRefs(
 	return resolveVarRefs(vars[value], vars, visited);
 }
 
+function resolveColorRefs(
+	value: ColorValue,
+	colors: Record<string, ColorValue>,
+	vars: Record<string, ColorValue>,
+	visited = new Set<string>(),
+): string | number {
+	if (typeof value === "number" || value === "" || value.startsWith("#")) {
+		return value;
+	}
+	if (value in vars) {
+		return resolveVarRefs(vars[value], vars);
+	}
+	if (value in colors) {
+		if (visited.has(value)) {
+			throw new Error(`Circular color reference detected: ${value}`);
+		}
+		visited.add(value);
+		return resolveColorRefs(colors[value], colors, vars, visited);
+	}
+	throw new Error(`Variable or color reference not found: ${value}`);
+}
+
 function resolveThemeColors<T extends Record<string, ColorValue>>(
 	colors: T,
 	vars: Record<string, ColorValue> = {},
 ): Record<keyof T, string | number> {
 	const resolved: Record<string, string | number> = {};
 	for (const [key, value] of Object.entries(colors)) {
-		resolved[key] = resolveVarRefs(value, vars);
+		resolved[key] = resolveColorRefs(value, colors, vars);
 	}
 	return resolved as Record<keyof T, string | number>;
 }
@@ -324,6 +593,8 @@ export class Theme {
 	readonly name?: string;
 	readonly sourcePath?: string;
 	sourceInfo?: SourceInfo;
+	readonly modelAdaptive: boolean;
+	readonly cards: CardConfig;
 	private fgColors: Map<ThemeColor, string>;
 	private bgColors: Map<ThemeBg, string>;
 	private mode: ColorMode;
@@ -332,11 +603,19 @@ export class Theme {
 		fgColors: Record<ThemeColor, string | number>,
 		bgColors: Record<ThemeBg, string | number>,
 		mode: ColorMode,
-		options: { name?: string; sourcePath?: string; sourceInfo?: SourceInfo } = {},
+		options: {
+			name?: string;
+			sourcePath?: string;
+			sourceInfo?: SourceInfo;
+			modelAdaptive?: boolean;
+			cards?: CardConfig;
+		} = {},
 	) {
 		this.name = options.name;
 		this.sourcePath = options.sourcePath;
 		this.sourceInfo = options.sourceInfo;
+		this.modelAdaptive = options.modelAdaptive ?? true;
+		this.cards = options.cards ?? DEFAULT_CARD_CONFIG;
 		this.mode = mode;
 		this.fgColors = new Map();
 		for (const [key, value] of Object.entries(fgColors) as [ThemeColor, string | number][]) {
@@ -420,19 +699,103 @@ export class Theme {
 		return (str: string) => this.fg("bashMode", str);
 	}
 
+	modelBrand(provider: string, modelLabel?: string): ModelBrand {
+		return modelBrandFor(provider, modelLabel);
+	}
+
+	modelGlyph(provider: string, modelLabel?: string): string {
+		const brand = this.modelBrand(provider, modelLabel);
+		const tier = getGlyphTier();
+		if (tier === "emoji") return brand.emoji;
+		if (tier === "nerd") return brand.nerd;
+		return brand.unicode;
+	}
+
+	/**
+	 * Editor border color derived from model brand hex × thinking brightness.
+	 * Mirrors synax's promptBoxAccent(): model family color dimmed/brightened
+	 * by thinking level so the editor accent reflects the active model.
+	 *
+	 * Returns undefined when modelAdaptive is false — callers should fall
+	 * back to getThinkingBorderColor() in that case.
+	 */
+	getModelEditorBorderColor(
+		provider: string,
+		modelId: string | undefined,
+		thinkingLevel: string | undefined,
+	): ((str: string) => string) | undefined {
+		if (!this.modelAdaptive) return undefined;
+		const hex = this.modelHexColor(provider, modelId);
+		if (!hex) return undefined;
+
+		// Brightness multipliers per thinking level (from synax)
+		const mult =
+			thinkingLevel === "xhigh"
+				? 1.0
+				: thinkingLevel === "high"
+					? 0.85
+					: thinkingLevel === "medium"
+						? 0.65
+						: thinkingLevel === "low"
+							? 0.45
+							: 0.3; // off / default
+
+		const r = Math.round(parseInt(hex.slice(1, 3), 16) * mult);
+		const g = Math.round(parseInt(hex.slice(3, 5), 16) * mult);
+		const b = Math.round(parseInt(hex.slice(5, 7), 16) * mult);
+
+		if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return undefined;
+
+		const ansi = `\x1b[38;2;${r};${g};${b}m`;
+		return (str: string) => `${ansi}${str}\x1b[39m`;
+	}
+
+	/**
+	 * Brand accent color for a model provider + label.
+	 * Mirrors synax's modelBrand() palette so each model family gets a
+	 * distinct, readable accent on dark terminals.
+	 *   Anthropic  → orange  #d08030   (claude, haiku, sonnet, opus, fable, mythos)
+	 *   Mistral    → flame   #f06030   (mistral, codestral, devstral)
+	 *   DeepSeek   → navy    #005faf
+	 *   Gemma      → mid blue#5098e8   (check BEFORE gemini — same brand)
+	 *   Gemini     → royal   #4285f4
+	 *   Qwen       → purple  #875fff
+	 *   GLM/Zhipu  → teal    #00afaf
+	 *   Meta       → meta    #0087ff   (llama, meta)
+	 *   MiniMax    → red     #ff4444
+	 *   xAI        → white   #eeeeee   (grok, xai)
+	 *   Moonshot   → silver  #aaaaaa   (kimi, moonshot)
+	 *   OpenAI     → white   #cccccc   (gpt, o1, o3, openai)
+	 *   fallback   → blue    #61afef
+	 */
 	modelColor(provider: string, modelLabel?: string): string {
+		if (!this.modelAdaptive) return this.getFgAnsi("text");
 		const label = modelLabel?.toLowerCase() ?? "";
 		const prov = provider.toLowerCase();
 
+		// Model-label-based detection (most precise)
 		if (label) {
-			if (label.includes("claude") || label.includes("haiku") || label.includes("sonnet") || label.includes("opus")) {
+			// Anthropic — claude, haiku, sonnet, opus, fable, mythos
+			if (
+				label.includes("claude") ||
+				label.includes("haiku") ||
+				label.includes("sonnet") ||
+				label.includes("opus") ||
+				label.includes("fable") ||
+				label.includes("mythos")
+			) {
 				return fgAnsi("#d08030", this.mode);
 			}
-			if (label.includes("mistral")) {
+			// Mistral — includes codestral, devstral
+			if (label.includes("mistral") || label.includes("codestral") || label.includes("devstral")) {
 				return fgAnsi("#f06030", this.mode);
 			}
 			if (label.includes("deepseek")) {
 				return fgAnsi("#005faf", this.mode);
+			}
+			// Gemma BEFORE gemini (gemma is a substring of gemini)
+			if (label.includes("gemma")) {
+				return fgAnsi("#5098e8", this.mode);
 			}
 			if (label.includes("gemini")) {
 				return fgAnsi("#4285f4", this.mode);
@@ -440,23 +803,32 @@ export class Theme {
 			if (label.includes("qwen")) {
 				return fgAnsi("#875fff", this.mode);
 			}
-			if (label.includes("llama")) {
+			// GLM (Zhipu)
+			if (label.includes("glm")) {
+				return fgAnsi("#00afaf", this.mode);
+			}
+			// Meta / Llama
+			if (label.includes("llama") || label.includes("meta")) {
 				return fgAnsi("#0087ff", this.mode);
 			}
 			if (label.includes("minimax")) {
 				return fgAnsi("#ff4444", this.mode);
 			}
-			if (label.includes("grok")) {
+			// xAI — grok, xai
+			if (label.includes("grok") || label.includes("xai")) {
 				return fgAnsi("#eeeeee", this.mode);
 			}
-			if (label.includes("kimi") || label.includes("moonshot")) {
+			// Moonshot — kimi, moonshot
+			if (label.includes("moonshot") || label.includes("kimi")) {
 				return fgAnsi("#aaaaaa", this.mode);
 			}
-			if (label.includes("gpt") || label.includes("o1") || label.includes("o3")) {
+			// OpenAI — gpt, o1, o3, openai
+			if (label.includes("gpt") || label.includes("openai") || label.startsWith("o1") || label.startsWith("o3")) {
 				return fgAnsi("#cccccc", this.mode);
 			}
 		}
 
+		// Provider-based fallback when label doesn't match
 		if (prov === "anthropic") {
 			return fgAnsi("#d08030", this.mode);
 		}
@@ -466,14 +838,87 @@ export class Theme {
 		if (prov === "google" || prov === "gemini") {
 			return fgAnsi("#4285f4", this.mode);
 		}
-		if (prov === "mistral") {
+		if (prov === "mistral" || prov === "codestral" || prov === "devstral") {
 			return fgAnsi("#f06030", this.mode);
 		}
 		if (prov === "deepseek") {
 			return fgAnsi("#005faf", this.mode);
 		}
+		if (prov === "groq") {
+			return fgAnsi("#eeeeee", this.mode);
+		}
+		if (prov === "moonshot" || prov === "kimi") {
+			return fgAnsi("#aaaaaa", this.mode);
+		}
 
 		return fgAnsi("#61afef", this.mode);
+	}
+
+	/**
+	 * Returns the hex color (without ANSI wrapping) for a model's brand identity.
+	 * Mirrors modelColor() hex lookups but returns raw hex for use in custom
+	 * styling (editor borders, per-message accents, etc.).
+	 */
+	modelHexColor(provider: string, modelLabel?: string): string | undefined {
+		if (!this.modelAdaptive) return undefined;
+		const label = modelLabel?.toLowerCase() ?? "";
+		const prov = provider.toLowerCase();
+
+		if (label) {
+			if (
+				label.includes("claude") ||
+				label.includes("haiku") ||
+				label.includes("sonnet") ||
+				label.includes("opus") ||
+				label.includes("fable") ||
+				label.includes("mythos")
+			) {
+				return "#d08030";
+			}
+			if (label.includes("mistral") || label.includes("codestral") || label.includes("devstral")) {
+				return "#f06030";
+			}
+			if (label.includes("deepseek")) {
+				return "#005faf";
+			}
+			if (label.includes("gemma")) {
+				return "#5098e8";
+			}
+			if (label.includes("gemini")) {
+				return "#4285f4";
+			}
+			if (label.includes("qwen")) {
+				return "#875fff";
+			}
+			if (label.includes("glm")) {
+				return "#00afaf";
+			}
+			if (label.includes("llama") || label.includes("meta")) {
+				return "#0087ff";
+			}
+			if (label.includes("minimax")) {
+				return "#ff4444";
+			}
+			if (label.includes("grok") || label.includes("xai")) {
+				return "#eeeeee";
+			}
+			if (label.includes("moonshot") || label.includes("kimi")) {
+				return "#aaaaaa";
+			}
+			if (label.includes("gpt") || label.includes("openai") || label.startsWith("o1") || label.startsWith("o3")) {
+				return "#cccccc";
+			}
+		}
+
+		if (prov === "anthropic") return "#d08030";
+		if (prov === "openai") return "#cccccc";
+		if (prov === "google" || prov === "gemini") return "#4285f4";
+		if (prov === "mistral" || prov === "codestral" || prov === "devstral") return "#f06030";
+		if (prov === "deepseek") return "#005faf";
+		if (prov === "groq") return "#eeeeee";
+		if (prov === "moonshot" || prov === "kimi") return "#aaaaaa";
+
+		return "#61afef";
 	}
 }
 
@@ -486,13 +931,13 @@ let BUILTIN_THEMES: Record<string, ThemeJson> | undefined;
 function getBuiltinThemes(): Record<string, ThemeJson> {
 	if (!BUILTIN_THEMES) {
 		const themesDir = getThemesDir();
-		const darkPath = path.join(themesDir, "dark.json");
-		const lightPath = path.join(themesDir, "light.json");
-		const hamrPath = path.join(themesDir, "hamr.json");
+		const read = (file: string) => JSON.parse(fs.readFileSync(path.join(themesDir, file), "utf-8")) as ThemeJson;
 		BUILTIN_THEMES = {
-			dark: JSON.parse(fs.readFileSync(darkPath, "utf-8")) as ThemeJson,
-			hamr: JSON.parse(fs.readFileSync(hamrPath, "utf-8")) as ThemeJson,
-			light: JSON.parse(fs.readFileSync(lightPath, "utf-8")) as ThemeJson,
+			hamr: read("hamr.json"),
+			dark: read("dark.json"),
+			light: read("light.json"),
+			kawaii: read("kawaii.json"),
+			pinkOut: read("pinkOut.json"),
 		};
 	}
 	return BUILTIN_THEMES;
@@ -644,6 +1089,15 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 		"toolPendingBg",
 		"toolSuccessBg",
 		"toolErrorBg",
+		"toolDiffAddedBg",
+		"toolDiffRemovedBg",
+		"toolWarningBg",
+		"editorBg",
+		"editorSelection",
+		"statusBarBg",
+		"surfaceBg",
+		"cardBg",
+		"thinkingBg",
 	]);
 	for (const [key, value] of Object.entries(resolvedColors)) {
 		if (bgColorKeys.has(key)) {
@@ -655,6 +1109,8 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 	return new Theme(fgColors, bgColors, colorMode, {
 		name: themeJson.name,
 		sourcePath,
+		modelAdaptive: themeJson.modelAdaptive,
+		cards: resolveCardConfig(themeJson),
 	});
 }
 
@@ -774,8 +1230,7 @@ export async function detectTerminalBackgroundTheme({
 }
 
 export function getDefaultTheme(): string {
-	if (APP_NAME === "hamr") return "hamr";
-	return detectTerminalBackgroundFromEnv().theme;
+	return "hamr";
 }
 
 // ============================================================================
@@ -825,9 +1280,9 @@ export function initTheme(themeName?: string, enableWatcher: boolean = false): v
 			startThemeWatcher();
 		}
 	} catch (_error) {
-		// Theme is invalid - fall back to dark theme silently
-		currentThemeName = "dark";
-		setGlobalTheme(loadTheme("dark"));
+		// Theme is invalid - fall back to hamr theme silently
+		currentThemeName = "hamr";
+		setGlobalTheme(loadTheme("hamr"));
 		// Don't start watcher for fallback theme
 	}
 }
@@ -844,9 +1299,9 @@ export function setTheme(name: string, enableWatcher: boolean = false): { succes
 		}
 		return { success: true };
 	} catch (error) {
-		// Theme is invalid - fall back to dark theme
-		currentThemeName = "dark";
-		setGlobalTheme(loadTheme("dark"));
+		// Theme is invalid - fall back to hamr theme
+		currentThemeName = "hamr";
+		setGlobalTheme(loadTheme("hamr"));
 		// Don't start watcher for fallback theme
 		return {
 			success: false,
@@ -872,7 +1327,7 @@ function startThemeWatcher(): void {
 	stopThemeWatcher();
 
 	// Only watch if it's a custom theme (not built-in)
-	if (!currentThemeName || currentThemeName === "dark" || currentThemeName === "light") {
+	if (!currentThemeName || currentThemeName === "hamr") {
 		return;
 	}
 
@@ -1229,24 +1684,47 @@ export function getMarkdownTheme(): MarkdownTheme {
 		underline: (text: string) => theme.underline(text),
 		strikethrough: (text: string) => chalk.strikethrough(text),
 		highlightCode: (code: string, lang?: string): string[] => {
+			const rawLines = code.split("\n");
+			// marked usually strips the trailing newline, but guard against an
+			// empty final line so the gutter count stays accurate.
+			while (rawLines.length > 1 && rawLines[rawLines.length - 1] === "") rawLines.pop();
+			const gutterWidth = String(rawLines.length).length;
+			const gutter = (n: number) => theme.fg("mdCodeBlockBorder", String(n).padStart(gutterWidth));
+
+			// Diff/patch blocks: shade +/- lines red/green (with a line-number
+			// gutter) instead of running them through the syntax highlighter.
+			if (lang === "diff" || lang === "patch") {
+				return rawLines.map((line, i) => {
+					const numbered = `${gutter(i + 1)} ${line}`;
+					if (line.startsWith("+") && !line.startsWith("+++")) {
+						return theme.bg("toolDiffAddedBg", theme.fg("toolDiffAdded", numbered));
+					}
+					if (line.startsWith("-") && !line.startsWith("---")) {
+						return theme.bg("toolDiffRemovedBg", theme.fg("toolDiffRemoved", numbered));
+					}
+					return `${gutter(i + 1)} ${theme.fg("toolDiffContext", line)}`;
+				});
+			}
+
 			// Validate language before highlighting to avoid stderr spam from cli-highlight
+			// and prose being misdetected as code (cli-highlight auto-detection is noisy).
 			const validLang = lang && supportsLanguage(lang) ? lang : undefined;
-			// Skip highlighting when no valid language is specified. cli-highlight's
-			// auto-detection is unreliable and can misidentify prose as AppleScript,
-			// LiveCodeServer, etc., coloring random English words as keywords.
+			let highlighted: string[];
 			if (!validLang) {
-				return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
+				highlighted = rawLines.map((line) => theme.fg("mdCodeBlock", line));
+			} else {
+				try {
+					highlighted = highlight(code, {
+						language: validLang,
+						ignoreIllegals: true,
+						theme: getCliHighlightTheme(theme),
+					}).split("\n");
+				} catch {
+					highlighted = rawLines.map((line) => theme.fg("mdCodeBlock", line));
+				}
 			}
-			const opts = {
-				language: validLang,
-				ignoreIllegals: true,
-				theme: getCliHighlightTheme(theme),
-			};
-			try {
-				return highlight(code, opts).split("\n");
-			} catch {
-				return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
-			}
+			// Prepend a dim line-number gutter to every code line.
+			return rawLines.map((raw, i) => `${gutter(i + 1)} ${highlighted[i] ?? theme.fg("mdCodeBlock", raw)}`);
 		},
 	};
 }
@@ -1273,6 +1751,7 @@ export function getSettingsListTheme(): SettingsListTheme {
 		label: (text: string, selected: boolean) => (selected ? theme.fg("accent", text) : text),
 		value: (text: string, selected: boolean) => (selected ? theme.fg("accent", text) : theme.fg("muted", text)),
 		description: (text: string) => theme.fg("dim", text),
+		section: (text: string) => theme.bold(theme.fg("accent", text)),
 		cursor: theme.fg("accent", "→ "),
 		hint: (text: string) => theme.fg("dim", text),
 	};

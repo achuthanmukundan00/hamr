@@ -9,16 +9,46 @@
  * - Abort handling during summarization
  */
 
+import { createAssistantMessageEventStream, fauxAssistantMessage } from "@hamr/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { API_KEY, createTestSession, type TestSessionContext } from "./utilities.ts";
+import { createHarness, type Harness } from "./suite/harness.ts";
 
-describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
-	let ctx: TestSessionContext;
+function queueResponses(ctx: Harness, ...responses: string[]): void {
+	ctx.setResponses(responses.map((response) => fauxAssistantMessage(response)));
+}
 
-	beforeEach(() => {
-		ctx = createTestSession({
+function installAbortableSummaryStream(ctx: Harness): void {
+	ctx.session.agent.streamFn = (model, _context, options) => {
+		const stream = createAssistantMessageEventStream();
+		options?.signal?.addEventListener(
+			"abort",
+			() => {
+				queueMicrotask(() => {
+					stream.push({
+						type: "done",
+						reason: "stop",
+						message: {
+							...fauxAssistantMessage("", { stopReason: "aborted" }),
+							api: model.api,
+							provider: model.provider,
+							model: model.id,
+						},
+					});
+				});
+			},
+			{ once: true },
+		);
+		return stream;
+	};
+}
+
+describe("AgentSession tree navigation e2e", () => {
+	let ctx: Harness;
+
+	beforeEach(async () => {
+		ctx = await createHarness({
 			systemPrompt: "You are a helpful assistant. Reply with just a few words.",
-			settingsOverrides: { compaction: { keepRecentTokens: 1 } },
+			settings: { compaction: { keepRecentTokens: 1 } },
 		});
 	});
 
@@ -28,6 +58,7 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 
 	it("should navigate to user message and put text in editor", async () => {
 		const { session } = ctx;
+		queueResponses(ctx, "first response", "second response");
 
 		// Build conversation: u1 -> a1 -> u2 -> a2
 		await session.prompt("First message");
@@ -55,6 +86,7 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 
 	it("should navigate to non-user message without editor text", async () => {
 		const { session, sessionManager } = ctx;
+		queueResponses(ctx, "hello response");
 
 		// Build conversation
 		await session.prompt("Hello");
@@ -77,6 +109,7 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 
 	it("should create branch summary when navigating with summarize=true", async () => {
 		const { session, sessionManager } = ctx;
+		queueResponses(ctx, "4", "6", "Generated branch summary");
 
 		// Build conversation: u1 -> a1 -> u2 -> a2
 		await session.prompt("What is 2+2?");
@@ -107,6 +140,7 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 
 	it("should attach summary to correct parent when navigating to nested user message", async () => {
 		const { session, sessionManager } = ctx;
+		queueResponses(ctx, "one response", "two response", "three response", "Generated branch summary");
 
 		// Build conversation: u1 -> a1 -> u2 -> a2 -> u3 -> a3
 		await session.prompt("Message one");
@@ -146,6 +180,7 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 
 	it("should attach summary to selected node when navigating to assistant message", async () => {
 		const { session, sessionManager } = ctx;
+		queueResponses(ctx, "hello response", "goodbye response", "Generated branch summary");
 
 		// Build conversation: u1 -> a1 -> u2 -> a2
 		await session.prompt("Hello");
@@ -174,6 +209,7 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 
 	it("should handle abort during summarization", async () => {
 		const { session, sessionManager } = ctx;
+		queueResponses(ctx, "first response", "second response");
 
 		// Build conversation
 		await session.prompt("Tell me about something");
@@ -187,6 +223,8 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 		// Get root user message
 		const tree = sessionManager.getTree();
 		const rootNode = tree[0];
+
+		installAbortableSummaryStream(ctx);
 
 		// Start navigation with summarization but abort immediately
 		const navigationPromise = session.navigateTree(rootNode.entry.id, { summarize: true });
@@ -213,6 +251,7 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 
 	it("should not create summary when navigating without summarize option", async () => {
 		const { session, sessionManager } = ctx;
+		queueResponses(ctx, "first response", "second response");
 
 		// Build conversation
 		await session.prompt("First");
@@ -237,6 +276,7 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 
 	it("should handle navigation to same position (no-op)", async () => {
 		const { session, sessionManager } = ctx;
+		queueResponses(ctx, "hello response");
 
 		// Build conversation
 		await session.prompt("Hello");
@@ -256,6 +296,7 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 
 	it("should support custom summarization instructions", async () => {
 		const { session, sessionManager } = ctx;
+		queueResponses(ctx, "TypeScript response", "Summary ending MONKEY MONKEY MONKEY");
 
 		// Build conversation
 		await session.prompt("What is TypeScript?");
@@ -276,11 +317,11 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 	}, 120000);
 });
 
-describe.skipIf(!API_KEY)("AgentSession tree navigation - branch scenarios", () => {
-	let ctx: TestSessionContext;
+describe("AgentSession tree navigation - branch scenarios", () => {
+	let ctx: Harness;
 
-	beforeEach(() => {
-		ctx = createTestSession({
+	beforeEach(async () => {
+		ctx = await createHarness({
 			systemPrompt: "You are a helpful assistant. Reply with just a few words.",
 		});
 	});
@@ -291,6 +332,7 @@ describe.skipIf(!API_KEY)("AgentSession tree navigation - branch scenarios", () 
 
 	it("should navigate between branches correctly", async () => {
 		const { session, sessionManager } = ctx;
+		queueResponses(ctx, "main start response", "main continue response", "branch response", "Generated branch summary");
 
 		// Build main path: u1 -> a1 -> u2 -> a2
 		await session.prompt("Main branch start");

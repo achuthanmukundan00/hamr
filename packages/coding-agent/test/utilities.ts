@@ -23,13 +23,14 @@ import { createCodingTools } from "../src/index.ts";
  * API key for authenticated tests. Tests using this should be wrapped in
  * describe.skipIf(!API_KEY)
  */
-export const API_KEY = process.env.ANTHROPIC_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
+export const RUN_LIVE_TESTS = process.env.HAMR_RUN_LIVE_TESTS === "1";
+export const API_KEY = RUN_LIVE_TESTS ? process.env.ANTHROPIC_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY : undefined;
 
 // ============================================================================
-// OAuth API key resolution from ~/.pi/agent/auth.json
+// OAuth API key resolution from ~/.hamr/agent/auth.json
 // ============================================================================
 
-const AUTH_PATH = join(homedir(), ".pi", "agent", "auth.json");
+const AUTH_PATH = join(homedir(), ".hamr", "agent", "auth.json");
 
 type ApiKeyCredential = {
 	type: "api_key";
@@ -66,7 +67,7 @@ function saveAuthStorage(storage: AuthStorageData): void {
 }
 
 /**
- * Resolve API key for a provider from ~/.pi/agent/auth.json
+ * Resolve API key for a provider from ~/.hamr/agent/auth.json
  *
  * For API key credentials, returns the key directly.
  * For OAuth credentials, returns the access token (refreshing if expired and saving back).
@@ -106,7 +107,7 @@ export async function resolveApiKey(provider: string): Promise<string | undefine
 }
 
 /**
- * Check if a provider has credentials in ~/.pi/agent/auth.json
+ * Check if a provider has credentials in ~/.hamr/agent/auth.json
  */
 export function hasAuthForProvider(provider: string): boolean {
 	const storage = loadAuthStorage();
@@ -114,10 +115,10 @@ export function hasAuthForProvider(provider: string): boolean {
 }
 
 /** Path to the real pi agent config directory */
-export const PI_AGENT_DIR = join(homedir(), ".pi", "agent");
+export const PI_AGENT_DIR = join(homedir(), ".hamr", "agent");
 
 /**
- * Get an AuthStorage instance backed by ~/.pi/agent/auth.json
+ * Get an AuthStorage instance backed by ~/.hamr/agent/auth.json
  * Use this for tests that need real OAuth credentials.
  */
 export function getRealAuthStorage(): AuthStorage {

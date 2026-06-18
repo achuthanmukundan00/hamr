@@ -83,6 +83,29 @@ async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void
 	}
 }
 
+// fs.watch (FSEvents on macOS) coalesces/drops events under load, and fs.watchFile
+// establishes its change-detection baseline asynchronously - so a change applied in the
+// same tick as provider construction can be missed entirely, leaving the test waiting on
+// the unreliable fs.watch path forever. Drive writes until the watcher proves it is live
+// (one async refresh observed), then settle and reset, so each test starts from an armed
+// watcher whose baseline is known to predate the change being tested.
+async function armReftableWatcher(reftableDir: string): Promise<void> {
+	let counter = 0;
+	const startedAt = Date.now();
+	// Write once, then wait out the debounce window so a detected change can complete a
+	// refresh; retry with fresh content if the watcher hasn't fired yet. Writing on every
+	// poll instead would perpetually reset the debounce timer and no refresh would run.
+	while (vi.mocked(execFile).mock.calls.length === 0) {
+		if (Date.now() - startedAt > 10000) {
+			throw new Error("reftable watcher never armed");
+		}
+		counter += 1;
+		writeFileSync(join(reftableDir, "tables.list"), `${"x".repeat(counter)}\n`);
+		await new Promise((resolve) => setTimeout(resolve, 800));
+	}
+	vi.mocked(execFile).mockClear();
+}
+
 describe("FooterDataProvider reftable branch detection", () => {
 	let originalCwd: string;
 	let tempDir: string;
@@ -170,6 +193,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 		const provider = new FooterDataProvider(worktreeDir);
 		try {
 			expect(provider.getGitBranch()).toBe("main");
+			await armReftableWatcher(reftableDir);
 			vi.mocked(spawnSync).mockClear();
 			const onBranchChange = vi.fn();
 			provider.onBranchChange(onBranchChange);
@@ -193,7 +217,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 		const provider = new FooterDataProvider(worktreeDir);
 		try {
 			expect(provider.getGitBranch()).toBe("main");
-			vi.mocked(execFile).mockClear();
+			await armReftableWatcher(reftableDir);
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
 			writeFileSync(join(reftableDir, "tables.list"), "2\n");
@@ -214,6 +238,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 		const provider = new FooterDataProvider(worktreeDir);
 		try {
 			expect(provider.getGitBranch()).toBe("main");
+			await armReftableWatcher(reftableDir);
 			resolvedBranch = "foo";
 			const onBranchChange = vi.fn();
 			provider.onBranchChange(onBranchChange);

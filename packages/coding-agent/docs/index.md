@@ -15,7 +15,7 @@ npm install -g --ignore-scripts @hamr/coding-agent
 On Linux or macOS, you can also use the installer:
 
 ```bash
-curl -fsSL https://pi.dev/install.sh | sh
+curl -fsSL https://hamr.dev/install.sh | sh
 ```
 
 To uninstall pi itself, use npm for curl and npm installs:

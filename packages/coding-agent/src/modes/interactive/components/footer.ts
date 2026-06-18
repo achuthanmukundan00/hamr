@@ -1,8 +1,9 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { getSupportedThinkingLevels } from "@hamr/ai";
 import { type Component, truncateToWidth, visibleWidth } from "@hamr/tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
-import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../../core/provider-display-names.ts";
 import { theme } from "../theme/theme.ts";
 
 /**
@@ -10,22 +11,71 @@ import { theme } from "../theme/theme.ts";
  * Removes newlines, tabs, carriage returns, and other control characters.
  */
 function sanitizeStatusText(text: string): string {
-	// Replace newlines, tabs, carriage returns with space, then collapse multiple spaces
 	return text
 		.replace(/[\r\n\t]/g, " ")
 		.replace(/ +/g, " ")
 		.trim();
 }
 
-/**
- * Format token counts for compact footer display.
- */
 function formatTokens(count: number): string {
-	if (count < 1000) return count.toString();
-	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-	if (count < 1000000) return `${Math.round(count / 1000)}k`;
-	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
-	return `${Math.round(count / 1000000)}M`;
+	if (!Number.isFinite(count) || count < 0) return "0";
+	if (count < 1000) return String(Math.round(count));
+	if (count < 1000 * 1000) return `${Math.round(count / 1000)}K`;
+	return `${(count / (1000 * 1000)).toFixed(1)}M`;
+}
+
+function pct(used: number, total: number): string {
+	if (total <= 0) return "0%";
+	return `${Math.round((used / total) * 100)}%`;
+}
+
+/**
+ * Format the accumulated cost for the status bar. Uses 3-decimal precision so
+ * sub-cent spend (e.g. $0.003) is visible rather than rounding to $0.00.
+ * Zero-priced models (relay/local, where input pricing is 0) carry no
+ * meaningful cost, so the cost segment is omitted entirely for them.
+ */
+export function formatCostPart(
+	totalCost: number,
+	inputPricePerMillion: number,
+	usingSubscription: boolean,
+): string | undefined {
+	if (inputPricePerMillion <= 0) return undefined;
+	return `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
+}
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+	const c = (1 - Math.abs(2 * l - 1)) * s;
+	const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+	const m = l - c / 2;
+	let r = 0;
+	let g = 0;
+	let b = 0;
+	if (h < 60) {
+		r = c;
+		g = x;
+	} else if (h < 120) {
+		r = x;
+		g = c;
+	} else if (h < 180) {
+		g = c;
+		b = x;
+	} else if (h < 240) {
+		g = x;
+		b = c;
+	} else if (h < 300) {
+		r = x;
+		b = c;
+	} else {
+		r = c;
+		b = x;
+	}
+	return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+
+function providerDisplayName(provider: string): string {
+	if (provider === "relay") return "Relay";
+	return BUILT_IN_PROVIDER_DISPLAY_NAMES[provider] ?? provider;
 }
 
 export function formatCwdForFooter(cwd: string, home: string | undefined): string {
@@ -43,17 +93,34 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
 }
 
 /**
- * Footer component that shows pwd, token stats, and context usage.
- * Computes token/context stats from session, gets git branch and extension statuses from provider.
+ * Footer component that shows Hamr's synax-style single-line status:
+ * activity on the left, context/spend/tokens/provider/model/thinking on the right.
  */
 export class FooterComponent implements Component {
+	private static readonly RAINBOW_LUT: string[][] = (() => {
+		const lightnessSteps = 16;
+		const table: string[][] = [];
+		for (let h = 0; h < 360; h += 1) {
+			const row: string[] = [];
+			for (let l = 0; l < lightnessSteps; l += 1) {
+				const [r, g, b] = hslToRgb(h, 0.9, 0.4 + (l / lightnessSteps) * 0.4);
+				row.push(`\x1b[38;2;${r};${g};${b}m`);
+			}
+			table.push(row);
+		}
+		return table;
+	})();
+
 	private autoCompactEnabled = true;
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
+	private requestRender?: () => void;
+	private animationTimer: ReturnType<typeof setInterval> | undefined;
 
-	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
+	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider, requestRender?: () => void) {
 		this.session = session;
 		this.footerData = footerData;
+		this.requestRender = requestRender;
 	}
 
 	setSession(session: AgentSession): void {
@@ -64,189 +131,194 @@ export class FooterComponent implements Component {
 		this.autoCompactEnabled = enabled;
 	}
 
-	/**
-	 * No-op: git branch caching now handled by provider.
-	 * Kept for compatibility with existing call sites in interactive-mode.
-	 */
 	invalidate(): void {
-		// No-op: git branch is cached/invalidated by provider
+		// Rendered directly from session/provider state.
 	}
 
-	/**
-	 * Clean up resources.
-	 * Git watcher cleanup now handled by provider.
-	 */
 	dispose(): void {
-		// Git watcher cleanup handled by provider
+		this.stopAnimationTimer();
 	}
 
 	render(width: number): string[] {
-		const state = this.session.state;
+		if (this.isAnimating()) this.startAnimationTimer();
+		else this.stopAnimationTimer();
 
-		// Calculate cumulative usage from ALL session entries (not just post-compaction messages)
+		const lines: string[] = [];
+		if (width < 40) {
+			lines.push(truncateToWidth(this.renderActivityText(), width, theme.fg("dim", "...")));
+			return lines;
+		}
+
+		const left = this.renderActivityText();
+		const right = this.renderRightSide(width);
+		const leftWidth = visibleWidth(left);
+		const rightForLine = right;
+		const rightWidth = visibleWidth(rightForLine);
+
+		// Not enough room for left + gap + right: show only right (truncated if needed)
+		if (rightWidth + 2 >= width) {
+			lines.push(truncateToWidth(rightForLine, width, theme.fg("dim", "...")));
+		} else if (!right || leftWidth + rightWidth + 2 > width) {
+			const availableLeft = width - rightWidth - 2;
+			const trimmedLeft = truncateToWidth(left, Math.max(1, availableLeft), theme.fg("dim", "..."));
+			const gap = width - visibleWidth(trimmedLeft) - rightWidth;
+			lines.push(`${trimmedLeft}${" ".repeat(gap)}${rightForLine}`);
+		} else {
+			lines.push(`${left}${" ".repeat(width - leftWidth - rightWidth)}${rightForLine}`);
+		}
+
+		const extensionStatuses = this.footerData.getExtensionStatuses();
+		if (extensionStatuses.size > 0) {
+			const statusLine = Array.from(extensionStatuses.entries())
+				.sort(([a], [b]) => a.localeCompare(b))
+				.map(([, text]) => sanitizeStatusText(text))
+				.join(" ");
+			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+		}
+
+		return lines;
+	}
+
+	private isAnimating(): boolean {
+		return this.session.isStreaming;
+	}
+
+	private startAnimationTimer(): void {
+		if (this.animationTimer || !this.requestRender) return;
+		this.animationTimer = setInterval(() => {
+			this.requestRender?.();
+		}, 100);
+	}
+
+	private stopAnimationTimer(): void {
+		if (!this.animationTimer) return;
+		clearInterval(this.animationTimer);
+		this.animationTimer = undefined;
+	}
+
+	private renderActivityText(): string {
+		const text = this.session.isStreaming ? "Working..." : "Idle";
+		if (!this.isAnimating()) return theme.fg("dim", text);
+
+		if (this.isMaxThinking()) {
+			const t = Date.now() / 1000;
+			const rainbow = FooterComponent.RAINBOW_LUT;
+			const lightness = Math.floor(rainbow[0]!.length * 0.55);
+			const hueSpread = 8;
+			const hueOffset = Math.floor((t * 180) % 360);
+			const hueStep = 360 / hueSpread;
+			const parts: string[] = [];
+			for (let i = 0; i < text.length; i += 1) {
+				const hue = (360 - hueOffset + Math.floor(i * hueStep)) % 360;
+				parts.push(rainbow[hue]![lightness]!, text[i]!);
+			}
+			return `${parts.join("")}\x1b[0m`;
+		}
+
+		const t = Date.now() / 1000;
+		const shimmerSpeed = 14;
+		const shimmerWidth = 4;
+		const cycle = text.length + shimmerWidth;
+		const phase = (t * shimmerSpeed) % cycle;
+		let shimmered = "";
+		for (let i = 0; i < text.length; i += 1) {
+			const dist = Math.abs(i - phase);
+			if (dist < shimmerWidth) {
+				const brightness = 1 - dist / shimmerWidth;
+				if (brightness > 0.66) shimmered += theme.bold(text[i]!);
+				else if (brightness > 0.33) shimmered += theme.fg("text", text[i]!);
+				else shimmered += theme.fg("muted", text[i]!);
+			} else {
+				shimmered += theme.fg("dim", text[i]!);
+			}
+		}
+		return shimmered;
+	}
+
+	private isMaxThinking(): boolean {
+		const level = this.session.thinkingLevel || "off";
+		const model = this.session.state.model;
+		if (!model?.reasoning || level === "off") return false;
+		const levels = getSupportedThinkingLevels(model).filter((entry) => entry !== "off");
+		if (levels.length === 0) return true;
+		return level === levels[levels.length - 1];
+	}
+
+	private renderRightSide(width: number): string {
+		const state = this.session.state;
+		const usage = this.getSessionUsage();
+		const contextUsage = this.session.getContextUsage();
+		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
+		const contextPercentValue = contextUsage?.percent ?? 0;
+		const contextUsed = contextWindow > 0 ? Math.round((contextPercentValue / 100) * contextWindow) : 0;
+		const compact = width < 100;
+
+		const parts: string[] = [];
+		if (contextWindow > 0) {
+			const contextText = compact
+				? `${pct(contextUsed, contextWindow)} / ${formatTokens(contextWindow)}`
+				: `${pct(contextUsed, contextWindow)} used of ${formatTokens(contextWindow)} tokens`;
+			const coloredContext =
+				contextPercentValue > 90
+					? theme.fg("error", contextText)
+					: contextPercentValue > 70
+						? theme.fg("warning", contextText)
+						: theme.fg("dim", contextText);
+			parts.push(coloredContext);
+		} else if (!compact && this.autoCompactEnabled) {
+			parts.push(theme.fg("dim", "0% used"));
+		}
+
+		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
+		const costPart = formatCostPart(usage.totalCost, state.model?.cost?.input ?? 0, usingSubscription);
+		if (costPart) {
+			parts.push(theme.fg("dim", costPart));
+		}
+		if (usage.totalInput > 0 || usage.totalOutput > 0) {
+			parts.push(theme.fg("dim", `${formatTokens(usage.totalInput)}↑ ${formatTokens(usage.totalOutput)}↓`));
+		}
+		if (usage.totalCacheRead > 0 || usage.totalCacheWrite > 0) {
+			const cacheTotal = usage.totalInput + usage.totalCacheRead + usage.totalCacheWrite;
+			const cacheHitRate = cacheTotal > 0 ? (usage.totalCacheRead / cacheTotal) * 100 : 0;
+			parts.push(theme.fg("dim", `CH${cacheHitRate.toFixed(1)}%`));
+		}
+
+		if (state.model) {
+			parts.push(theme.fg("muted", `(${providerDisplayName(state.model.provider)})`));
+			const glyph = theme.modelGlyph(state.model.provider, state.model.name ?? state.model.id);
+			const modelName = state.model.name || state.model.id;
+			const modelBrandAnsi = theme.modelColor(state.model.provider, modelName);
+			const model = `${modelBrandAnsi}${glyph} ${modelName}\x1b[39m`;
+			const thinking = theme.fg("dim", `• ${this.session.thinkingLevel || "off"}`);
+			parts.push(`${model} ${thinking}`);
+		} else {
+			parts.push(theme.fg("muted", "(no provider)"));
+			parts.push(theme.fg("dim", "no-model • off"));
+		}
+
+		return parts.join("  ");
+	}
+
+	private getSessionUsage(): {
+		totalInput: number;
+		totalOutput: number;
+		totalCacheRead: number;
+		totalCacheWrite: number;
+		totalCost: number;
+	} {
 		let totalInput = 0;
 		let totalOutput = 0;
 		let totalCacheRead = 0;
 		let totalCacheWrite = 0;
 		let totalCost = 0;
-		let latestCacheHitRate: number | undefined;
-
 		for (const entry of this.session.sessionManager.getEntries()) {
-			if (entry.type === "message" && entry.message.role === "assistant") {
-				totalInput += entry.message.usage.input;
-				totalOutput += entry.message.usage.output;
-				totalCacheRead += entry.message.usage.cacheRead;
-				totalCacheWrite += entry.message.usage.cacheWrite;
-				totalCost += entry.message.usage.cost.total;
-
-				const latestPromptTokens =
-					entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
-				latestCacheHitRate =
-					latestPromptTokens > 0 ? (entry.message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
-			}
+			if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+			totalInput += entry.message.usage.input;
+			totalOutput += entry.message.usage.output;
+			totalCacheRead += entry.message.usage.cacheRead;
+			totalCacheWrite += entry.message.usage.cacheWrite;
+			totalCost += entry.message.usage.cost.total;
 		}
-
-		// Calculate context usage from session (handles compaction correctly).
-		// After compaction, tokens are unknown until the next LLM response.
-		const contextUsage = this.session.getContextUsage();
-		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
-		const contextPercentValue = contextUsage?.percent ?? 0;
-		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
-
-		// Replace home directory with ~
-		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
-
-		// Add git branch if available
-		const branch = this.footerData.getGitBranch();
-		if (branch) {
-			pwd = `${pwd} (${branch})`;
-		}
-
-		// Add session name if set
-		const sessionName = this.session.sessionManager.getSessionName();
-		if (sessionName) {
-			pwd = `${pwd} • ${sessionName}`;
-		}
-
-		// Build stats line
-		const statsParts = [];
-		if (totalInput) statsParts.push(`↑${formatTokens(totalInput)}`);
-		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
-		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
-		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
-		if ((totalCacheRead > 0 || totalCacheWrite > 0) && latestCacheHitRate !== undefined) {
-			statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
-		}
-
-		// Show cost with "(sub)" indicator if using OAuth subscription
-		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
-		if (totalCost || usingSubscription) {
-			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
-			statsParts.push(costStr);
-		}
-
-		// Colorize context percentage based on usage
-		let contextPercentStr: string;
-		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
-		const contextPercentDisplay =
-			contextPercent === "?"
-				? `?/${formatTokens(contextWindow)}${autoIndicator}`
-				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
-		if (contextPercentValue > 90) {
-			contextPercentStr = theme.fg("error", contextPercentDisplay);
-		} else if (contextPercentValue > 70) {
-			contextPercentStr = theme.fg("warning", contextPercentDisplay);
-		} else {
-			contextPercentStr = contextPercentDisplay;
-		}
-		statsParts.push(contextPercentStr);
-		if (areExperimentalFeaturesEnabled()) {
-			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
-		}
-
-		let statsLeft = statsParts.join(" ");
-
-		// Add model name on the right side, plus thinking level if model supports it
-		const modelName = state.model?.id || "no-model";
-
-		let statsLeftWidth = visibleWidth(statsLeft);
-
-		// If statsLeft is too wide, truncate it
-		if (statsLeftWidth > width) {
-			statsLeft = truncateToWidth(statsLeft, width, "...");
-			statsLeftWidth = visibleWidth(statsLeft);
-		}
-
-		// Calculate available space for padding (minimum 2 spaces between stats and model)
-		const minPadding = 2;
-
-		// Add thinking level indicator if model supports reasoning
-		let rightSideWithoutProvider = modelName;
-		if (state.model?.reasoning) {
-			const thinkingLevel = state.thinkingLevel || "off";
-			rightSideWithoutProvider =
-				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
-		}
-
-		// Prepend the provider in parentheses if there are multiple providers and there's enough room
-		let rightSide = rightSideWithoutProvider;
-		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			rightSide = `(${state.model!.provider}) ${rightSideWithoutProvider}`;
-			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
-				// Too wide, fall back
-				rightSide = rightSideWithoutProvider;
-			}
-		}
-
-		const rightSideWidth = visibleWidth(rightSide);
-		const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
-
-		let statsLine: string;
-		if (totalNeeded <= width) {
-			// Both fit - add padding to right-align model
-			const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
-			statsLine = statsLeft + padding + rightSide;
-		} else {
-			// Need to truncate right side
-			const availableForRight = width - statsLeftWidth - minPadding;
-			if (availableForRight > 0) {
-				const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
-				const truncatedRightWidth = visibleWidth(truncatedRight);
-				const padding = " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth));
-				statsLine = statsLeft + padding + truncatedRight;
-			} else {
-				// Not enough space for right side at all
-				statsLine = statsLeft;
-			}
-		}
-
-		// Apply dim to each part separately. statsLeft may contain color codes (for context %)
-		// that end with a reset, which would clear an outer dim wrapper. So we dim the parts
-		// before and after the colored section independently.
-		const dimStatsLeft = theme.fg("dim", statsLeft);
-		// Color the model name with brand color; rest of stats line stays dim
-		const modelBrandAnsi = state.model
-			? theme.modelColor(state.model.provider, state.model.id)
-			: theme.getFgAnsi("dim");
-		const modelReset = "\x1b[39m";
-		const padding = statsLine.slice(statsLeft.length, statsLine.length - visibleWidth(rightSide));
-		const dimPadding = theme.fg("dim", padding);
-		const coloredRightSide = `${modelBrandAnsi}${rightSide}${modelReset}`;
-
-		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const lines = [pwdLine, dimStatsLeft + dimPadding + coloredRightSide];
-
-		// Add extension statuses on a single line, sorted by key alphabetically
-		const extensionStatuses = this.footerData.getExtensionStatuses();
-		if (extensionStatuses.size > 0) {
-			const sortedStatuses = Array.from(extensionStatuses.entries())
-				.sort(([a], [b]) => a.localeCompare(b))
-				.map(([, text]) => sanitizeStatusText(text));
-			const statusLine = sortedStatuses.join(" ");
-			// Truncate to terminal width with dim ellipsis for consistency with footer style
-			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
-		}
-
-		return lines;
+		return { totalInput, totalOutput, totalCacheRead, totalCacheWrite, totalCost };
 	}
 }

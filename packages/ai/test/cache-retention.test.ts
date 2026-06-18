@@ -6,6 +6,7 @@ import { streamOpenAICompletions } from "../src/providers/openai-completions.ts"
 import { streamOpenAIResponses } from "../src/providers/openai-responses.ts";
 import { stream } from "../src/stream.ts";
 import type { Context, Model } from "../src/types.ts";
+import { hasAnthropicCredentials } from "./credentials.ts";
 
 class PayloadCaptured extends Error {
 	constructor() {
@@ -47,7 +48,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 	};
 
 	describe("Anthropic Provider", () => {
-		it.skipIf(!process.env.ANTHROPIC_API_KEY)(
+		it.skipIf(!hasAnthropicCredentials())(
 			"should use default cache TTL (no ttl field) when PI_CACHE_RETENTION is not set",
 			async () => {
 				const model = getModel("anthropic", "claude-haiku-4-5");
@@ -71,7 +72,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			},
 		);
 
-		it.skipIf(!process.env.ANTHROPIC_API_KEY)("should use 1h cache TTL when PI_CACHE_RETENTION=long", async () => {
+		it.skipIf(!hasAnthropicCredentials())("should use 1h cache TTL when PI_CACHE_RETENTION=long", async () => {
 			process.env.PI_CACHE_RETENTION = "long";
 			const model = getModel("anthropic", "claude-haiku-4-5");
 			let capturedPayload: any = null;

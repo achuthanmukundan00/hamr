@@ -25,6 +25,7 @@ import {
 	type SessionMessageEntry,
 	type ThinkingLevelChangeEntry,
 } from "../src/core/session-manager.ts";
+import { RUN_LIVE_TESTS } from "./utilities.ts";
 
 // ============================================================================
 // Test fixtures
@@ -495,7 +496,7 @@ describe("Large session fixture", () => {
 // LLM integration tests (skipped without API key)
 // ============================================================================
 
-describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("LLM summarization", () => {
+describe.skipIf(!RUN_LIVE_TESTS || !process.env.ANTHROPIC_OAUTH_TOKEN)("LLM summarization", () => {
 	it("should generate a compaction result for the large session", async () => {
 		const entries = loadLargeSessionEntries();
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;

@@ -1,8 +1,8 @@
-import { Key } from "@hamr/tui";
 import type { Component, TUI } from "@hamr/tui";
-import type { Theme } from "../modes/interactive/theme/theme.ts";
-import type { ExtensionContext, ExtensionAPI } from "../core/extensions/types.ts";
+import { Key } from "@hamr/tui";
+import type { ExtensionAPI, ExtensionContext } from "../core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../core/footer-data-provider.ts";
+import type { Theme } from "../modes/interactive/theme/theme.ts";
 
 class PersistentFooterComponent implements Component {
 	private ctx: ExtensionContext;
@@ -24,9 +24,8 @@ class PersistentFooterComponent implements Component {
 
 		const editorText = this.ctx.ui.getEditorText();
 		const promptPrefix = "persistent> ";
-		const promptStr = editorText.length > 0
-			? `${promptPrefix}${editorText}`
-			: `${promptPrefix}${th.fg("dim", "type a message...")}`;
+		const promptStr =
+			editorText.length > 0 ? `${promptPrefix}${editorText}` : `${promptPrefix}${th.fg("dim", "type a message...")}`;
 		lines.push(promptStr.length > width ? promptStr.slice(0, width) : promptStr);
 
 		const cwd = this.ctx.cwd;
@@ -34,19 +33,26 @@ class PersistentFooterComponent implements Component {
 		const pwdStr = branch ? `${cwd} (${branch})` : cwd;
 		lines.push(th.fg("dim", pwdStr.length > width ? pwdStr.slice(0, width) : pwdStr));
 
-		const modelName = this.ctx.model?.id ?? "no-model";
-		let statsLine = modelName;
+		// Model name with brand color (model-aware coloring)
+		const model = this.ctx.model;
+		const modelName = model?.id ?? "no-model";
+		const modelColorAnsi = model ? th.modelColor(model.provider, model.id) : th.getFgAnsi("dim");
+		const modelReset = "\x1b[39m";
+		let statsLine = `${modelColorAnsi}${modelName}${modelReset}`;
 		try {
 			const usage = this.ctx.getContextUsage();
 			if (usage) {
 				const pct = usage.percent !== null ? `${usage.percent.toFixed(1)}%` : "?";
-				const windowStr = usage.contextWindow > 0
-					? usage.contextWindow < 1000 ? String(usage.contextWindow) : `${Math.round(usage.contextWindow / 1000)}k`
-					: "?";
-				statsLine = `${modelName} | ${pct}/${windowStr}`;
+				const windowStr =
+					usage.contextWindow > 0
+						? usage.contextWindow < 1000
+							? String(usage.contextWindow)
+							: `${Math.round(usage.contextWindow / 1000)}k`
+						: "?";
+				statsLine = `${modelColorAnsi}${modelName}${modelReset} ${th.fg("dim", `| ${pct}/${windowStr}`)}`;
 			}
 		} catch {}
-		lines.push(th.fg("dim", statsLine.length > width ? statsLine.slice(0, width) : statsLine));
+		lines.push(statsLine.length > visibleWidth(statsLine) ? statsLine.slice(0, width) : statsLine);
 
 		const extensionStatuses = this.footerData.getExtensionStatuses();
 		if (extensionStatuses.size > 0) {
@@ -59,6 +65,21 @@ class PersistentFooterComponent implements Component {
 
 		return lines;
 	}
+}
+
+function visibleWidth(s: string): number {
+	let width = 0;
+	let inEscape = false;
+	for (let i = 0; i < s.length; i++) {
+		if (inEscape) {
+			if (s[i] === "m") inEscape = false;
+		} else if (s[i] === "\x1b") {
+			inEscape = true;
+		} else {
+			width++;
+		}
+	}
+	return width;
 }
 
 export function createPersistentEditorExtension(): (pi: ExtensionAPI) => void {
@@ -75,30 +96,27 @@ export function createPersistentEditorExtension(): (pi: ExtensionAPI) => void {
 		}
 
 		function enablePersistentMode(ctx: ExtensionContext): void {
-			const th = ctx.ui.theme;
 			ctx.ui.setFooter(
 				(_tui: TUI, theme: Theme, footerData: ReadonlyFooterDataProvider) =>
 					new PersistentFooterComponent(ctx, theme, footerData),
 			);
-			ctx.ui.setStatus("persistent", th.fg("accent", "anchor"));
-			ctx.ui.notify(`Persistent editor ${th.fg("success", "enabled")} (Ctrl+U to toggle)`, "info");
+			ctx.ui.notify(`Persistent editor ${ctx.ui.theme.fg("success", "enabled")} (Shift+Ctrl+U to toggle)`, "info");
 		}
 
 		function disablePersistentMode(ctx: ExtensionContext): void {
 			ctx.ui.setFooter(undefined);
-			ctx.ui.setStatus("persistent", undefined);
 			ctx.ui.notify(`Persistent editor ${ctx.ui.theme.fg("muted", "disabled")}`, "info");
 		}
 
-		pi.registerShortcut(Key.ctrl("u"), {
-			description: "Toggle persistent editor mode (anchor editor at bottom)",
+		pi.registerShortcut(Key.shiftCtrl("u"), {
+			description: "Toggle persistent editor mode (keep editor open at bottom)",
 			handler: async (ctx: ExtensionContext): Promise<void> => {
 				togglePersistentMode(ctx);
 			},
 		});
 
 		pi.registerCommand("persistent-editor", {
-			description: "Toggle persistent editor mode (anchor editor at bottom)",
+			description: "Toggle persistent editor mode (keep editor open at bottom)",
 			handler: async (_args: string, ctx: ExtensionContext): Promise<void> => {
 				togglePersistentMode(ctx);
 			},

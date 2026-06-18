@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getModel } from "../src/models.ts";
 import { streamSimple } from "../src/stream.ts";
 import type { Api, Context, Model, SimpleStreamOptions } from "../src/types.ts";
+import { hasAnthropicCredentials } from "./credentials.ts";
 
 type SimpleOptionsWithExtras = SimpleStreamOptions & Record<string, unknown>;
 
@@ -90,7 +91,7 @@ async function expectThinkingDisabledE2E<TApi extends Api>(model: Model<TApi>, e
 	}
 }
 
-describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic thinking disable E2E", () => {
+describe.skipIf(!hasAnthropicCredentials())("Anthropic thinking disable E2E", () => {
 	it("disables thinking for budget-based reasoning models", { retry: 2, timeout: 30000 }, async () => {
 		await expectThinkingDisabledE2E(getModel("anthropic", "claude-sonnet-4-5"), {
 			requestOptions: { maxTokens: 320, temperature: 0 },

@@ -91,11 +91,11 @@ import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelo
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
+import { getHamrUserAgent } from "../../utils/hamr-user-agent.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
-import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
-import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
+import { checkForNewHamrVersion, type LatestHamrRelease } from "../../utils/version-check.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
@@ -142,6 +142,7 @@ import {
 	type ThemeColor,
 	theme,
 } from "./theme/theme.ts";
+import { routeInterruptKey } from "./interrupt-routing.ts";
 
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
@@ -251,7 +252,7 @@ export interface InteractiveModeOptions {
 	migratedProviders?: string[];
 	/** Warning message if session model couldn't be restored */
 	modelFallbackMessage?: string;
-	/** Cwd to trust after reload if it gained a .pi directory during this implicitly trusted session. */
+	/** Cwd to trust after reload if it gained a .hamr directory during this implicitly trusted session. */
 	autoTrustOnReloadCwd?: string;
 	/** Initial message to send on startup (can include @file content) */
 	initialMessage?: string;
@@ -269,6 +270,8 @@ export class InteractiveMode {
 	private chatContainer: Container;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
+	private splashRendered = false;
+	private splashRenderedModelKey: string | undefined;
 	private defaultEditor: CustomEditor;
 	private editor: EditorComponent;
 	private editorComponentFactory: EditorFactory | undefined;
@@ -285,9 +288,6 @@ export class InteractiveMode {
 	private onInputCallback?: (text: string) => void;
 	private pendingUserInputs: string[] = [];
 	private loadingAnimation: Loader | undefined = undefined;
-	private workingMessage: string | undefined = undefined;
-	private workingVisible = true;
-	private workingIndicatorOptions: LoaderIndicatorOptions | undefined = undefined;
 	private readonly defaultWorkingMessage = "Working...";
 	private readonly defaultHiddenThinkingLabel = "Thinking...";
 	private hiddenThinkingLabel = this.defaultHiddenThinkingLabel;
@@ -418,7 +418,7 @@ export class InteractiveMode {
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
-		this.footer = new FooterComponent(this.session, this.footerDataProvider);
+		this.footer = new FooterComponent(this.session, this.footerDataProvider, () => this.ui.requestRender());
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 
 		// Load hide thinking block setting
@@ -671,8 +671,10 @@ export class InteractiveMode {
 
 		await this.detectThemeIfUnset();
 
-		// Add header with keybindings from config (unless silenced)
-		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
+		// Legacy keybinding/onboarding header (Pi-style). The branded Hamr splash
+		// (renderSplashScreen) is the default startup surface; only show this
+		// detailed keybinding header when the user explicitly asks for verbose.
+		if (this.options.verbose) {
 			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
 
 			// Build startup instructions using keybinding hint helpers
@@ -708,11 +710,11 @@ export class InteractiveMode {
 			].join(theme.fg("muted", " · "));
 			const compactOnboarding = theme.fg(
 				"dim",
-				`Press ${keyText("app.tools.expand")} to show full startup help and loaded resources.`,
+				`Press ${keyText("app.tools.expand")} for full startup help and loaded resources.`,
 			);
 			const onboarding = theme.fg(
 				"dim",
-				`Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`,
+				`Hamr can explain its local tools, Relay setup, sessions, memory, and model compatibility.`,
 			);
 			this.builtInHeader = new ExpandableText(
 				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,
@@ -736,8 +738,16 @@ export class InteractiveMode {
 		// Initialize extensions first so resources are shown before messages
 		await this.rebindCurrentSession();
 
-		// Render initial messages AFTER showing loaded resources
+		// Render initial messages AFTER showing loaded resources. Capture the
+		// child count first so we can tell whether any *messages* were restored,
+		// independent of startup diagnostics (conflicts) already in the container.
+		const childrenBeforeMessages = this.chatContainer.children.length;
 		this.renderInitialMessages();
+		const restoredMessages = this.chatContainer.children.length > childrenBeforeMessages;
+		// Show the branded Hamr splash for fresh sessions (no restored messages).
+		if (!restoredMessages) {
+			this.renderSplashScreen();
+		}
 
 		// Set up theme file watcher
 		onThemeChange(() => {
@@ -776,7 +786,7 @@ export class InteractiveMode {
 		await this.init();
 
 		// Start version check asynchronously
-		checkForNewPiVersion(this.version).then((newRelease) => {
+		checkForNewHamrVersion(this.version).then((newRelease) => {
 			if (newRelease) {
 				this.showNewVersionNotification(newRelease);
 			}
@@ -848,7 +858,7 @@ export class InteractiveMode {
 	}
 
 	private async checkForPackageUpdates(): Promise<string[]> {
-		if (process.env.PI_OFFLINE) {
+		if (process.env.HAMR_OFFLINE || process.env.PI_OFFLINE) {
 			return [];
 		}
 
@@ -944,7 +954,7 @@ export class InteractiveMode {
 	}
 
 	private reportInstallTelemetry(version: string): void {
-		if (process.env.PI_OFFLINE) {
+		if (process.env.HAMR_OFFLINE || process.env.PI_OFFLINE) {
 			return;
 		}
 
@@ -952,9 +962,9 @@ export class InteractiveMode {
 			return;
 		}
 
-		void fetch(`https://pi.dev/api/report-install?version=${encodeURIComponent(version)}`, {
+		void fetch(`https://hamr.dev/api/report-install?version=${encodeURIComponent(version)}`, {
 			headers: {
-				"User-Agent": getPiUserAgent(version),
+				"User-Agent": getHamrUserAgent(version),
 			},
 			signal: AbortSignal.timeout(5000),
 		})
@@ -1343,7 +1353,10 @@ export class InteractiveMode {
 		force?: boolean;
 		showDiagnosticsWhenQuiet?: boolean;
 	}): void {
-		const showListing = options?.force || this.options.verbose || !this.settingsManager.getQuietStartup();
+		// The branded Hamr splash now covers the startup resource summary
+		// (SESSION/CONTEXT/SKILLS), so the legacy Pi-style listing only renders
+		// on explicit request (force) or in verbose mode. Diagnostics still show.
+		const showListing = options?.force || this.options.verbose;
 		const showDiagnostics = showListing || options?.showDiagnosticsWhenQuiet === true;
 		if (!showListing && !showDiagnostics) {
 			return;
@@ -1667,6 +1680,110 @@ export class InteractiveMode {
 	}
 
 	/**
+	 * Render the synax-style splash/welcome screen with ⚒ logo in model brand color.
+	 * Shows session info: model name, provider, thinking level, and version.
+	 */
+	private renderSplashScreen(): void {
+		const model = this.session.model;
+		const modelHex = model ? theme.modelHexColor(model.provider, model.name) : undefined;
+		const useModelColor = modelHex && theme.modelAdaptive;
+
+		// Remember which model/thinking the splash currently reflects so we can
+		// re-render it in place when the active model changes (refreshSplashIfLive).
+		this.splashRendered = true;
+		this.splashRenderedModelKey = model
+			? `${model.provider}/${model.name}/${this.session.thinkingLevel ?? "off"}`
+			: "none";
+
+		// ⚒ logo in model brand color (or theme accent when non-adaptive)
+		const logoColor = useModelColor
+			? (s: string) => {
+					const r = parseInt(modelHex!.slice(1, 3), 16);
+					const g = parseInt(modelHex!.slice(3, 5), 16);
+					const b = parseInt(modelHex!.slice(5, 7), 16);
+					return `\x1b[38;2;${r};${g};${b}m${s}\x1b[39m`;
+				}
+			: (s: string) => theme.fg("accent", s);
+
+		const dim = (s: string) => theme.fg("dim", s);
+		const muted = (s: string) => theme.fg("muted", s);
+		const accent = (s: string) => theme.fg("accent", s);
+		const text = (s: string) => theme.fg("text", s);
+
+		// ═══ Logo line with version ═══
+		const versionStr = `  ${dim(`v${VERSION}`)}`;
+		this.chatContainer.addChild(new Text(theme.bold(`${logoColor("⚒")} ${logoColor("hamr")}${versionStr}`), 1, 0));
+		this.chatContainer.addChild(new Spacer(1));
+
+		// ═══ Session ═══
+		this.chatContainer.addChild(new Text(theme.bold(logoColor("── SESSION ──")), 1, 0));
+		this.chatContainer.addChild(new Spacer(1));
+
+		if (model) {
+			const modelGlyph = theme.modelGlyph(model.provider, model.name);
+			const kv = (label: string, value: string, color = text) => {
+				this.chatContainer.addChild(new Text(`${dim(label.padEnd(12))} ${color(value)}`, 1, 0));
+			};
+			kv("Model", `${modelGlyph} ${model.name}`, logoColor);
+			if (model.provider) {
+				kv("Provider", model.provider, accent);
+			}
+			const level = this.session.thinkingLevel || "off";
+			kv("Thinking", level, muted);
+			kv("Version", `v${VERSION}`, dim);
+			if (model.baseUrl) {
+				kv("Endpoint", model.baseUrl, muted);
+			}
+		}
+
+		// ═══ Context ═══
+		const contextFiles = this.session.resourceLoader.getAgentsFiles().agentsFiles;
+		if (contextFiles.length > 0) {
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.bold(logoColor("── CONTEXT ──")), 1, 0));
+			for (const f of contextFiles) {
+				this.chatContainer.addChild(new Text(`  ${muted(f.path)}`, 1, 0));
+			}
+		}
+
+		// ═══ Skills ═══
+		const skills = this.session.resourceLoader.getSkills().skills;
+		if (skills.length > 0) {
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.bold(logoColor("── SKILLS ──")), 1, 0));
+			if (skills.length <= 5) {
+				for (const s of skills) {
+					this.chatContainer.addChild(new Text(`  ${muted(s.name)}`, 1, 0));
+				}
+			} else {
+				this.chatContainer.addChild(new Text(`  ${muted(`${skills.length} skills loaded`)}`, 1, 0));
+			}
+		}
+
+		this.chatContainer.addChild(new Spacer(1));
+	}
+
+	/**
+	 * Re-render the splash in-place when the active model or thinking level
+	 * changes, so the model/provider/endpoint/brand-color stays in sync.
+	 * The splash is only visible when no messages have been restored, so
+	 * clearing chatContainer before re-rendering is safe.
+	 */
+	private refreshSplashIfLive(): void {
+		if (!this.splashRendered) return;
+
+		const model = this.session.model;
+		const currentKey = model ? `${model.provider}/${model.name}/${this.session.thinkingLevel ?? "off"}` : "none";
+
+		if (currentKey === this.splashRenderedModelKey) return;
+
+		// Splash is only ever shown when chatContainer has no messages,
+		// so we can safely clear it and re-render the full splash.
+		this.chatContainer.clear();
+		this.renderSplashScreen();
+	}
+
+	/**
 	 * Get a registered tool definition by name (for custom rendering).
 	 */
 	private getRegisteredToolDefinition(toolName: string) {
@@ -1738,20 +1855,6 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private getWorkingLoaderMessage(): string {
-		return this.workingMessage ?? this.defaultWorkingMessage;
-	}
-
-	private createWorkingLoader(): Loader {
-		return new Loader(
-			this.ui,
-			(spinner) => theme.fg("accent", spinner),
-			(text) => theme.fg("muted", text),
-			this.getWorkingLoaderMessage(),
-			this.workingIndicatorOptions,
-		);
-	}
-
 	private stopWorkingLoader(): void {
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();
@@ -1761,22 +1864,18 @@ export class InteractiveMode {
 	}
 
 	private setWorkingVisible(visible: boolean): void {
-		this.workingVisible = visible;
 		if (!visible) {
 			this.stopWorkingLoader();
 			this.ui.requestRender();
 			return;
 		}
-		if (this.session.isStreaming && !this.loadingAnimation) {
-			this.statusContainer.clear();
-			this.loadingAnimation = this.createWorkingLoader();
-			this.statusContainer.addChild(this.loadingAnimation);
-		}
+		// The footer/status bar already shows the working state (animated
+		// "Working...") via its own timer, so we intentionally do not render a
+		// second working indicator above the prompt box.
 		this.ui.requestRender();
 	}
 
 	private setWorkingIndicator(options?: LoaderIndicatorOptions): void {
-		this.workingIndicatorOptions = options;
 		this.loadingAnimation?.setIndicator(options);
 		this.ui.requestRender();
 	}
@@ -1873,8 +1972,6 @@ export class InteractiveMode {
 		this.setupAutocompleteProvider();
 		this.defaultEditor.onExtensionShortcut = undefined;
 		this.updateTerminalTitle();
-		this.workingMessage = undefined;
-		this.workingVisible = true;
 		this.setWorkingIndicator();
 		if (this.loadingAnimation) {
 			this.loadingAnimation.setMessage(`${this.defaultWorkingMessage} (${keyText("app.interrupt")} to interrupt)`);
@@ -2040,7 +2137,6 @@ export class InteractiveMode {
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
 			setWorkingMessage: (message) => {
-				this.workingMessage = message;
 				if (this.loadingAnimation) {
 					this.loadingAnimation.setMessage(message ?? this.defaultWorkingMessage);
 				}
@@ -2441,14 +2537,59 @@ export class InteractiveMode {
 	// Key Handlers
 	// =========================================================================
 
+	/**
+	 * Interrupt an actively running operation (model stream or bash command).
+	 * Returns true if something was interrupted. Shared by the focused-editor
+	 * escape handler and the global TUI-level interrupt listener so there is a
+	 * single source of truth for interrupt behavior.
+	 */
+	private tryInterruptRunningOperation(): boolean {
+		if (this.session.isStreaming) {
+			this.restoreQueuedMessagesToEditor({ abort: true });
+			return true;
+		}
+		if (this.session.isBashRunning) {
+			this.session.abortBash();
+			return true;
+		}
+		return false;
+	}
+
+	/** True while a compaction/auto-retry escape override is temporarily active. */
+	private inSpecialEscapeMode(): boolean {
+		return this.autoCompactionEscapeHandler !== undefined || this.retryEscapeHandler !== undefined;
+	}
+
+	/**
+	 * Register the interrupt key as a TUI-level input listener so it fires
+	 * regardless of which component is focused. This makes "esc to interrupt"
+	 * reliable while streaming even when an extension widget/overlay has focus,
+	 * rather than depending on the editor being the focused component.
+	 */
+	private registerGlobalInterruptListener(): void {
+		this.ui.addInputListener((data) => {
+			if (!this.keybindings.matches(data, "app.interrupt")) return undefined;
+			// Custom editors supplied by extensions may not implement autocomplete.
+			const activeEditor = this.editor as { isShowingAutocomplete?: () => boolean };
+			const route = routeInterruptKey({
+				isStreaming: this.session.isStreaming,
+				isBashRunning: this.session.isBashRunning,
+				inSpecialEscapeMode: this.inSpecialEscapeMode(),
+				autocompleteShowing: activeEditor.isShowingAutocomplete?.() ?? false,
+			});
+			if (route === "defer") return undefined;
+			this.tryInterruptRunningOperation();
+			return { consume: true };
+		});
+	}
+
 	private setupKeyHandlers(): void {
+		this.registerGlobalInterruptListener();
 		// Set up handlers on defaultEditor - they use this.editor for text access
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
-			if (this.session.isStreaming) {
-				this.restoreQueuedMessagesToEditor({ abort: true });
-			} else if (this.session.isBashRunning) {
-				this.session.abortBash();
+			if (this.tryInterruptRunningOperation()) {
+				// handled
 			} else if (this.isBashMode) {
 				this.editor.setText("");
 				this.isBashMode = false;
@@ -2751,10 +2892,7 @@ export class InteractiveMode {
 					this.retryLoader = undefined;
 				}
 				this.stopWorkingLoader();
-				if (this.workingVisible) {
-					this.loadingAnimation = this.createWorkingLoader();
-					this.statusContainer.addChild(this.loadingAnimation);
-				}
+				// Working state is shown in the footer/status bar, not above the prompt box.
 				this.ui.requestRender();
 				break;
 
@@ -2783,11 +2921,18 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					// Capture per-message model accent so each card retains
+					// its model identity after mid-session model switches.
+					const model = this.session.model;
+					const modelAccent = model ? theme.modelHexColor(model.provider, model.name) : undefined;
+					const modelGlyph = model ? theme.modelGlyph(model.provider, model.name) : undefined;
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
 						this.hideThinkingBlock,
 						this.getMarkdownThemeWithSettings(),
 						this.hiddenThinkingLabel,
+						modelAccent,
+						modelGlyph,
 					);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
@@ -3094,6 +3239,20 @@ export class InteractiveMode {
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
+		// Capture the active model at the time this message was added so the
+		// card heading retains model identity after mid-session model switches.
+		const model = this.session.model;
+		const modelAccent = model ? theme.modelHexColor(model.provider, model.name) : undefined;
+		const modelGlyph = model ? theme.modelGlyph(model.provider, model.name) : undefined;
+
+		// Inter-message spacing is theme-driven. With gaplessCards (the hamr
+		// default) each card relies on its own top/bottom padding, which keeps
+		// spacing consistent instead of mixing shaded card padding with an
+		// unshaded spacer. Themes can opt back into a spacer.
+		if (!theme.cards.gaplessCards && this.chatContainer.children.length > 0) {
+			this.chatContainer.addChild(new Spacer(1));
+		}
+
 		switch (message.role) {
 			case "bashExecution": {
 				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
@@ -3119,14 +3278,12 @@ export class InteractiveMode {
 				break;
 			}
 			case "compactionSummary": {
-				this.chatContainer.addChild(new Spacer(1));
 				const component = new CompactionSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
 				component.setExpanded(this.toolOutputExpanded);
 				this.chatContainer.addChild(component);
 				break;
 			}
 			case "branchSummary": {
-				this.chatContainer.addChild(new Spacer(1));
 				const component = new BranchSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
 				component.setExpanded(this.toolOutputExpanded);
 				this.chatContainer.addChild(component);
@@ -3135,9 +3292,6 @@ export class InteractiveMode {
 			case "user": {
 				const textContent = this.getUserMessageText(message);
 				if (textContent) {
-					if (this.chatContainer.children.length > 0) {
-						this.chatContainer.addChild(new Spacer(1));
-					}
 					const skillBlock = parseSkillBlock(textContent);
 					if (skillBlock) {
 						// Render skill block (collapsible)
@@ -3150,11 +3304,18 @@ export class InteractiveMode {
 							const userComponent = new UserMessageComponent(
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
+								modelAccent,
+								modelGlyph,
 							);
 							this.chatContainer.addChild(userComponent);
 						}
 					} else {
-						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings());
+						const userComponent = new UserMessageComponent(
+							textContent,
+							this.getMarkdownThemeWithSettings(),
+							modelAccent,
+							modelGlyph,
+						);
 						this.chatContainer.addChild(userComponent);
 					}
 					if (options?.populateHistory) {
@@ -3169,6 +3330,8 @@ export class InteractiveMode {
 					this.hideThinkingBlock,
 					this.getMarkdownThemeWithSettings(),
 					this.hiddenThinkingLabel,
+					modelAccent,
+					modelGlyph,
 				);
 				this.chatContainer.addChild(assistantComponent);
 				break;
@@ -3289,7 +3452,7 @@ export class InteractiveMode {
 			new Text(
 				theme.fg(
 					"warning",
-					"This project is not trusted. Project .pi resources and packages are ignored. Use /trust to save a trust decision, then restart pi.",
+					"This project is not trusted. Project .hamr resources and packages are ignored. Use /trust to save a trust decision, then restart hamr.",
 				),
 				1,
 				0,
@@ -3555,10 +3718,24 @@ export class InteractiveMode {
 	}
 
 	private updateEditorBorderColor(): void {
+		// Refresh the splash if it's visible and the model/thinking changed,
+		// so model/provider/endpoint/brand-color stays in sync.
+		this.refreshSplashIfLive();
+
 		if (this.isBashMode) {
 			this.editor.borderColor = theme.getBashModeBorderColor();
 		} else {
+			// Use model brand color × thinking brightness when theme is model-adaptive
+			const model = this.session.model;
 			const level = this.session.thinkingLevel || "off";
+			if (model) {
+				const modelBorder = theme.getModelEditorBorderColor(model.provider, model.name, level);
+				if (modelBorder) {
+					this.editor.borderColor = modelBorder;
+					this.ui.requestRender();
+					return;
+				}
+			}
 			this.editor.borderColor = theme.getThinkingBorderColor(level);
 		}
 		this.ui.requestRender();
@@ -3639,7 +3816,7 @@ export class InteractiveMode {
 		}
 
 		const currentText = this.editor.getExpandedText?.() ?? this.editor.getText();
-		const tmpFile = path.join(os.tmpdir(), `pi-editor-${Date.now()}.pi.md`);
+		const tmpFile = path.join(os.tmpdir(), `pi-editor-${Date.now()}.hamr.md`);
 
 		try {
 			// Write current content to temp file
@@ -3708,10 +3885,10 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	showNewVersionNotification(release: LatestPiRelease): void {
+	showNewVersionNotification(release: LatestHamrRelease): void {
 		const action = theme.fg("accent", `${APP_NAME} update`);
 		const updateInstruction = theme.fg("muted", `New version ${release.version} is available. Run `) + action;
-		const changelogUrl = "https://pi.dev/changelog";
+		const changelogUrl = "https://hamr.dev/changelog";
 		const changelogLink = getCapabilities().hyperlinks
 			? hyperlink(theme.fg("accent", "open changelog"), changelogUrl)
 			: theme.fg("accent", changelogUrl);
@@ -3816,7 +3993,10 @@ export class InteractiveMode {
 		if (allQueued.length === 0) {
 			this.updatePendingMessagesDisplay();
 			if (options?.abort) {
-				this.agent.abort();
+				this.stopWorkingLoader();
+				void this.session.abort().catch((error) => {
+					this.showError(`Abort failed: ${error instanceof Error ? error.message : String(error)}`);
+				});
 			}
 			return 0;
 		}
@@ -3826,7 +4006,10 @@ export class InteractiveMode {
 		this.editor.setText(combinedText);
 		this.updatePendingMessagesDisplay();
 		if (options?.abort) {
-			this.agent.abort();
+			this.stopWorkingLoader();
+			void this.session.abort().catch((error) => {
+				this.showError(`Abort failed: ${error instanceof Error ? error.message : String(error)}`);
+			});
 		}
 		return allQueued.length;
 	}
@@ -3958,6 +4141,8 @@ export class InteractiveMode {
 
 	private showSettingsSelector(): void {
 		this.showSelector((done) => {
+			const model = this.session.model;
+			const modelAccent = model ? theme.modelHexColor(model.provider, model.name) : undefined;
 			const selector = new SettingsSelectorComponent(
 				{
 					autoCompact: this.session.autoCompactionEnabled,
@@ -3987,6 +4172,7 @@ export class InteractiveMode {
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
 					warnings: this.settingsManager.getWarnings(),
+					modelAccent,
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -4179,7 +4365,7 @@ export class InteractiveMode {
 		if (this.anthropicSubscriptionWarningShown) {
 			return;
 		}
-		if (!model || model.provider !== "anthropic") {
+		if (model?.provider !== "anthropic") {
 			return;
 		}
 
@@ -5554,7 +5740,7 @@ export class InteractiveMode {
 			}
 			this.renderCurrentSessionState();
 			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(new Text(`${theme.fg("accent", "✓ New session started")}`, 1, 1));
+			this.renderSplashScreen();
 			this.ui.requestRender();
 		} catch (error: unknown) {
 			await this.handleFatalRuntimeError("Failed to create session", error);

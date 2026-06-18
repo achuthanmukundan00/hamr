@@ -20,6 +20,7 @@ import type { AssistantMessage, Context, Model, Usage } from "../src/types.ts";
 import { isContextOverflow } from "../src/utils/overflow.ts";
 import { hasAzureOpenAICredentials } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
+import { hasAnthropicCredentials } from "./credentials.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
@@ -94,7 +95,7 @@ function logResult(result: OverflowResult) {
 // =============================================================================
 
 describe("Context overflow error handling", () => {
-	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic (API Key)", () => {
+	describe.skipIf(!hasAnthropicCredentials())("Anthropic (API Key)", () => {
 		it("claude-haiku-4-5 - should detect overflow via isContextOverflow", async () => {
 			const model = getModel("anthropic", "claude-haiku-4-5");
 			const result = await testContextOverflow(model, process.env.ANTHROPIC_API_KEY!);
