@@ -126,9 +126,9 @@ import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { routeInterruptKey } from "./interrupt-routing.ts";
 import {
-	detectTerminalBackgroundTheme,
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
+	getDefaultTheme,
 	getEditorTheme,
 	getMarkdownTheme,
 	getThemeByName,
@@ -433,16 +433,14 @@ export class InteractiveMode {
 			return;
 		}
 
-		const detection = await detectTerminalBackgroundTheme({ ui: this.ui, timeoutMs: 100 });
-		const result = setTheme(detection.theme, true);
+		// Default to hamr theme on fresh installs.
+		const result = setTheme(getDefaultTheme(), true);
 		if (!result.success) {
 			return;
 		}
 
-		if (detection.confidence === "high") {
-			this.settingsManager.setTheme(detection.theme);
-			await this.settingsManager.flush();
-		}
+		this.settingsManager.setTheme(getDefaultTheme());
+		await this.settingsManager.flush();
 		this.updateEditorBorderColor();
 		this.ui.requestRender();
 	}
@@ -618,6 +616,7 @@ export class InteractiveMode {
 			this.chatContainer.addChild(new Spacer(1));
 		}
 		this.chatContainer.addChild(new DynamicBorder());
+		this.chatContainer.addChild(new Spacer(1));
 	}
 
 	async init(): Promise<void> {
@@ -3131,6 +3130,7 @@ export class InteractiveMode {
 					} else {
 						this.chatContainer.addChild(new Spacer(1));
 						this.chatContainer.addChild(new Text(theme.fg("error", event.errorMessage), 1, 0));
+						this.chatContainer.addChild(new Spacer(1));
 					}
 				}
 				void this.flushCompactionQueue({ willRetry: event.willRetry });
@@ -3294,7 +3294,9 @@ export class InteractiveMode {
 						this.chatContainer.addChild(component);
 						// Render user message separately if present
 						if (skillBlock.userMessage) {
-							this.chatContainer.addChild(new Spacer(1));
+							if (!theme.cards.gaplessCards) {
+								this.chatContainer.addChild(new Spacer(1));
+							}
 							const userComponent = new UserMessageComponent(
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
@@ -3452,6 +3454,7 @@ export class InteractiveMode {
 				0,
 			),
 		);
+		this.chatContainer.addChild(new Spacer(1));
 	}
 
 	async getUserInput(): Promise<string> {
@@ -3876,6 +3879,7 @@ export class InteractiveMode {
 	showWarning(warningMessage: string): void {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(theme.fg("warning", `Warning: ${warningMessage}`), 1, 0));
+		this.chatContainer.addChild(new Spacer(1));
 		this.ui.requestRender();
 	}
 
@@ -3905,6 +3909,7 @@ export class InteractiveMode {
 		}
 		this.chatContainer.addChild(new Text(changelogLine, 1, 0));
 		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
+		this.chatContainer.addChild(new Spacer(1));
 		this.ui.requestRender();
 	}
 
@@ -3923,6 +3928,7 @@ export class InteractiveMode {
 			),
 		);
 		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
+		this.chatContainer.addChild(new Spacer(1));
 		this.ui.requestRender();
 	}
 
@@ -4151,7 +4157,7 @@ export class InteractiveMode {
 					httpIdleTimeoutMs: this.settingsManager.getHttpIdleTimeoutMs(),
 					thinkingLevel: this.session.thinkingLevel,
 					availableThinkingLevels: this.session.getAvailableThinkingLevels(),
-					currentTheme: this.settingsManager.getTheme() || "dark",
+					currentTheme: this.settingsManager.getTheme() || "hamr",
 					availableThemes: getAvailableThemes(),
 					hideThinkingBlock: this.hideThinkingBlock,
 					collapseChangelog: this.settingsManager.getCollapseChangelog(),
@@ -5568,6 +5574,7 @@ export class InteractiveMode {
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(info, 1, 0));
+		this.chatContainer.addChild(new Spacer(1));
 		this.ui.requestRender();
 	}
 
@@ -5589,6 +5596,7 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Markdown(changelogMarkdown, 1, 1, this.getMarkdownThemeWithSettings()));
 		this.chatContainer.addChild(new DynamicBorder());
+		this.chatContainer.addChild(new Spacer(1));
 		this.ui.requestRender();
 	}
 
@@ -5718,6 +5726,7 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Markdown(hotkeys.trim(), 1, 1, this.getMarkdownThemeWithSettings()));
 		this.chatContainer.addChild(new DynamicBorder());
+		this.chatContainer.addChild(new Spacer(1));
 		this.ui.requestRender();
 	}
 
@@ -5771,18 +5780,21 @@ export class InteractiveMode {
 		this.chatContainer.addChild(
 			new Text(`${theme.fg("accent", "✓ Debug log written")}\n${theme.fg("muted", debugLogPath)}`, 1, 1),
 		);
+		this.chatContainer.addChild(new Spacer(1));
 		this.ui.requestRender();
 	}
 
 	private handleArminSaysHi(): void {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new ArminComponent(this.ui));
+		this.chatContainer.addChild(new Spacer(1));
 		this.ui.requestRender();
 	}
 
 	private handleDaxnuts(): void {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new DaxnutsComponent(this.ui));
+		this.chatContainer.addChild(new Spacer(1));
 		this.ui.requestRender();
 	}
 

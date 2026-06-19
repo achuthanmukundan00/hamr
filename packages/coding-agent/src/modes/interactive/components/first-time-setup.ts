@@ -1,22 +1,23 @@
 import { Container, getKeybindings, Spacer, Text } from "@hamr/tui";
 import { APP_NAME } from "../../../config.ts";
-import { type TerminalTheme, theme } from "../theme/theme.ts";
+import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
 export interface FirstTimeSetupResult {
-	theme: TerminalTheme;
+	theme: string;
 	shareAnalytics: boolean;
 }
 
 export interface FirstTimeSetupOptions {
-	detectedTheme: TerminalTheme;
-	onThemePreview: (themeName: TerminalTheme) => void;
+	detectedTheme: string;
+	onThemePreview: (themeName: string) => void;
 	onSubmit: (result: FirstTimeSetupResult) => void;
 	onCancel: () => void;
 }
 
-const THEME_OPTIONS: Array<{ value: TerminalTheme; label: string }> = [
+const THEME_OPTIONS: Array<{ value: string; label: string }> = [
+	{ value: "hamr", label: "Hamr (recommended)" },
 	{ value: "dark", label: "Dark" },
 	{ value: "light", label: "Light" },
 ];
@@ -38,10 +39,9 @@ export class FirstTimeSetupComponent extends Container {
 	constructor(options: FirstTimeSetupOptions) {
 		super();
 		this.options = options;
-		this.themeIndex = Math.max(
-			0,
-			THEME_OPTIONS.findIndex((option) => option.value === options.detectedTheme),
-		);
+		// Default to "hamr" theme (index 0) regardless of terminal detection.
+		// The detected appearance is shown for info only.
+		this.themeIndex = 0;
 		this.update();
 	}
 

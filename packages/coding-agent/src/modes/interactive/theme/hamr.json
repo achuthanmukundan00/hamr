@@ -16,8 +16,8 @@
     "cardPadY": 1,
     "shadedSurfaces": true,
     "thinkingShaded": false,
-    "gaplessCards": false,
-    "showThoughtHeading": true
+    "gaplessCards": true,
+    "showThoughtHeading": false
   },
   "vars": {
     "cyan": "#00d7ff",

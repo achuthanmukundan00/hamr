@@ -220,7 +220,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private getCardPaddingY(): number {
-		return theme.cards.gaplessCards ? 0 : theme.cards.cardPadY;
+		return theme.cards.cardPadY;
 	}
 
 	override render(width: number): string[] {

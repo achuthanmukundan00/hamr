@@ -1,7 +1,7 @@
 # Changelog
 
 
-## [Unreleased]
+## [0.4.0] - 2026-06-19
 
 ### Breaking
 
@@ -21,6 +21,7 @@
 - **Context bar scaling.** The context-usage bar width now scales with the context window (1 char per 25K tokens, min 20, max 60). Non-zero categories get at least 1 char so tiny usage doesn't disappear. Compact token format (e.g. `1.0M`) on narrow (<80 col) terminals.
 - **Provider-agnostic loading events.** Cold-start loading indicators in the TUI are no longer restricted to the Relay provider — any provider that emits loading SSE events gets shown.
 - **Pi-style assistant streaming on `sexy-tui-rs`.** Live model output now updates one assistant stream card containing thinking + visible text, instead of emitting separate accumulated thinking cards.
+- **"Hamr" default theme.** First-time setup and fresh installs now default to the "hamr" theme. Terminal background detection is no longer used for theme selection; the detected appearance is shown for informational purposes only. `getDefaultTheme()` returns `"hamr"` instead of `"dark"`.
 
 ### Changed
 
@@ -37,6 +38,12 @@
 - **TUI card right-padding for unshaded cards.** Cards without background shading now get right-side padding for visual parity with shaded cards.
 - **`tool_result` artifact type handled in EventFeed.** Cards with `artifact.type === 'tool_result'` now render correctly alongside the existing `text` type, with combined summary/output display.
 - **Session replay preserves streamed assistant state.** JSONL sessions now store assistant stream deltas so resume can reconstruct thinking/text blocks and model-visible history.
+- **All themes switched to gapless card layout, no thought headings.** dark, hamr, kawaii, light, and pinkOut themes unified on `gaplessCards: true`, `showThoughtHeading: false`, and reduced heading/body/tool indentation. Trailing blank lines removed from all theme JSONs. `$schema` references changed from remote URLs to local `./theme-schema.json` for dark and light.
+- **TUI: trailing spacer after every content block.** Dynamic borders, warnings, errors, changelog/version/hotkeys/debug-log displays, Armin/Daxnuts components, and login-dialog instructions/code now all end with a trailing `Spacer(1)` for consistent visual breathing room.
+- **TUI: tool cards always respect cardPadY.** `ToolExecutionComponent` no longer returns `0` padding in gapless mode — it always uses `theme.cards.cardPadY`.
+- **TUI: read tool render padding explicit.** Call and result `Text` components in the read tool definition use explicit `0` padding instead of reading `theme.cards.cardPadY`.
+- **System prompt tightened.** Agent introduction reworded to "Diligent, laconic coding agent." Tool usage and rules text streamlined for brevity.
+- **Skills prompt tightened.** The skills section now reads: "Use skills only when the user's task clearly requires one. Do not load skills for greetings or general chat."
 
 ### Fixed
 
@@ -54,6 +61,7 @@
 - **Apache 2.0 license text.** Replaced with MIT license including pi/sexy-tui-rs attribution notice.
 - **Legacy `frontier-*` model IDs.** All references removed from default models, provider presets, pricing tables, tests, docs, and regex patterns.
 - **Deleted docs pages.** `AiCore.vue`, `CoreTranscriptHero.vue`, `RuntimePanel.vue`, `TerminalPreview.vue`, `runtime-core.ts`, `SUPER_EDITION_BRANCH.md`, `super-boundary.md`, `agent-loop-tui-crash-review.md`, and 5 files under `docs/superpowers/` (specs and implementation plans).
+- **Built-in askr skill package.** `BUILTIN_SKILL_PACKAGES` in `main.ts` is now empty — askr skills are no longer auto-loaded on startup.
 
 
 ## [0.3.0]

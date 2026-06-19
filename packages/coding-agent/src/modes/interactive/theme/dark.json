@@ -1,5 +1,5 @@
 {
-	"$schema": "https://raw.githubusercontent.com/skaft-software/hamr/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+	"$schema": "./theme-schema.json",
 	"name": "dark",
 	"modelAdaptive": false,
 	"cards": {
@@ -8,16 +8,16 @@
 		"promptLabel": "PROMPT",
 		"responseLabel": "RESPONSE",
 		"thoughtLabel": "THOUGHT",
-		"headingIndent": 1,
-		"bodyIndent": 3,
-		"toolIndent": 2,
-		"toolResultIndent": 4,
+		"headingIndent": 0,
+		"bodyIndent": 2,
+		"toolIndent": 0,
+		"toolResultIndent": 2,
 		"cardPadX": 1,
 		"cardPadY": 1,
 		"shadedSurfaces": false,
 		"thinkingShaded": false,
-		"gaplessCards": false,
-		"showThoughtHeading": true
+		"gaplessCards": true,
+		"showThoughtHeading": false
 	},
 	"vars": {
 		"cyan": "#00d7ff",
@@ -51,7 +51,6 @@
 		"dim": "dimGray",
 		"text": "text",
 		"thinkingText": "gray",
-
 		"selectedBg": "selectedBg",
 		"userMessageBg": "userMsgBg",
 		"userMessageText": "text",
@@ -63,7 +62,6 @@
 		"toolErrorBg": "toolErrorBg",
 		"toolTitle": "text",
 		"toolOutput": "gray",
-
 		"mdHeading": "#f0c674",
 		"mdLink": "#81a2be",
 		"mdLinkUrl": "dimGray",
@@ -74,11 +72,9 @@
 		"mdQuoteBorder": "gray",
 		"mdHr": "gray",
 		"mdListBullet": "accent",
-
 		"toolDiffAdded": "green",
 		"toolDiffRemoved": "red",
 		"toolDiffContext": "gray",
-
 		"syntaxComment": "#6A9955",
 		"syntaxKeyword": "#569CD6",
 		"syntaxFunction": "#DCDCAA",
@@ -88,16 +84,13 @@
 		"syntaxType": "#4EC9B0",
 		"syntaxOperator": "#D4D4D4",
 		"syntaxPunctuation": "#D4D4D4",
-
 		"thinkingOff": "darkGray",
 		"thinkingMinimal": "#6e6e6e",
 		"thinkingLow": "#5f87af",
 		"thinkingMedium": "#81a2be",
 		"thinkingHigh": "#b294bb",
 		"thinkingXhigh": "#d183e8",
-
 		"bashMode": "green",
-
 		"toolDiffAddedBg": "#1a3a1a",
 		"toolDiffRemovedBg": "#3a1a1a",
 		"toolWarningBg": "toolPendingBg",

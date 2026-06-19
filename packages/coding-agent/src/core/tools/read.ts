@@ -335,8 +335,7 @@ export function createReadToolDefinition(
 			);
 		},
 		renderCall(args, theme, context) {
-			const text =
-				(context.lastComponent as Text | undefined) ?? new Text("", theme.cards.toolIndent, theme.cards.cardPadY);
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", theme.cards.toolIndent, 0);
 			const classification = !context.expanded ? getCompactReadClassification(args, context.cwd) : undefined;
 			text.setText(
 				classification ? formatCompactReadCall(classification, args, theme) : formatReadCall(args, theme, context.cwd),
@@ -344,7 +343,7 @@ export function createReadToolDefinition(
 			return text;
 		},
 		renderResult(result, options, theme, context) {
-			const text = new Text("", theme.cards.toolResultIndent, theme.cards.cardPadY);
+			const text = new Text("", theme.cards.toolResultIndent, 0);
 			text.setText(
 				formatReadResult(context.args, result, options, theme, context.showImages, context.cwd, context.isError),
 			);

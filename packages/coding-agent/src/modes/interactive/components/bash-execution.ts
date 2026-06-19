@@ -38,7 +38,6 @@ export class BashExecutionComponent extends Container {
 		const colorKey = excludeFromContext ? "dim" : "bashMode";
 		const borderColor = (str: string) => theme.fg(colorKey, str);
 
-		// Keep the bash block flush in gapless themes.
 		this.leadingSpacer = new Spacer(theme.cards.gaplessCards ? 0 : 1);
 		this.addChild(this.leadingSpacer);
 

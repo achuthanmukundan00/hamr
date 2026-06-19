@@ -8,13 +8,14 @@
 		"promptLabel": "PROMPT",
 		"responseLabel": "RESPONSE",
 		"thoughtLabel": "THOUGHT",
-		"headingIndent": 1,
-		"bodyIndent": 3,
-		"toolIndent": 2,
+		"headingIndent": 0,
+		"bodyIndent": 2,
+		"toolIndent": 0,
+		"toolResultIndent": 2,
 		"cardPadX": 1,
 		"cardPadY": 1,
 		"shadedSurfaces": true,
-		"thinkingShaded": true,
+		"thinkingShaded": false,
 		"gaplessCards": true,
 		"showThoughtHeading": false
 	},
@@ -29,17 +30,14 @@
 		"cream": "#fff0f5",
 		"gold": "#ffd700",
 		"white": "#ffffff",
-
 		"pageBg": "#1e0a14",
 		"cardBg": "#311325",
 		"surfaceBg": "#38192a",
 		"selectedBg": "#4e2140",
-
 		"userMsgBg": "#401a31",
 		"toolPendingBg": "#2e1827",
 		"toolSuccessBg": "#223122",
 		"toolErrorBg": "#41202a",
-
 		"text": "#f7dfe9",
 		"muted": "#c57fa0",
 		"dim": "#9b6a7e",
@@ -57,7 +55,6 @@
 		"dim": "dim",
 		"text": "text",
 		"thinkingText": "muted",
-
 		"selectedBg": "selectedBg",
 		"userMessageBg": "userMsgBg",
 		"userMessageText": "text",
@@ -69,7 +66,6 @@
 		"toolErrorBg": "toolErrorBg",
 		"toolTitle": "lightPink",
 		"toolOutput": "text",
-
 		"mdHeading": "lightPink",
 		"mdLink": "lavender",
 		"mdLinkUrl": "dim",
@@ -80,11 +76,9 @@
 		"mdQuoteBorder": "rose",
 		"mdHr": "rose",
 		"mdListBullet": "hotPink",
-
 		"toolDiffAdded": "#a0d8a0",
 		"toolDiffRemoved": "deepPink",
 		"toolDiffContext": "muted",
-
 		"syntaxComment": "#b880a0",
 		"syntaxKeyword": "#ff69b4",
 		"syntaxFunction": "#ffd700",
@@ -94,16 +88,13 @@
 		"syntaxType": "#e056a0",
 		"syntaxOperator": "lightPink",
 		"syntaxPunctuation": "text",
-
 		"thinkingOff": "dim",
 		"thinkingMinimal": "muted",
 		"thinkingLow": "rose",
 		"thinkingMedium": "hotPink",
 		"thinkingHigh": "magenta",
 		"thinkingXhigh": "deepPink",
-
 		"bashMode": "hotPink",
-
 		"toolDiffAddedBg": "toolSuccessBg",
 		"toolDiffRemovedBg": "toolErrorBg",
 		"toolWarningBg": "toolPendingBg",

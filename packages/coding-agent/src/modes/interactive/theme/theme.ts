@@ -1242,7 +1242,7 @@ export async function detectTerminalBackgroundTheme({
 }
 
 export function getDefaultTheme(): string {
-	return "dark";
+	return "hamr";
 }
 
 // ============================================================================
