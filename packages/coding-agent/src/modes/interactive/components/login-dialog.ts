@@ -108,6 +108,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 			this.contentContainer.addChild(new Spacer(1));
 			this.contentContainer.addChild(new Text(theme.fg("warning", instructions), 1, 0));
 		}
+		this.contentContainer.addChild(new Spacer(1));
 
 		openBrowser(url);
 		this.tui.requestRender();
@@ -127,6 +128,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.contentContainer.addChild(new Text(theme.fg("dim", hyperlink), 1, 0));
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("warning", `Enter code: ${info.userCode}`), 1, 0));
+		this.contentContainer.addChild(new Spacer(1));
 
 		this.tui.requestRender();
 	}

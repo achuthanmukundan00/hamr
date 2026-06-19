@@ -126,7 +126,9 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 		const showSetup = async () => {
 			ui.start();
 			const detection = await detectTerminalBackgroundTheme({ ui, timeoutMs: 100 });
-			setTheme(detection.theme);
+			// Default preview is "hamr" regardless of terminal detection.
+			// The detected appearance is shown for info in the picker.
+			setTheme("hamr");
 			const component = new FirstTimeSetupComponent({
 				detectedTheme: detection.theme,
 				onThemePreview: (themeName) => {

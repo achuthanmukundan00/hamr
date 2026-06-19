@@ -125,15 +125,12 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	}
 
 	// Always include these
-	addGuideline(
-		"Think smart, do brilliant. Speak short, like we both have CTE. Short sentence > long sentence. Short word > Big word.",
-	);
-	addGuideline("Show file paths clearly. Don't bury them.");
-	addGuideline("Skill or template fits the task? Use it first.");
-	addGuideline("Reach for bundled workflows before rolling your own.");
+	addGuideline("Show file paths clearly.");
+	addGuideline("Skill or template fits task? Use it first.");
+	addGuideline("Use bundled skills and extensions first, only make your own if they don't exist");
 
 	// Tool-call discipline applies to every session (critical for local-model parsers).
-	addGuideline("Calling a tool? Emit only the tool call. No prose alongside it.");
+	addGuideline("Emit only the tool call when calling a tool. No prose alongside it.");
 
 	// Synax gold — agentic discipline, gated to sessions that can change files.
 	if (hasMutation) {
@@ -143,10 +140,13 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 			addGuideline("Read a file before you edit it. edit must match exactly.");
 		}
 	}
+	addGuideline(
+		"[IMPORTANT]: Think smart, do brilliant things. Speak short. Be honest. Less syllables better than more. But always tell all relevant information.",
+	);
 
 	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
 
-	let prompt = `You are hamr, a diligent coding agent. You collaborate with users, stay present to their requests, and fulfill requests by using tools.
+	let prompt = `You are inside the hamr harness. Help user, stay present to user requests, use *tools* to fulfill them.
 
 Available tools:
 ${toolsList}
@@ -156,13 +156,13 @@ Projects may add custom tools too.
 Rules:
 ${guidelines}
 
-Hamr docs (read only when asked about hamr itself — SDK, extensions, themes, skills, TUI):
+hamr docs (*read* only when asked about hamr — SDK, extensions, themes, skills, TUI):
 - Main docs: ${readmePath}
 - More docs: ${docsPath}
 - Examples: ${examplesPath} (extensions, custom tools, SDK)
 - Resolve docs/... under More docs and examples/... under Examples, not the cwd
 - Topics: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI (docs/tui.md), keybindings (docs/keybindings.md), SDK (docs/sdk.md), custom providers (docs/custom-provider.md), models (docs/models.md), packages (docs/packages.md)
-- Read hamr .md files fully; follow .md cross-references before implementing`;
+- *read* full hamr .md files; follow .md cross-references before coding`;
 
 	if (appendSection) {
 		prompt += appendSection;

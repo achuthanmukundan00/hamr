@@ -120,15 +120,7 @@ function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
 	return !parsed.print && parsed.mode === undefined && (parsed.help === true || parsed.listModels !== undefined);
 }
 
-const BUILTIN_SKILL_PACKAGES: PackageSource[] = [
-	{
-		source: "git:github.com/skaft-software/askr",
-		// Exclude using-askr: its description ("invoke before ANY response") fires on
-		// every conversation start, causing skill ceremony on trivial input. hamr's
-		// own using-hamr covers skill discipline with a task-scoped trigger.
-		skills: ["skills/**", "-skills/using-git-worktrees", "-skills/writing-plans", "-skills/using-askr"],
-	},
-];
+const BUILTIN_SKILL_PACKAGES: PackageSource[] = [];
 
 async function prepareInitialMessage(
 	parsed: Args,
