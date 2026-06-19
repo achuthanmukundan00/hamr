@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Repo pre-commit hook: auto-format & autofix staged files, then re-stage them
+# so the fixes land IN the commit. Every commit ends up biome-formatted.
+#
+# Enabled via `core.hooksPath=.githooks` (set by the root `prepare` script).
+# Bypass for a WIP commit with: `git commit --no-verify`.
+set -euo pipefail
+
+# Collect staged files (added/copied/modified/renamed), NUL-delimited, into a
+# temp file. We can't hold NUL bytes in a shell variable, so route via a file.
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+git diff --cached --name-only --diff-filter=ACMR -z >"$tmp"
+[ -s "$tmp" ] || exit 0
+
+# Apply safe fixes + formatting to the staged files. Non-blocking: unfixable
+# lint findings must not stop the commit (the pre-push hook runs the strict gate).
+xargs -0 npx biome check --write --no-errors-on-unmatched <"$tmp" || true
+
+# Re-stage so biome's fixes are part of THIS commit.
+xargs -0 git add -- <"$tmp"
+
+echo "✓ pre-commit: staged files auto-formatted"

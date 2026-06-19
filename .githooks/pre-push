@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Repo pre-push hook: run the full verification suite before code leaves the
+# machine. `verify` = typecheck + lint + build + test across all four packages.
+#
+# Enabled via `core.hooksPath=.githooks` (set by the root `prepare` script).
+# Bypass with: `git push --no-verify`.
+set -euo pipefail
+
+echo "→ pre-push: bun run verify (typecheck · lint · build · test)…"
+bun run verify
+echo "✓ pre-push: verify passed"
