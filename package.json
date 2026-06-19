@@ -7,6 +7,7 @@
     "../sexy-tui-rs"
   ],
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
     "clean": "cd packages/tui && npm run clean && cd ../ai && npm run clean && cd ../agent && npm run clean && cd ../coding-agent && npm run clean",
     "build": "cd packages/tui && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build",
     "docs:dev": "vitepress dev docs",
