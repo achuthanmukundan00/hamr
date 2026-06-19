@@ -14,7 +14,7 @@
 // Usage: node scripts/build-release.mjs [--no-build]
 
 import { execSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, renameSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, renameSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +27,21 @@ const PUBLISHED_NAME = "@skaft/hamr";
 
 const run = (cmd, cwd = ROOT) => execSync(cmd, { cwd, stdio: "inherit" });
 const readJson = (p) => JSON.parse(readFileSync(p, "utf8"));
+
+// Recursively delete every `node_modules` directory under `dir`. Used to strip
+// nested example deps from staging before pack. The top-level bundled @hamr/*
+// node_modules is vendored in *after* this runs, so it is never affected.
+function pruneNestedNodeModules(dir) {
+	for (const name of readdirSync(dir)) {
+		const full = join(dir, name);
+		if (!statSync(full).isDirectory()) continue;
+		if (name === "node_modules") {
+			rmSync(full, { recursive: true, force: true });
+			continue;
+		}
+		pruneNestedNodeModules(full);
+	}
+}
 
 function main() {
 	const skipBuild = process.argv.includes("--no-build");
@@ -57,6 +72,14 @@ function main() {
 		const src = join(APP_PKG_DIR, extra);
 		if (existsSync(src)) cpSync(src, join(STAGING, extra));
 	}
+
+	// Prune any nested node_modules dragged in by recursive copies of shipped
+	// dirs (e.g. examples/extensions/*/node_modules). These are an example's own
+	// dev/build deps — they bloat the tarball and embed host-arch native binaries
+	// (esbuild/rollup/fsevents) that are wrong for other platforms. The only
+	// node_modules we intentionally ship is the top-level bundled @hamr/* libs,
+	// added later.
+	pruneNestedNodeModules(STAGING);
 
 	// Union of real (non-@hamr) runtime deps across all four packages, so the
 	// vendored libraries can resolve their own dependencies from the hoisted

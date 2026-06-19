@@ -123,7 +123,10 @@ function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
 const BUILTIN_SKILL_PACKAGES: PackageSource[] = [
 	{
 		source: "git:github.com/skaft-software/askr",
-		skills: ["skills/**", "-skills/using-git-worktrees", "-skills/writing-plans"],
+		// Exclude using-askr: its description ("invoke before ANY response") fires on
+		// every conversation start, causing skill ceremony on trivial input. hamr's
+		// own using-hamr covers skill discipline with a task-scoped trigger.
+		skills: ["skills/**", "-skills/using-git-worktrees", "-skills/writing-plans", "-skills/using-askr"],
 	},
 ];
 

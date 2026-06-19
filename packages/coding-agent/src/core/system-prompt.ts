@@ -126,7 +126,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	// Always include these
 	addGuideline(
-		"Think smart, do brilliant. Speak short, like we both have Chronic Traumatic Encephalopathy. Short sentence > long sentence.",
+		"Think smart, do brilliant. Speak short, like we both have CTE. Short sentence > long sentence. Short word > Big word.",
 	);
 	addGuideline("Show file paths clearly. Don't bury them.");
 	addGuideline("Skill or template fits the task? Use it first.");
