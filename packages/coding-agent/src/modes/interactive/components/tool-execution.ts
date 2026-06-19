@@ -65,13 +65,9 @@ export class ToolExecutionComponent extends Container {
 		// Always create all shell variants. contentBox is used for default renderer-based composition.
 		// selfRenderContainer is used when the tool renders its own framing.
 		// contentText is reserved for generic fallback rendering when no tool definition exists.
-		// theme.cards.toolIndent aligns default tool content with the message
-		// cards' content margin (PROMPT/RESPONSE headings). Self-rendering tools
-		// get the same indent applied in render().
-		const toolIndent = theme.cards.toolIndent;
 		const pendingBgFn = theme.cards.shadedSurfaces ? (text: string) => theme.bg("toolPendingBg", text) : undefined;
-		this.contentBox = new Box(toolIndent, 1, pendingBgFn);
-		this.contentText = new Text("", toolIndent, 1, pendingBgFn);
+		this.contentBox = new Box(theme.cards.cardPadX, theme.cards.cardPadY, pendingBgFn);
+		this.contentText = new Text("", theme.cards.toolIndent, theme.cards.cardPadY, pendingBgFn);
 		this.selfRenderContainer = new Container();
 
 		if (this.hasRendererDefinition()) {
@@ -138,7 +134,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private createCallFallback(): Component {
-		return new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0);
+		return new Text(theme.fg("toolTitle", theme.bold(this.toolName)), theme.cards.toolIndent, 0);
 	}
 
 	private createResultFallback(): Component | undefined {

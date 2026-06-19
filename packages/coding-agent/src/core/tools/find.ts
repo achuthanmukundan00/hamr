@@ -115,7 +115,7 @@ export function createFindToolDefinition(
 		name: "find",
 		label: "find",
 		description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
-		promptSnippet: "Find files by glob pattern (respects .gitignore)",
+		// Intentionally no promptSnippet: bash covers find, so it's not advertised in the system prompt.
 		parameters: findSchema,
 		async execute(
 			_toolCallId,
@@ -350,12 +350,12 @@ export function createFindToolDefinition(
 			});
 		},
 		renderCall(args, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", theme.cards.headingIndent, 0);
 			text.setText(formatFindCall(args, theme));
 			return text;
 		},
 		renderResult(result, options, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			const text = new Text("", theme.cards.toolResultIndent, 0);
 			text.setText(formatFindResult(result as any, options, theme, context.showImages));
 			return text;
 		},

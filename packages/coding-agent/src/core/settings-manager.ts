@@ -168,6 +168,7 @@ export type SettingsScope = "global" | "project";
 
 export interface SettingsManagerCreateOptions {
 	projectTrusted?: boolean;
+	defaultPackages?: PackageSource[];
 }
 
 export interface SettingsStorage {
@@ -279,6 +280,7 @@ export class SettingsManager {
 	private projectSettingsLoadError: Error | null = null; // Track if project settings file had parse errors
 	private writeQueue: Promise<void> = Promise.resolve();
 	private errors: SettingsError[];
+	private defaultPackages: PackageSource[];
 
 	private constructor(
 		storage: SettingsStorage,
@@ -288,6 +290,7 @@ export class SettingsManager {
 		projectLoadError: Error | null = null,
 		initialErrors: SettingsError[] = [],
 		projectTrusted = true,
+		defaultPackages: PackageSource[] = [],
 	) {
 		this.storage = storage;
 		this.globalSettings = initialGlobal;
@@ -296,6 +299,7 @@ export class SettingsManager {
 		this.globalSettingsLoadError = globalLoadError;
 		this.projectSettingsLoadError = projectLoadError;
 		this.errors = [...initialErrors];
+		this.defaultPackages = [...defaultPackages];
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
 	}
 
@@ -330,6 +334,7 @@ export class SettingsManager {
 			projectLoad.error,
 			initialErrors,
 			projectTrusted,
+			options.defaultPackages ?? [],
 		);
 	}
 
@@ -932,6 +937,10 @@ export class SettingsManager {
 
 	getPackages(): PackageSource[] {
 		return [...(this.settings.packages ?? [])];
+	}
+
+	getDefaultPackages(): PackageSource[] {
+		return [...this.defaultPackages];
 	}
 
 	setPackages(packages: PackageSource[]): void {

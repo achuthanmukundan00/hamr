@@ -63,7 +63,7 @@ For project-level Claude Code skills, add to `.hamr/settings.json`:
 
 ## How Skills Work
 
-1. At startup, hamr scans skill locations and extracts names and descriptions
+1. At startup, hamr scans installed skill locations and extracts names and descriptions. It does not fetch git repositories during startup; refreshed git-backed skills arrive through the update flow.
 2. The system prompt includes available skills in XML format per the [specification](https://agentskills.io/integrate-skills)
 3. When a task matches, the agent uses `read` to load the full SKILL.md (models don't always do this; use prompting or `/skill:name` to force it)
 4. The agent follows the instructions, using relative paths to reference scripts and assets

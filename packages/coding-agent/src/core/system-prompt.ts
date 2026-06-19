@@ -108,6 +108,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const hasFind = tools.includes("find");
 	const hasLs = tools.includes("ls");
 	const hasRead = tools.includes("read");
+	const hasWrite = tools.includes("write");
+	const hasEdit = tools.includes("edit");
+	const hasMutation = hasWrite || hasEdit || hasBash;
 
 	// File exploration guidelines
 	if (hasBash && !hasGrep && !hasFind && !hasLs) {
@@ -122,31 +125,44 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	}
 
 	// Always include these
-	addGuideline("Be concise in your responses");
-	addGuideline("Show file paths clearly when working with files");
-	addGuideline("Use bundled skills and prompt templates first when one clearly matches the task");
-	addGuideline("Prefer bundled repo workflows such as issue pickup, PR prep, and review over ad hoc process");
+	addGuideline(
+		"Think smart, do brilliant. Speak short, like we both have Chronic Traumatic Encephalopathy. Short sentence > long sentence.",
+	);
+	addGuideline("Show file paths clearly. Don't bury them.");
+	addGuideline("Skill or template fits the task? Use it first.");
+	addGuideline("Reach for bundled workflows before rolling your own.");
+
+	// Tool-call discipline applies to every session (critical for local-model parsers).
+	addGuideline("Calling a tool? Emit only the tool call. No prose alongside it.");
+
+	// Synax gold — agentic discipline, gated to sessions that can change files.
+	if (hasMutation) {
+		addGuideline("Finish the task, then stop and summarize.");
+		addGuideline("Make real changes with write/edit. Don't just describe them.");
+		if (hasEdit) {
+			addGuideline("Read a file before you edit it. edit must match exactly.");
+		}
+	}
 
 	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
 
-	let prompt = `You are an expert coding assistant operating inside hamr, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+	let prompt = `You are hamr, a diligent coding agent. You collaborate with users, stay present to their requests, and fulfill requests by using tools.
 
 Available tools:
 ${toolsList}
 
-In addition to the tools above, you may have access to other custom tools depending on the project.
+Projects may add custom tools too.
 
-Guidelines:
+Rules:
 ${guidelines}
 
-Hamr documentation (read only when the user asks about hamr itself, its SDK, extensions, themes, skills, or TUI):
-- Main documentation: ${readmePath}
-- Additional docs: ${docsPath}
+Hamr docs (read only when asked about hamr itself — SDK, extensions, themes, skills, TUI):
+- Main docs: ${readmePath}
+- More docs: ${docsPath}
 - Examples: ${examplesPath} (extensions, custom tools, SDK)
-- When reading hamr docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), hamr packages (docs/packages.md)
-- When working on hamr topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read hamr .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+- Resolve docs/... under More docs and examples/... under Examples, not the cwd
+- Topics: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI (docs/tui.md), keybindings (docs/keybindings.md), SDK (docs/sdk.md), custom providers (docs/custom-provider.md), models (docs/models.md), packages (docs/packages.md)
+- Read hamr .md files fully; follow .md cross-references before implementing`;
 
 	if (appendSection) {
 		prompt += appendSection;

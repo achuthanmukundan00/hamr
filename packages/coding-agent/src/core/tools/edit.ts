@@ -215,7 +215,7 @@ function buildEditResultBody(
 		if (!errorText || errorText === previewError) {
 			return undefined;
 		}
-		return new Text(theme.fg("error", errorText), 0, 0);
+		return new Text(theme.fg("error", errorText), theme.cards.toolResultIndent, 0);
 	}
 
 	const resultDiff = result.details?.diff;
@@ -253,8 +253,8 @@ function buildEditCallComponent(
 
 	const surfaceBg = getEditSurfaceBgToken(component.preview, component.settledError, theme);
 	const cardPadY = theme.cards.gaplessCards ? 0 : theme.cards.cardPadY;
-	const card = new Box(theme.cards.toolIndent, cardPadY, surfaceBg ? (text: string) => theme.bg(surfaceBg, text) : undefined);
-	card.addChild(new Text(formatEditCall(args, theme, cwd), 0, 0));
+	const card = new Box(theme.cards.cardPadX, cardPadY, surfaceBg ? (text: string) => theme.bg(surfaceBg, text) : undefined);
+	card.addChild(new Text(formatEditCall(args, theme, cwd), theme.cards.toolIndent, 0));
 	component.addChild(card);
 
 	if (!component.preview) {
@@ -263,7 +263,7 @@ function buildEditCallComponent(
 
 	card.addChild(new Spacer(1));
 	if ("error" in component.preview) {
-		card.addChild(new Text(theme.fg("error", component.preview.error), 0, 0));
+		card.addChild(new Text(theme.fg("error", component.preview.error), theme.cards.bodyIndent, 0));
 	} else {
 		const filePath = str(args?.file_path ?? args?.path) ?? undefined;
 		card.addChild(createDiffComponent(component.preview.diff, { filePath, surroundBg: surfaceBg }));

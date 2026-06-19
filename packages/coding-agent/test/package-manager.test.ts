@@ -109,6 +109,68 @@ describe("DefaultPackageManager", () => {
 			expect(result.skills.every((r) => r.metadata.source === "auto" && r.metadata.origin === "top-level")).toBe(true);
 		});
 
+		it("should resolve default packages injected at startup", async () => {
+			const builtinPkgDir = join(tempDir, "builtin-askr");
+			mkdirSync(join(builtinPkgDir, "skills", "hello"), { recursive: true });
+			mkdirSync(join(builtinPkgDir, "skills", "using-git-worktrees"), { recursive: true });
+			mkdirSync(join(builtinPkgDir, "skills", "writing-plans"), { recursive: true });
+			writeFileSync(
+				join(builtinPkgDir, "package.json"),
+				JSON.stringify(
+					{
+						name: "builtin-askr",
+						pi: {
+							skills: ["./skills"],
+						},
+					},
+					null,
+					2,
+				),
+			);
+			writeFileSync(
+				join(builtinPkgDir, "skills", "hello", "SKILL.md"),
+				`---
+description: Say hello
+---
+Hello`,
+			);
+			writeFileSync(
+				join(builtinPkgDir, "skills", "using-git-worktrees", "SKILL.md"),
+				`---
+description: Use git worktrees
+---
+Worktrees`,
+			);
+			writeFileSync(
+				join(builtinPkgDir, "skills", "writing-plans", "SKILL.md"),
+				`---
+description: Write plans
+---
+Plans`,
+			);
+
+			settingsManager = SettingsManager.create(tempDir, agentDir, {
+				defaultPackages: [
+					{
+						source: builtinPkgDir,
+						skills: ["skills/**", "-skills/using-git-worktrees", "-skills/writing-plans"],
+					},
+				],
+			});
+			packageManager = new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+			});
+
+			const result = await packageManager.resolve();
+			expect(result.skills.some((r) => pathEndsWith(r.path, "skills/hello/SKILL.md") && r.enabled)).toBe(true);
+			expect(
+				result.skills.some((r) => pathEndsWith(r.path, "skills/using-git-worktrees/SKILL.md") && r.enabled),
+			).toBe(false);
+			expect(result.skills.some((r) => pathEndsWith(r.path, "skills/writing-plans/SKILL.md") && r.enabled)).toBe(false);
+		});
+
 		it("should resolve local extension paths from settings", async () => {
 			const extDir = join(agentDir, "extensions");
 			mkdirSync(extDir, { recursive: true });
@@ -781,6 +843,36 @@ Content`,
 			});
 			expect(runCommandSpy).toHaveBeenCalledWith("git", ["clean", "-fdx"], { cwd: targetDir });
 			expect(runCommandSpy).toHaveBeenCalledWith("npm", ["install", "--omit=dev"], { cwd: targetDir });
+		});
+
+		it("should not fetch an existing git package during resolve", async () => {
+			const source = "git:github.com/user/repo@v2";
+			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
+			mkdirSync(join(targetDir, "skills", "hello"), { recursive: true });
+			writeFileSync(
+				join(targetDir, "package.json"),
+				JSON.stringify({
+					name: "repo",
+					pi: {
+						skills: ["./skills"],
+					},
+				}),
+			);
+			writeFileSync(
+				join(targetDir, "skills", "hello", "SKILL.md"),
+				`---
+description: Say hello
+---
+Hello`,
+			);
+			settingsManager.setPackages([source]);
+
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+
+			const result = await packageManager.resolve();
+
+			expect(result.skills.some((r) => pathEndsWith(r.path, "skills/hello/SKILL.md") && r.enabled)).toBe(true);
+			expect(runCommandSpy).not.toHaveBeenCalled();
 		});
 
 		it("should reconcile an existing git checkout to its update target when installing without a ref", async () => {

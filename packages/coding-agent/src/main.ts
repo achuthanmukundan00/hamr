@@ -34,6 +34,7 @@ import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/mod
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
+import type { PackageSource } from "./core/settings-manager.ts";
 import {
 	formatMissingSessionCwdPrompt,
 	getMissingSessionCwdIssue,
@@ -118,6 +119,13 @@ function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
 function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
 	return !parsed.print && parsed.mode === undefined && (parsed.help === true || parsed.listModels !== undefined);
 }
+
+const BUILTIN_SKILL_PACKAGES: PackageSource[] = [
+	{
+		source: "git:github.com/skaft-software/askr",
+		skills: ["skills/**", "-skills/using-git-worktrees", "-skills/writing-plans"],
+	},
+];
 
 async function prepareInitialMessage(
 	parsed: Args,
@@ -648,7 +656,10 @@ export async function main(args: string[], options?: MainOptions) {
 			: (cachedProjectTrust ??
 				parsed.projectTrustOverride ??
 				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
-		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, {
+			projectTrusted,
+			defaultPackages: parsed.noSkills ? [] : BUILTIN_SKILL_PACKAGES,
+		});
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,

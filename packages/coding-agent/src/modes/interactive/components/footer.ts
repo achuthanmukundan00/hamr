@@ -229,7 +229,7 @@ export class FooterComponent implements Component {
 				const hue = (360 - hueOffset + Math.floor(i * hueStep)) % 360;
 				parts.push(rainbow[hue]![lightness]!, text[i]!);
 			}
-			return `${parts.join("")}\x1b[0m`;
+			return this.session.isStreaming ? theme.bold(`${parts.join("")}\x1b[0m`) : `${parts.join("")}\x1b[0m`;
 		}
 
 		const t = Date.now() / 1000;
@@ -249,7 +249,7 @@ export class FooterComponent implements Component {
 				shimmered += theme.fg("dim", text[i]!);
 			}
 		}
-		return shimmered;
+		return this.session.isStreaming ? theme.bold(shimmered) : shimmered;
 	}
 
 	private isMaxThinking(): boolean {
@@ -268,6 +268,7 @@ export class FooterComponent implements Component {
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
 		const contextPercentValue = contextUsage?.percent;
 		const compact = width < 100;
+		const ultraCompact = width < 85;
 
 		const parts: string[] = [];
 		const contextText = formatContextPart(contextUsage?.tokens, contextWindow, contextPercentValue, compact);
@@ -283,16 +284,18 @@ export class FooterComponent implements Component {
 			parts.push(theme.fg("dim", "0% used"));
 		}
 
-		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
-		const costPart = formatCostPart(usage.totalCost, state.model?.cost?.input ?? 0, usingSubscription);
-		if (costPart) {
-			parts.push(theme.fg("dim", costPart));
-		}
-		if (usage.totalInput > 0 || usage.totalOutput > 0) {
-			parts.push(theme.fg("dim", `${formatTokens(usage.totalInput)}↑ ${formatTokens(usage.totalOutput)}↓`));
-		}
-		if ((usage.totalCacheRead > 0 || usage.totalCacheWrite > 0) && usage.latestCacheHitRate !== undefined) {
-			parts.push(theme.fg("dim", `CH${usage.latestCacheHitRate.toFixed(1)}%`));
+		if (!ultraCompact) {
+			const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
+			const costPart = formatCostPart(usage.totalCost, state.model?.cost?.input ?? 0, usingSubscription);
+			if (costPart) {
+				parts.push(theme.fg("dim", costPart));
+			}
+			if (usage.totalInput > 0 || usage.totalOutput > 0) {
+				parts.push(theme.fg("dim", `${formatTokens(usage.totalInput)}↑ ${formatTokens(usage.totalOutput)}↓`));
+			}
+			if ((usage.totalCacheRead > 0 || usage.totalCacheWrite > 0) && usage.latestCacheHitRate !== undefined) {
+				parts.push(theme.fg("dim", `CH${usage.latestCacheHitRate.toFixed(1)}%`));
+			}
 		}
 
 		if (state.model) {

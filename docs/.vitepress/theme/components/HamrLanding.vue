@@ -36,9 +36,9 @@
           <span class="nav-mark">⚒</span> hamr
           <span class="hero-pill"><span class="hero-pill-dot"></span> current</span>
         </div>
-        <h1 class="hero-tagline">A Pi fork, extended.<br>Still moving.<br><em>Still usable.</em></h1>
-        <p class="hero-desc">Hamr is a local coding agent for <a href="/guide/relay">Relay</a> and other OpenAI-compatible backends.</p>
-        <p>Hamr started as a Pi fork. The runtime is still evolving, so this site documents current behavior instead of promising a frozen API.</p>
+        <h1 class="hero-tagline">Designed to help little models survive and big models breathe.</h1>
+        <p class="hero-desc">Hamr is the de-facto coding agent for local models, built on Pi as an agent toolkit.</p>
+
         <div class="cta-row">
           <a href="/guide/getting-started" class="cta cta-primary">Get started →</a>
           <a href="https://github.com/skaft-software/hamr" rel="noopener" class="cta cta-ghost">GitHub</a>

@@ -238,13 +238,13 @@ function rebuildBashResultRenderComponent(
 			.map((line) => theme.fg("toolOutput", line))
 			.join("\n");
 
-		if (options.expanded) {
-			component.addChild(new Text(`\n${styledOutput}`, 0, 0));
-		} else {
+			if (options.expanded) {
+				component.addChild(new Text(`\n${styledOutput}`, theme.cards.toolResultIndent, 0));
+			} else {
 			component.addChild({
 				render: (width: number) => {
 					if (state.cachedLines === undefined || state.cachedWidth !== width) {
-						const preview = truncateToVisualLines(styledOutput, BASH_PREVIEW_LINES, width);
+							const preview = truncateToVisualLines(styledOutput, BASH_PREVIEW_LINES, width, theme.cards.toolResultIndent);
 						state.cachedLines = preview.visualLines;
 						state.cachedSkipped = preview.skippedCount;
 						state.cachedWidth = width;
@@ -280,13 +280,13 @@ function rebuildBashResultRenderComponent(
 				);
 			}
 		}
-		component.addChild(new Text(`\n${theme.fg("warning", `[${warnings.join(". ")}]`)}`, 0, 0));
+		component.addChild(new Text(`\n${theme.fg("warning", `[${warnings.join(". ")}]`)}`, theme.cards.toolResultIndent, 0));
 	}
 
 	if (startedAt !== undefined) {
 		const label = options.isPartial ? "Elapsed" : "Took";
 		const endTime = endedAt ?? Date.now();
-		component.addChild(new Text(`\n${theme.fg("muted", `${label} ${formatDuration(endTime - startedAt)}`)}`, 0, 0));
+		component.addChild(new Text(`\n${theme.fg("muted", `${label} ${formatDuration(endTime - startedAt)}`)}`, theme.cards.toolResultIndent, 0));
 	}
 }
 
@@ -435,7 +435,7 @@ export function createBashToolDefinition(
 				state.startedAt = Date.now();
 				state.endedAt = undefined;
 			}
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", theme.cards.toolIndent, 0);
 			text.setText(formatBashCall(args));
 			return text;
 		},
