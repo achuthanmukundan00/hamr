@@ -1,6 +1,6 @@
 ---
 name: using-hamr
-description: Use when starting any Hamr conversation or before any action; establishes the bundled skill discipline
+description: Use when a task could be served by a bundled hamr skill or prompt template, to find and apply the right one. Not for greetings or trivial replies.
 ---
 
 # Using Hamr
@@ -11,7 +11,7 @@ If a bundled skill clearly fits the task, use it before improvising.
 
 ## What To Do
 
-1. Read the current project context first.
+1. Read only the context the task actually needs — don't sweep the repo for small or open-ended asks.
 2. Check the bundled skills for a direct match.
 3. Prefer the smallest workflow that still gives a correct result.
 4. Ask one clear question at a time when requirements are unclear.
