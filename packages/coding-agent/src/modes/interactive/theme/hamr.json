@@ -16,7 +16,7 @@
     "cardPadY": 1,
     "shadedSurfaces": true,
     "thinkingShaded": false,
-    "gaplessCards": true,
+    "gaplessCards": false,
     "showThoughtHeading": true
   },
   "vars": {

@@ -53,9 +53,7 @@ describe("buildSystemPrompt", () => {
 				cwd: process.cwd(),
 			});
 
-			expect(prompt).toContain(
-				"- When reading hamr docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
-			);
+			expect(prompt).toContain("- Resolve docs/... under More docs and examples/... under Examples, not the cwd");
 		});
 	});
 

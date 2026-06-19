@@ -165,9 +165,9 @@ Plans`,
 
 			const result = await packageManager.resolve();
 			expect(result.skills.some((r) => pathEndsWith(r.path, "skills/hello/SKILL.md") && r.enabled)).toBe(true);
-			expect(
-				result.skills.some((r) => pathEndsWith(r.path, "skills/using-git-worktrees/SKILL.md") && r.enabled),
-			).toBe(false);
+			expect(result.skills.some((r) => pathEndsWith(r.path, "skills/using-git-worktrees/SKILL.md") && r.enabled)).toBe(
+				false,
+			);
 			expect(result.skills.some((r) => pathEndsWith(r.path, "skills/writing-plans/SKILL.md") && r.enabled)).toBe(false);
 		});
 

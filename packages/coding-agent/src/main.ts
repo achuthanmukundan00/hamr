@@ -34,7 +34,6 @@ import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/mod
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
-import type { PackageSource } from "./core/settings-manager.ts";
 import {
 	formatMissingSessionCwdPrompt,
 	getMissingSessionCwdIssue,
@@ -42,6 +41,7 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
+import type { PackageSource } from "./core/settings-manager.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
@@ -661,7 +661,7 @@ export async function main(args: string[], options?: MainOptions) {
 				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
 		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, {
 			projectTrusted,
-			defaultPackages: parsed.noSkills ? [] : BUILTIN_SKILL_PACKAGES,
+			defaultPackages: parsed.noSkills || parsed.help || parsed.listModels !== undefined ? [] : BUILTIN_SKILL_PACKAGES,
 		});
 		const services = await createAgentSessionServices({
 			cwd,

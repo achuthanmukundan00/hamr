@@ -56,5 +56,3 @@ export const toolCallParserRegistry: ToolCallParserRegistry = {
 		return parser.parse(sanitized);
 	},
 };
-
-

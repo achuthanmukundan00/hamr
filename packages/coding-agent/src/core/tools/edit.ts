@@ -252,8 +252,12 @@ function buildEditCallComponent(
 	component.clear();
 
 	const surfaceBg = getEditSurfaceBgToken(component.preview, component.settledError, theme);
-	const cardPadY = theme.cards.gaplessCards ? 0 : theme.cards.cardPadY;
-	const card = new Box(theme.cards.cardPadX, cardPadY, surfaceBg ? (text: string) => theme.bg(surfaceBg, text) : undefined);
+
+	const card = new Box(
+		theme.cards.cardPadX,
+		theme.cards.cardPadY,
+		surfaceBg ? (text: string) => theme.bg(surfaceBg, text) : undefined,
+	);
 	card.addChild(new Text(formatEditCall(args, theme, cwd), theme.cards.toolIndent, 0));
 	component.addChild(card);
 
