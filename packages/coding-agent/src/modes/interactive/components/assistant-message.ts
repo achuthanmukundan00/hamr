@@ -1,5 +1,5 @@
 import type { AssistantMessage } from "@hamr/ai";
-import { Box, Container, Markdown, Spacer, type MarkdownTheme, Text } from "@hamr/tui";
+import { Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@hamr/tui";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";

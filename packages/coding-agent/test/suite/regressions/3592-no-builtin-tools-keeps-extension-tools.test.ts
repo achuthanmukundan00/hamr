@@ -108,7 +108,7 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			services,
 			sessionManager,
 			model: getModel("anthropic", "claude-sonnet-4-5")!,
-			noTools: "builtin",
+			noTools: "all",
 		});
 
 		expect(session.getActiveToolNames()).toEqual([]);

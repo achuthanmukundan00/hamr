@@ -9,7 +9,7 @@ import { createAgentSession } from "../../core/sdk.ts";
 import { SessionManager } from "../../core/session-manager.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
-import { contentText, getAssistantText } from "../helpers.ts";
+import { getAssistantText } from "../helpers.ts";
 import { getCurrentTurnId, getMemory } from "../memory.ts";
 
 /**
@@ -167,7 +167,14 @@ async function runOneSubagent(
 			sessionManager: workerSessionManager,
 		});
 		if (signal?.aborted) {
-			subagentRuns.set(runId, { name, status: "failed", task, startedAt: Date.now(), endedAt: Date.now(), error: "aborted" });
+			subagentRuns.set(runId, {
+				name,
+				status: "failed",
+				task,
+				startedAt: Date.now(),
+				endedAt: Date.now(),
+				error: "aborted",
+			});
 			updateStatusWidget(ctx);
 			return { task, text: "Subagent aborted before start.", error: "aborted" };
 		}
@@ -214,10 +221,7 @@ async function runOneSubagent(
 
 // ─── Tool ─────────────────────────────────────────────────────────────────────
 
-function registerSubagentTool(
-	pi: Parameters<ExtensionFactory>[0],
-	getChildExtensions: () => ExtensionFactory[],
-): void {
+function registerSubagentTool(pi: Parameters<ExtensionFactory>[0], getChildExtensions: () => ExtensionFactory[]): void {
 	pi.registerTool(
 		defineTool({
 			name: "delegate_subagents",
@@ -244,7 +248,10 @@ function registerSubagentTool(
 				const failed = results.filter((r) => r.error && r.error !== "aborted").length;
 				const done = results.length - failed;
 				if (!options.expanded) {
-					const status = failed > 0 ? `${done}/${results.length} done, ${failed} failed` : `${results.length} subagent${results.length !== 1 ? "s" : ""} done`;
+					const status =
+						failed > 0
+							? `${done}/${results.length} done, ${failed} failed`
+							: `${results.length} subagent${results.length !== 1 ? "s" : ""} done`;
 					return new Text(theme.fg("dim", status), 0, 0);
 				}
 				// Expanded: per-worker handoff — the pi-native way to observe each subagent.

@@ -2,10 +2,10 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentMessage } from "@hamr/agent";
 import type { AssistantMessage, ToolCall, ToolResultMessage } from "@hamr/ai";
+import { Text } from "@hamr/tui";
 import { Type } from "typebox";
 import type { ExtensionContext, ExtensionFactory } from "../core/extensions/types.ts";
 import { defineTool } from "../core/extensions/types.ts";
-import { Text } from "@hamr/tui";
 import { contentText, fileHints, getAssistantText } from "./helpers.ts";
 import { stripFtsMarks } from "./memory/fts-marks.ts";
 import { HolographicMemory } from "./memory/HolographicMemory.ts";
@@ -214,7 +214,11 @@ export function registerMemoryTools(pi: Parameters<ExtensionFactory>[0]): void {
 				const handoff = result.details as any;
 				if (!options.expanded) {
 					const count = handoff?.entryCount ?? 0;
-					return new Text(theme.fg("dim", `${count} entr${count !== 1 ? "ies" : "y"} · ${handoff?.turnCount ?? 0} turns`), 0, 0);
+					return new Text(
+						theme.fg("dim", `${count} entr${count !== 1 ? "ies" : "y"} · ${handoff?.turnCount ?? 0} turns`),
+						0,
+						0,
+					);
 				}
 				const output = contentText(result.content);
 				return new Text(theme.fg("toolOutput", output), 0, 0);

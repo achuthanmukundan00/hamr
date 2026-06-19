@@ -1,7 +1,7 @@
 import { Text } from "@hamr/tui";
 import type { ExtensionCommandContext, ExtensionFactory, MessageRenderOptions } from "../../core/extensions/types.ts";
-import { formatSkillsForPrompt } from "../../core/skills.ts";
 import type { CustomMessage } from "../../core/messages.ts";
+import { formatSkillsForPrompt } from "../../core/skills.ts";
 import type { Theme, ThemeColor } from "../../modes/interactive/theme/theme.ts";
 
 // ─── Token estimation ─────────────────────────────────────────────────────────
@@ -38,10 +38,9 @@ function computeBreakdown(ctx: ExtensionCommandContext): ContextBreakdown {
 	const skillsText = formatSkillsForPrompt(opts.skills ?? []);
 	const skillsTokens = estimateChars(skillsText);
 
-	const contextFilesText =
-		(opts.contextFiles ?? [])
-			.map(({ path, content }) => `<project_instructions path="${path}">\n${content}\n</project_instructions>\n\n`)
-			.join("");
+	const contextFilesText = (opts.contextFiles ?? [])
+		.map(({ path, content }) => `<project_instructions path="${path}">\n${content}\n</project_instructions>\n\n`)
+		.join("");
 	const contextFilesTokens = estimateChars(contextFilesText);
 
 	const totalSystemTokens = estimateChars(systemPromptText);
@@ -87,8 +86,7 @@ function renderDisplay(breakdown: ContextBreakdown, theme: Theme): string {
 		iconRows.push(icons.join(" "));
 	}
 
-	const tokenStr =
-		tokens !== null ? `${fmt(tokens)}/${fmt(contextWindow)} tokens` : `?/${fmt(contextWindow)} tokens`;
+	const tokenStr = tokens !== null ? `${fmt(tokens)}/${fmt(contextWindow)} tokens` : `?/${fmt(contextWindow)} tokens`;
 	const pctStr = percent !== null ? ` (${Math.round(percent)}%)` : "";
 	const freeTokens = tokens !== null && contextWindow > 0 ? contextWindow - tokens : null;
 	const freePct = freeTokens !== null && contextWindow > 0 ? (freeTokens / contextWindow) * 100 : null;
