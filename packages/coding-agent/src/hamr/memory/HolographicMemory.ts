@@ -72,6 +72,7 @@ export class HolographicMemory {
 	private searchStmt: Database.Statement | null = null;
 	private searchSnippetStmt: Database.Statement | null = null;
 	private handoffCountsStmt: Database.Statement | null = null;
+	private latestByTagStmt: Database.Statement | null = null;
 
 	// ── Word frequency cache (invalidated on store) ──
 	private _suggestedTermsCache: string[] | null = null;
@@ -116,6 +117,16 @@ export class HolographicMemory {
            FROM memory_fts
            WHERE session_id = @sessionId`,
 				);
+				// domain_tags is UNINDEXED, so it can't be reached via FTS5 MATCH —
+				// a plain LIKE over the comma-joined tags is the way to find tagged rows.
+				this.latestByTagStmt = db.prepare(
+					`SELECT turn_id, session_id, role, tool_name, file_paths, domain_tags, content
+           FROM memory_fts
+           WHERE domain_tags LIKE '%' || @tag || '%'
+             AND session_id = @sessionId
+           ORDER BY rowid DESC
+           LIMIT 1`,
+				);
 			} catch {
 				// FTS5 table may not exist yet — will be created by EventStore migration
 				this.insertStmt = null;
@@ -125,6 +136,13 @@ export class HolographicMemory {
 
 	get isAvailable(): boolean {
 		return this.db !== null && this.insertStmt !== null;
+	}
+
+	/** Check if the given session has any stored entries. */
+	hasSessionEntries(sessionId: string): boolean {
+		if (!this.handoffCountsStmt) return false;
+		const counts = this.handoffCountsStmt.get({ sessionId }) as { entries: number } | undefined;
+		return (counts?.entries ?? 0) > 0;
 	}
 
 	// ── Write ──────────────────────────────────────────────────────────────
@@ -242,6 +260,44 @@ export class HolographicMemory {
 			}));
 		} catch {
 			return [];
+		}
+	}
+
+	/**
+	 * Fetch the most recently stored entry carrying the given domain tag.
+	 *
+	 * Used to surface a survival manifest (domainTag "survival") prominently on
+	 * resume. Returns null when no such entry exists or memory is unavailable.
+	 */
+	getLatestByDomainTag(tag: string, sessionId: string): MemorySearchResult | null {
+		if (!this.latestByTagStmt) return null;
+		const trimmed = tag.trim();
+		if (!trimmed) return null;
+		try {
+			const row = this.latestByTagStmt.get({ tag: trimmed, sessionId }) as
+				| {
+						turn_id: number;
+						session_id: string;
+						role: string;
+						tool_name: string | null;
+						file_paths: string | null;
+						domain_tags: string | null;
+						content: string;
+				  }
+				| undefined;
+			if (!row) return null;
+			return {
+				turnId: row.turn_id,
+				sessionId: row.session_id,
+				role: row.role,
+				toolName: row.tool_name,
+				filePaths: row.file_paths,
+				domainTags: row.domain_tags,
+				content: row.content,
+				rank: 0,
+			};
+		} catch {
+			return null;
 		}
 	}
 

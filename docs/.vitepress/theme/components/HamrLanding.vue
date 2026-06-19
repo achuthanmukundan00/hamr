@@ -11,7 +11,8 @@
         <a href="/guide/tool-call-parsing">Parsers</a>
         <a href="/guide/providers">Providers</a>
         <a href="/guide/relay">Relay</a>
-        <a href="https://github.com/skaft/hamr" rel="noopener">GitHub</a>
+        <a href="/guide/fork-lineage">Fork</a>
+        <a href="https://github.com/skaft-software/hamr" rel="noopener">GitHub</a>
       </div>
     </nav>
 
@@ -20,28 +21,29 @@
       <div class="term hero-term reveal">
         <div class="term-bar">
           <span class="term-dot d-r"></span><span class="term-dot d-y"></span><span class="term-dot d-g"></span>
-          <span class="term-title">hamr — model switching on relay <span class="term-rec"></span></span>
+          <span class="term-title">hamr — relay session <span class="term-rec"></span></span>
         </div>
         <div id="hero-cast" class="term-cast"></div>
         <div class="term-status">
           <span>~/workspace/hamr (main)</span>
           <span class="term-status-model">⬡ qwen3.6-35b · relay</span>
         </div>
-        <div class="term-caption">Live on Relay · model-adaptive colors shift with each switch</div>
+        <div class="term-caption">Current Relay session recording.</div>
       </div>
 
       <div class="hero-text reveal delay-1">
         <div class="hero-label">
           <span class="nav-mark">⚒</span> hamr
-          <span class="hero-pill"><span class="hero-pill-dot"></span> v0.4.0</span>
+          <span class="hero-pill"><span class="hero-pill-dot"></span> current</span>
         </div>
-        <h1 class="hero-tagline">Your local models.<br>Your terminal.<br><em>Your rules.</em></h1>
-        <p class="hero-desc">The coding agent for developers running models on consumer GPUs. Built for <a href="/guide/relay">Relay</a> and any OpenAI-compatible inference.</p>
+        <h1 class="hero-tagline">A Pi fork, extended.<br>Still moving.<br><em>Still usable.</em></h1>
+        <p class="hero-desc">Hamr is a local coding agent for <a href="/guide/relay">Relay</a> and other OpenAI-compatible backends.</p>
+        <p>Hamr started as a Pi fork. The runtime is still evolving, so this site documents current behavior instead of promising a frozen API.</p>
         <div class="cta-row">
           <a href="/guide/getting-started" class="cta cta-primary">Get started →</a>
-          <a href="https://github.com/skaft/hamr" rel="noopener" class="cta cta-ghost">GitHub</a>
+          <a href="https://github.com/skaft-software/hamr" rel="noopener" class="cta cta-ghost">GitHub</a>
         </div>
-        <div class="hero-install"><span class="dollar">$</span> npm install -g @skaft/hamr</div>
+        <div class="hero-install"><span class="dollar">$</span> npm install -g --ignore-scripts @hamr/coding-agent</div>
       </div>
     </section>
 
@@ -72,7 +74,7 @@
             <span class="model-chip"><span style="color:#cccccc">●</span> GPT</span>
           </div>
           <div class="relay-box">
-            <strong>Relay</strong> makes local llama.cpp servers look like hosted APIs. OpenAI + Anthropic compatible. Graceful model switching. No dropped requests. <a href="https://github.com/skaft/relay">→ Relay docs</a>
+            <strong>Relay</strong> makes local llama.cpp servers look like hosted APIs. OpenAI + Anthropic compatible. Graceful model switching. No dropped requests. <a href="/guide/relay">→ Relay guide</a>
           </div>
           <p style="margin-top:16px"><a href="/guide/providers" class="section-link">Provider setup →</a></p>
         </div>
@@ -90,9 +92,9 @@
           <div id="agent-cast" class="term-cast"></div>
           <div class="term-status">
             <span>~/workspace/hamr (main)</span>
-            <span>4 steps · 6 calls · 2.1K tokens</span>
+            <span>relay session</span>
           </div>
-          <div class="term-caption">read → find bug → edit → test → pass. Bounded loop, 64 max steps.</div>
+          <div class="term-caption">read → find bug → edit → test → pass. Bounded loop with explicit limits.</div>
         </div>
       </div>
       <div class="section-text reveal delay-1">
@@ -111,18 +113,18 @@
           <div class="term">
             <div class="term-bar">
               <span class="term-dot d-r"></span><span class="term-dot d-y"></span><span class="term-dot d-g"></span>
-              <span class="term-title">hamr — theme engine <span class="term-rec"></span></span>
+              <span class="term-title">hamr — themes <span class="term-rec"></span></span>
             </div>
             <div id="theme-cast" class="term-cast"></div>
-            <div class="term-caption">60+ color tokens, hot-reload, Pi-compatible.</div>
+            <div class="term-caption">Theme variables, hot-reload, and custom themes.</div>
           </div>
         </div>
         <div class="section-text reveal delay-1">
-          <div class="section-kicker">Theme engine</div>
-          <h3>60+ tokens. Hot-reload. Pi-compatible.</h3>
-          <p>JSON themes with variables, 60+ color tokens — syntax, markdown, editor, diffs, all themed. Ship your own or drop in a Pi theme directly.</p>
-          <p>Model-adaptive coloring tints the entire UI to the active model's brand. Qwen is purple. Claude is orange. Llama is blue. Switch models, watch the TUI shift.</p>
-          <p>Edit a theme JSON, the TUI hot-reloads. No restart.</p>
+          <div class="section-kicker">Themes</div>
+          <h3>Theme variables. Hot-reload. Custom themes.</h3>
+          <p>JSON themes with variables and token mappings. Edit a theme file and Hamr reloads it without restarting.</p>
+          <p>Model-adaptive coloring tints the UI to the active model family when available.</p>
+          <p>Edit a theme JSON and the TUI hot-reloads. No restart.</p>
           <p><a href="/guide/getting-started#themes" class="section-link">Theme reference →</a></p>
         </div>
       </section>
@@ -141,9 +143,9 @@
       </div>
       <div class="section-text reveal delay-1">
         <div class="section-kicker">Tool-call parsing</div>
-        <h3>12 native parsers. No vLLM required.</h3>
-        <p>Local models emit malformed XML, leaked <code>&lt;think&gt;</code> tags, broken JSON, mixed final answers. Most harnesses need vLLM to normalize.</p>
-        <p>Hamr doesn't. Twelve native parsers, auto-detected from your model name. JSON and XML get salvaged, reasoning tags get stripped, truncated calls get recovered.</p>
+        <h3>Native parsers for messy model output.</h3>
+        <p>Local models can emit malformed XML, leaked <code>&lt;think&gt;</code> tags, broken JSON, mixed final answers, and truncated tool calls.</p>
+        <p>Hamr includes native parsers and repair steps for those cases, with model-specific defaults where available.</p>
         <p><a href="/guide/tool-call-parsing" class="section-link">Parser matrix →</a></p>
       </div>
     </section>
@@ -160,33 +162,30 @@
             <p>{{ f.desc }}</p>
           </div>
         </div>
-        <pre class="code-block"><span class="kw">import</span> { Session } <span class="kw">from</span> <span class="str">'@skaft/hamr'</span>
-<span class="kw">import</span> { createAgentClient } <span class="kw">from</span> <span class="str">'@skaft/hamr/llm'</span>
+        <pre class="code-block"><span class="kw">import</span> { AuthStorage, createAgentSession, ModelRegistry, SessionManager } <span class="kw">from</span> <span class="str">'@hamr/coding-agent'</span>
 
-<span class="kw">const</span> session = <span class="kw">new</span> <span class="cls">Session</span>({
-  repoRoot: process.<span class="fn">cwd</span>(),
-  client: <span class="fn">createAgentClient</span>({
-    provider: <span class="str">'relay'</span>,
-    model: <span class="str">'qwen3.6'</span>,
-  }),
-})
-<span class="kw">const</span> result = <span class="kw">await</span> session.<span class="fn">startTurnWithRecovery</span>(<span class="str">'Find all TODOs in src/'</span>)</pre>
+<span class="kw">const</span> authStorage = <span class="cls">AuthStorage</span>.<span class="fn">create</span>()
+<span class="kw">const</span> modelRegistry = <span class="cls">ModelRegistry</span>.<span class="fn">create</span>(authStorage)
+<span class="kw">const</span> { session } = <span class="kw">await</span> <span class="fn">createAgentSession</span>({
+  sessionManager: <span class="cls">SessionManager</span>.<span class="fn">inMemory</span>(),
+  authStorage,
+  modelRegistry,
+})</pre>
       </section>
     </div>
 
     <!-- Closer -->
     <section class="closer reveal">
       <h3>Built for local inference.</h3>
-      <p>No cloud required. No vLLM required. No Docker required. One GPU, Relay, and <code>hamr chat</code>. Everything else is optional.</p>
+      <p>Hamr is a local coding agent for Relay and compatible backends. The runtime is evolving, but the current CLI and docs are usable now.</p>
       <div class="cta-row" style="justify-content:center">
         <a href="/guide/getting-started" class="cta cta-primary">Get started →</a>
-        <a href="https://github.com/skaft/hamr" rel="noopener" class="cta cta-ghost">GitHub</a>
+        <a href="https://github.com/skaft-software/hamr" rel="noopener" class="cta cta-ghost">GitHub</a>
       </div>
       <div class="closer-row">
-        <span class="closer-item">✕ No cloud lock-in</span>
-        <span class="closer-item">✕ No vLLM dependency</span>
-        <span class="closer-item">✕ No Docker required</span>
-        <span class="closer-item">✕ No API key to start</span>
+        <span class="closer-item">fork lineage preserved</span>
+        <span class="closer-item">docs match current package names</span>
+        <span class="closer-item">runtime still evolving</span>
       </div>
     </section>
 
@@ -198,11 +197,11 @@
         <span class="footer-sep">·</span>
         <a href="https://skaft.dev">Skaft Software</a>
         <span class="footer-sep">·</span>
-        <a href="https://github.com/skaft/hamr">GitHub</a>
+        <a href="https://github.com/skaft-software/hamr">GitHub</a>
         <span class="footer-sep">·</span>
-        <a href="https://github.com/skaft/relay">Relay</a>
+        <a href="/guide/relay">Relay guide</a>
         <span class="footer-sep">·</span>
-        <a href="https://github.com/skaft/hamr/blob/main/LICENSE">MIT</a>
+        <a href="https://github.com/skaft-software/hamr/blob/main/LICENSE">MIT</a>
       </p>
       <p class="footer-sub">© 2026 Skaft Software</p>
     </footer>
@@ -237,10 +236,10 @@ const features = [
 ]
 
 const CASTS: [string, string][] = [
-  ['hero-cast', '/recordings/hero-relay.cast'],
+  ['hero-cast', '/recordings/welcome-relay.cast'],
   ['doctor-cast', '/recordings/doctor-relay.cast'],
-  ['agent-cast', '/recordings/agent-loop.cast'],
-  ['theme-cast', '/recordings/theme-engine.cast'],
+  ['agent-cast', '/recordings/agent-workflow.cast'],
+  ['theme-cast', '/recordings/theme-morphing.cast'],
 ]
 
 let styleEl: HTMLLinkElement | null = null

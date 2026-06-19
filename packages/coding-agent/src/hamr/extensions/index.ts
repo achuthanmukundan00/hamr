@@ -3,6 +3,7 @@ import { createPersistentEditorExtension } from "../persistent-editor.ts";
 import { hamrMemoryExtension } from "./memory.ts";
 import { hamrProvidersExtension } from "./providers.ts";
 import { createHamrSubagentsExtension } from "./subagents.ts";
+import { hamrReadLoopGuardExtension } from "./read-loop-guard.ts";
 
 /**
  * The default set of hamr extensions, composed for the CLI. Each is an
@@ -16,8 +17,9 @@ export const hamrDefaultExtensions: ExtensionFactory[] = [
 	hamrMemoryExtension,
 	createHamrSubagentsExtension(() => hamrDefaultExtensions),
 	createPersistentEditorExtension(),
+	hamrReadLoopGuardExtension,
 ];
 
-export { hamrProvidersExtension } from "./providers.ts";
 export { hamrMemoryExtension } from "./memory.ts";
+export { hamrProvidersExtension } from "./providers.ts";
 export { createHamrSubagentsExtension } from "./subagents.ts";

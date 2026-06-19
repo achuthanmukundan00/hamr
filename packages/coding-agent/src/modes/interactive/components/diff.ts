@@ -1,147 +1,200 @@
-import * as Diff from "diff";
-import { theme } from "../theme/theme.ts";
+import { type Component, truncateToWidth, visibleWidth } from "@hamr/tui";
+import { getLanguageFromPath, highlightCode, type ThemeBg, theme } from "../theme/theme.ts";
 
 /**
- * Parse diff line to extract prefix, line number, and content.
- * Format: "+123 content" or "-123 content" or " 123 content" or "     ..."
+ * A single logical diff row, normalized from either the internal edit-diff
+ * format (produced by `generateDiffString`) or a raw git unified diff.
  */
-function parseDiffLine(line: string): { prefix: string; lineNum: string; content: string } | null {
-	const match = line.match(/^([+-\s])(\s*\d*)\s(.*)$/);
-	if (!match) return null;
-	return { prefix: match[1], lineNum: match[2], content: match[3] };
+interface DiffRow {
+	kind: "added" | "removed" | "context" | "meta";
+	/** Display line number (already stringified), or "" for meta/separator rows. */
+	lineNum: string;
+	content: string;
+	/** Syntax-highlighting language for this row's content (per-file in multi-file diffs). */
+	lang?: string;
 }
 
-/**
- * Replace tabs with spaces for consistent rendering.
- */
+/** Replace tabs with spaces for consistent column rendering. */
 function replaceTabs(text: string): string {
 	return text.replace(/\t/g, "   ");
 }
 
 /**
- * Compute word-level diff and render with inverse on changed parts.
- * Uses diffWords which groups whitespace with adjacent words for cleaner highlighting.
- * Strips leading whitespace from inverse to avoid highlighting indentation.
+ * Parse the internal edit-diff format emitted by `generateDiffString`.
+ * Lines look like: "+123 content", "-123 content", " 123 content", "     ...".
  */
-function renderIntraLineDiff(oldContent: string, newContent: string): { removedLine: string; addedLine: string } {
-	const wordDiff = Diff.diffWords(oldContent, newContent);
-
-	let removedLine = "";
-	let addedLine = "";
-	let isFirstRemoved = true;
-	let isFirstAdded = true;
-
-	for (const part of wordDiff) {
-		if (part.removed) {
-			let value = part.value;
-			// Strip leading whitespace from the first removed part
-			if (isFirstRemoved) {
-				const leadingWs = value.match(/^(\s*)/)?.[1] || "";
-				value = value.slice(leadingWs.length);
-				removedLine += leadingWs;
-				isFirstRemoved = false;
-			}
-			if (value) {
-				removedLine += theme.inverse(value);
-			}
-		} else if (part.added) {
-			let value = part.value;
-			// Strip leading whitespace from the first added part
-			if (isFirstAdded) {
-				const leadingWs = value.match(/^(\s*)/)?.[1] || "";
-				value = value.slice(leadingWs.length);
-				addedLine += leadingWs;
-				isFirstAdded = false;
-			}
-			if (value) {
-				addedLine += theme.inverse(value);
-			}
-		} else {
-			removedLine += part.value;
-			addedLine += part.value;
+function parseGeneratedDiff(diffText: string): DiffRow[] {
+	const rows: DiffRow[] = [];
+	for (const line of diffText.split("\n")) {
+		const match = line.match(/^([+-\s])(\s*\d*)\s(.*)$/);
+		if (!match) {
+			rows.push({ kind: "meta", lineNum: "", content: line });
+			continue;
 		}
+		const [, prefix, lineNum, content] = match;
+		const trimmedNum = lineNum.trim();
+		if (content.trim() === "..." && trimmedNum === "") {
+			rows.push({ kind: "meta", lineNum: "", content: "⋯" });
+			continue;
+		}
+		const kind = prefix === "+" ? "added" : prefix === "-" ? "removed" : "context";
+		rows.push({ kind, lineNum: trimmedNum, content });
 	}
-
-	return { removedLine, addedLine };
+	return rows;
 }
 
-export interface RenderDiffOptions {
-	/** File path (unused, kept for API compatibility) */
-	filePath?: string;
+/** Detect whether a blob of text is a raw git/unified diff. */
+export function looksLikeUnifiedDiff(text: string): boolean {
+	return /^@@ -\d/m.test(text) || /^diff --git /m.test(text);
 }
 
 /**
- * Render a diff string with colored lines and intra-line change highlighting.
- * - Context lines: dim/gray
- * - Removed lines: red, with inverse on changed tokens
- * - Added lines: green, with inverse on changed tokens
+ * Parse a raw git unified diff into normalized rows, tracking line numbers from
+ * the hunk headers. File headers (`diff --git`, `index`, `+++`, `---`) are
+ * dropped; hunk headers become subtle separator rows. The syntax-highlighting
+ * language is tracked per file, so a multi-file diff highlights each file's
+ * lines with the right grammar instead of mislabeling (e.g. a shell comment
+ * highlighted as TypeScript).
  */
-export function renderDiff(diffText: string, _options: RenderDiffOptions = {}): string {
-	const lines = diffText.split("\n");
-	const result: string[] = [];
+function parseUnifiedDiff(diffText: string): DiffRow[] {
+	const rows: DiffRow[] = [];
+	let oldLine = 0;
+	let newLine = 0;
+	let lang: string | undefined;
 
-	let i = 0;
-	while (i < lines.length) {
-		const line = lines[i];
-		const parsed = parseDiffLine(line);
-
-		if (!parsed) {
-			result.push(theme.fg("toolDiffContext", line));
-			i++;
+	for (const line of diffText.split("\n")) {
+		// Track the current file (and its language) as we cross file boundaries.
+		const fileHeader = line.match(/^(?:diff --git a\/.+ b\/|\+\+\+ b\/)(.+)$/);
+		if (fileHeader) {
+			lang = getLanguageFromPath(fileHeader[1]);
 			continue;
 		}
-
-		if (parsed.prefix === "-") {
-			// Collect consecutive removed lines
-			const removedLines: { lineNum: string; content: string }[] = [];
-			while (i < lines.length) {
-				const p = parseDiffLine(lines[i]);
-				if (p?.prefix !== "-") break;
-				removedLines.push({ lineNum: p.lineNum, content: p.content });
-				i++;
-			}
-
-			// Collect consecutive added lines
-			const addedLines: { lineNum: string; content: string }[] = [];
-			while (i < lines.length) {
-				const p = parseDiffLine(lines[i]);
-				if (p?.prefix !== "+") break;
-				addedLines.push({ lineNum: p.lineNum, content: p.content });
-				i++;
-			}
-
-			// Only do intra-line diffing when there's exactly one removed and one added line
-			// (indicating a single line modification). Otherwise, show lines as-is.
-			if (removedLines.length === 1 && addedLines.length === 1) {
-				const removed = removedLines[0];
-				const added = addedLines[0];
-
-				const { removedLine, addedLine } = renderIntraLineDiff(
-					replaceTabs(removed.content),
-					replaceTabs(added.content),
-				);
-
-				result.push(theme.fg("toolDiffRemoved", `-${removed.lineNum} ${removedLine}`));
-				result.push(theme.fg("toolDiffAdded", `+${added.lineNum} ${addedLine}`));
-			} else {
-				// Show all removed lines first, then all added lines
-				for (const removed of removedLines) {
-					result.push(theme.fg("toolDiffRemoved", `-${removed.lineNum} ${replaceTabs(removed.content)}`));
-				}
-				for (const added of addedLines) {
-					result.push(theme.fg("toolDiffAdded", `+${added.lineNum} ${replaceTabs(added.content)}`));
-				}
-			}
-		} else if (parsed.prefix === "+") {
-			// Standalone added line
-			result.push(theme.fg("toolDiffAdded", `+${parsed.lineNum} ${replaceTabs(parsed.content)}`));
-			i++;
+		const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
+		if (hunk) {
+			oldLine = Number(hunk[1]);
+			newLine = Number(hunk[2]);
+			if (rows.length > 0) rows.push({ kind: "meta", lineNum: "", content: "⋯" });
+			continue;
+		}
+		// Skip remaining file-level headers — they add noise without aiding review.
+		if (/^(index |--- |new file mode |deleted file mode |similarity |rename |old mode |new mode )/.test(line)) {
+			continue;
+		}
+		if (line.startsWith("+")) {
+			rows.push({ kind: "added", lineNum: String(newLine++), content: line.slice(1), lang });
+		} else if (line.startsWith("-")) {
+			rows.push({ kind: "removed", lineNum: String(oldLine++), content: line.slice(1), lang });
+		} else if (line.startsWith("\\")) {
+			// "\ No newline at end of file" — ignore.
 		} else {
-			// Context line
-			result.push(theme.fg("toolDiffContext", ` ${parsed.lineNum} ${replaceTabs(parsed.content)}`));
-			i++;
+			// Context line (leading space, or blank line inside a hunk).
+			rows.push({
+				kind: "context",
+				lineNum: String(newLine),
+				content: line.startsWith(" ") ? line.slice(1) : line,
+				lang,
+			});
+			oldLine++;
+			newLine++;
 		}
 	}
+	return rows;
+}
 
-	return result.join("\n");
+export interface RenderDiffOptions {
+	/** File path used to choose a syntax-highlighting language. */
+	filePath?: string;
+	/** Treat input as a raw git/unified diff rather than the internal format. */
+	unified?: boolean;
+	/**
+	 * Background the diff is painted onto. When the diff sits inside a shaded
+	 * surface (e.g. a tool card), pass that surface's background so the band
+	 * lines restore it after the colored band instead of resetting to the
+	 * terminal default — otherwise the surrounding padding shows a mismatched
+	 * strip on either side of the band.
+	 */
+	surroundBg?: ThemeBg;
+}
+
+/**
+ * Width-aware diff component matching the "Claude Code" presentation:
+ * code is always syntax-highlighted on a neutral base, and additions/removals
+ * are conveyed by a full-width background band (green/red) rather than by
+ * recoloring the code itself.
+ */
+class DiffComponent implements Component {
+	private rows: DiffRow[];
+	private lang?: string;
+	private numWidth: number;
+	private surroundBg?: ThemeBg;
+	private cacheWidth?: number;
+	private cacheLines?: string[];
+
+	constructor(diffText: string, options: RenderDiffOptions = {}) {
+		// Edit diffs are single-file, so the language comes from the supplied path.
+		// Git diffs carry a per-row language resolved from each file header.
+		this.lang = options.filePath ? getLanguageFromPath(options.filePath) : undefined;
+		this.surroundBg = options.surroundBg;
+		this.rows = options.unified ? parseUnifiedDiff(diffText) : parseGeneratedDiff(diffText);
+		const maxNum = this.rows.reduce((w, r) => Math.max(w, r.lineNum.length), 1);
+		this.numWidth = maxNum;
+	}
+
+	invalidate(): void {
+		this.cacheWidth = undefined;
+		this.cacheLines = undefined;
+	}
+
+	private highlight(content: string, lang: string | undefined): string {
+		const text = replaceTabs(content);
+		if (!text) return "";
+		if (!lang) return text; // neutral base when language is unknown
+		return highlightCode(text, lang)[0] ?? text;
+	}
+
+	private renderRow(row: DiffRow, width: number): string {
+		if (row.kind === "meta") {
+			const text = theme.fg("toolDiffContext", `${" ".repeat(this.numWidth + 2)}${row.content}`);
+			return truncateToWidth(text, width);
+		}
+
+		const sign = row.kind === "added" ? "+" : row.kind === "removed" ? "-" : " ";
+		const signColor =
+			row.kind === "added" ? "toolDiffAdded" : row.kind === "removed" ? "toolDiffRemoved" : "toolDiffContext";
+		const gutter = `${theme.fg(signColor, sign)}${theme.fg("toolDiffContext", row.lineNum.padStart(this.numWidth, " "))} `;
+
+		const line = truncateToWidth(gutter + this.highlight(row.content, row.lang ?? this.lang), width);
+
+		if (row.kind === "added") return this.band(line, width, "toolDiffAddedBg");
+		if (row.kind === "removed") return this.band(line, width, "toolDiffRemovedBg");
+		return line;
+	}
+
+	/**
+	 * Paint a full-width background band behind a line. The band is closed by
+	 * restoring the surrounding background (when known) rather than resetting to
+	 * the terminal default, so any padding a parent box adds on either side
+	 * stays the same color as the rest of the card.
+	 */
+	private band(content: string, width: number, bgToken: ThemeBg): string {
+		const pad = " ".repeat(Math.max(0, width - visibleWidth(content)));
+		const close = this.surroundBg ? theme.getBgAnsi(this.surroundBg) : "\x1b[49m";
+		return theme.getBgAnsi(bgToken) + content + pad + close;
+	}
+
+	render(width: number): string[] {
+		if (this.cacheLines && this.cacheWidth === width) return this.cacheLines;
+		const lines = this.rows.map((row) => this.renderRow(row, width));
+		this.cacheWidth = width;
+		this.cacheLines = lines;
+		return lines;
+	}
+}
+
+/**
+ * Create a width-aware diff component. Use this everywhere a diff is shown
+ * (file edits and git diffs) so the presentation stays consistent.
+ */
+export function createDiffComponent(diffText: string, options: RenderDiffOptions = {}): Component {
+	return new DiffComponent(diffText, options);
 }

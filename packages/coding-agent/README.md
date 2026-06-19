@@ -19,6 +19,8 @@
 
 Hamr is a minimal terminal coding harness. Adapt Hamr to your workflows, not the other way around, without having to fork and modify Hamr internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Hamr Packages](#hamr-packages) and share them with others via npm or git.
 
+Hamr also ships with a compact built-in workflow pack in `skills/` and `prompts/` for common issue, pickup, PR, and review loops.
+
 Hamr ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask Hamr to build what you want or install a third party Hamr package that matches your workflow.
 
 Hamr runs in four modes: interactive, print or JSON, RPC for process integration, and an SDK for embedding in your own apps. See [openclaw/openclaw](https://github.com/openclaw/openclaw) for a real-world SDK integration.
@@ -83,7 +85,7 @@ Authenticate with an API key:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-pi
+hamr
 ```
 
 Or use your existing subscription:
@@ -240,12 +242,12 @@ Sessions are stored as JSONL files with a tree structure. Each entry has an `id`
 Sessions auto-save to `~/.hamr/agent/sessions/` organized by working directory.
 
 ```bash
-pi -c                  # Continue most recent session
-pi -r                  # Browse and select from past sessions
-pi --no-session        # Ephemeral mode (don't save)
-pi --name "my task"    # Set session display name at startup
-pi --session <path|id> # Use specific session file or ID
-pi --fork <path|id>    # Fork specific session file or ID into a new session
+hamr -c                  # Continue most recent session
+hamr -r                  # Browse and select from past sessions
+hamr --no-session        # Ephemeral mode (don't save)
+hamr --name "my task"    # Set session display name at startup
+hamr --session <path|id> # Use specific session file or ID
+hamr --fork <path|id>    # Fork specific session file or ID into a new session
 ```
 
 Use `/session` in interactive mode to see the current session ID before reusing it with `--session <id>` or `--fork <id>`.
@@ -299,7 +301,7 @@ Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trus
 
 If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.hamr/agent/settings.json`, or change it with `/settings`.
 
-`pi config` and package commands use the same project trust flow, except `pi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
+`hamr config` and package commands use the same project trust flow, except `pi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
 
 Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.hamr/agent/trust.json` only; the current session is not reloaded, so restart Hamr for changes to take effect.
 
@@ -406,36 +408,36 @@ Bundle and share extensions, skills, prompts, and themes via npm or git. Find pa
 > **Security:** Hamr packages run with full system access. Extensions execute arbitrary code, and skills can instruct the model to perform any action including running executables. Review source code before installing third-party packages.
 
 ```bash
-pi install npm:@foo/pi-tools
-pi install npm:@foo/pi-tools@1.2.3      # pinned version
-pi install git:github.com/user/repo
-pi install git:github.com/user/repo@v1  # tag or commit
-pi install git:git@github.com:user/repo
-pi install git:git@github.com:user/repo@v1  # tag or commit
-pi install https://github.com/user/repo
-pi install https://github.com/user/repo@v1      # tag or commit
-pi install ssh://git@github.com/user/repo
-pi install ssh://git@github.com/user/repo@v1    # tag or commit
-pi remove npm:@foo/pi-tools
-pi uninstall npm:@foo/pi-tools          # alias for remove
-pi list
-pi update                               # update pi and packages (skips pinned packages)
-pi update --extensions                  # update packages only
-pi update --self                        # update pi only
-pi update --self --force                # reinstall Hamr even if current
-pi update npm:@foo/pi-tools             # update one package
-pi config                               # enable/disable extensions, skills, prompts, themes
+hamr install npm:@foo/pi-tools
+hamr install npm:@foo/pi-tools@1.2.3      # pinned version
+hamr install git:github.com/user/repo
+hamr install git:github.com/user/repo@v1  # tag or commit
+hamr install git:git@github.com:user/repo
+hamr install git:git@github.com:user/repo@v1  # tag or commit
+hamr install https://github.com/user/repo
+hamr install https://github.com/user/repo@v1      # tag or commit
+hamr install ssh://git@github.com/user/repo
+hamr install ssh://git@github.com/user/repo@v1    # tag or commit
+hamr remove npm:@foo/pi-tools
+hamr uninstall npm:@foo/pi-tools          # alias for remove
+hamr list
+hamr update                               # update hamr and packages (skips pinned packages)
+hamr update --extensions                  # update packages only
+hamr update --self                        # update hamr only
+hamr update --self --force                # reinstall Hamr even if current
+hamr update npm:@foo/pi-tools             # update one package
+hamr config                               # enable/disable extensions, skills, prompts, themes
 ```
 
-Packages install to `~/.hamr/agent/git/` (git) or `~/.hamr/agent/npm/` (npm). Use `-l` for project-local installs (`.hamr/git/`, `.hamr/npm/`). Git `@ref` values are pinned tags or commits; pinned packages are skipped by `pi update`, so use `pi install git:host/user/repo@new-ref` to move an existing package to a new ref. Git packages install dependencies with `npm install --omit=dev` by default, so runtime deps must be listed under `dependencies`; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers. If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
+Packages install to `~/.hamr/agent/git/` (git) or `~/.hamr/agent/npm/` (npm). Use `-l` for project-local installs (`.hamr/git/`, `.hamr/npm/`). Git `@ref` values are pinned tags or commits; pinned packages are skipped by `hamr update`, so use `hamr install git:host/user/repo@new-ref` to move an existing package to a new ref. Git packages install dependencies with `npm install --omit=dev` by default, so runtime deps must be listed under `dependencies`; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers. If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
 
-Create a package by adding a `pi` key to `package.json`:
+Create a package by adding a `hamr` key to `package.json`:
 
 ```json
 {
   "name": "my-hamr-package",
   "keywords": ["hamr-package"],
-  "pi": {
+  "hamr": {
     "extensions": ["./extensions"],
     "skills": ["./skills"],
     "prompts": ["./prompts"],
@@ -444,7 +446,7 @@ Create a package by adding a `pi` key to `package.json`:
 }
 ```
 
-Without a `pi` manifest, pi auto-discovers from conventional directories (`extensions/`, `skills/`, `prompts/`, `themes/`).
+Without a `hamr` manifest, hamr auto-discovers from conventional directories (`extensions/`, `skills/`, `prompts/`, `themes/`).
 
 See [docs/packages.md](docs/packages.md).
 
@@ -477,7 +479,7 @@ See [docs/sdk.md](docs/sdk.md) and [examples/sdk/](examples/sdk/).
 For non-Node.js integrations, use RPC mode over stdin/stdout:
 
 ```bash
-pi --mode rpc
+hamr --mode rpc
 ```
 
 RPC mode uses strict LF-delimited JSONL framing. Clients must split records on `\n` only. Do not use generic line readers like Node `readline`, which also split on Unicode separators inside JSON payloads.
@@ -509,25 +511,25 @@ Read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) 
 ## CLI Reference
 
 ```bash
-pi [options] [@files...] [messages...]
+hamr [options] [@files...] [messages...]
 ```
 
 ### Package Commands
 
 ```bash
-pi install <source> [-l]     # Install package, -l for project-local
-pi remove <source> [-l]      # Remove package
-pi uninstall <source> [-l]   # Alias for remove
-pi update [source|self|pi]   # Update Hamr and packages (skips pinned packages)
-pi update --extensions       # Update packages only
-pi update --self             # Update Hamr only
-pi update --self --force     # Reinstall pi even if current
-pi update --extension <src>  # Update one package
-pi list                      # List installed packages
-pi config                    # Enable/disable package resources
+hamr install <source> [-l]     # Install package, -l for project-local
+hamr remove <source> [-l]      # Remove package
+hamr uninstall <source> [-l]   # Alias for remove
+hamr update [source|self|hamr]   # Update Hamr and packages (skips pinned packages)
+hamr update --extensions       # Update packages only
+hamr update --self             # Update Hamr only
+hamr update --self --force     # Reinstall hamr even if current
+hamr update --extension <src>  # Update one package
+hamr list                      # List installed packages
+hamr config                    # Enable/disable package resources
 ```
 
-`pi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pi update` never prompts for project trust.
+`hamr config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `hamr update` never prompts for project trust.
 
 ### Modes
 
@@ -542,7 +544,7 @@ pi config                    # Enable/disable package resources
 In print mode, Hamr also reads piped stdin and merges it into the initial prompt:
 
 ```bash
-cat README.md | pi -p "Summarize this text"
+cat README.md | hamr -p "Summarize this text"
 ```
 
 ### Model Options
@@ -612,46 +614,46 @@ Combine `--no-*` with explicit flags to load exactly what you need, ignoring set
 Prefix files with `@` to include in the message:
 
 ```bash
-pi @prompt.md "Answer this"
-pi -p @screenshot.png "What's in this image?"
-pi @code.ts @test.ts "Review these files"
+hamr @prompt.md "Answer this"
+hamr -p @screenshot.png "What's in this image?"
+hamr @code.ts @test.ts "Review these files"
 ```
 
 ### Examples
 
 ```bash
 # Interactive with initial prompt
-pi "List all .ts files in src/"
+hamr "List all .ts files in src/"
 
 # Non-interactive
-pi -p "Summarize this codebase"
+hamr -p "Summarize this codebase"
 
 # Non-interactive with piped stdin
-cat README.md | pi -p "Summarize this text"
+cat README.md | hamr -p "Summarize this text"
 
 # Named one-shot session
-pi --name "release audit" -p "Audit this repository"
+hamr --name "release audit" -p "Audit this repository"
 
 # Different model
-pi --provider openai --model gpt-4o "Help me refactor"
+hamr --provider openai --model gpt-4o "Help me refactor"
 
 # Model with provider prefix (no --provider needed)
-pi --model openai/gpt-4o "Help me refactor"
+hamr --model openai/gpt-4o "Help me refactor"
 
 # Model with thinking level shorthand
-pi --model sonnet:high "Solve this complex problem"
+hamr --model sonnet:high "Solve this complex problem"
 
 # Limit model cycling
-pi --models "claude-*,gpt-4o"
+hamr --models "claude-*,gpt-4o"
 
 # Read-only mode
-pi --tools read,grep,find,ls -p "Review the code"
+hamr --tools read,grep,find,ls -p "Review the code"
 
 # Disable one extension or built-in tool while keeping the rest available
-pi --exclude-tools ask_question
+hamr --exclude-tools ask_question
 
 # High thinking level
-pi --thinking high "Solve this complex problem"
+hamr --thinking high "Solve this complex problem"
 ```
 
 ### Environment Variables

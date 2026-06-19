@@ -29,6 +29,14 @@ export class Text implements Component {
 		this.cachedLines = undefined;
 	}
 
+	setPaddingY(paddingY: number): void {
+		if (this.paddingY === paddingY) return;
+		this.paddingY = paddingY;
+		this.cachedText = undefined;
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
+	}
+
 	setCustomBgFn(customBgFn?: (text: string) => string): void {
 		this.customBgFn = customBgFn;
 		this.cachedText = undefined;

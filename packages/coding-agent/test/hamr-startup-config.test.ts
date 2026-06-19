@@ -1,11 +1,7 @@
 import { getSupportedThinkingLevels } from "@hamr/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { discoverRelayModels } from "../src/hamr/providers/relay-provider.ts";
-import {
-	buildHamrProviderRegistrations,
-	type HamrStartupConfig,
-	isCloudProvider,
-} from "../src/hamr/startup-config.ts";
+import { buildHamrProviderRegistrations, type HamrStartupConfig, isCloudProvider } from "../src/hamr/startup-config.ts";
 
 function relayConfigWith(model: Record<string, unknown>): HamrStartupConfig {
 	return {
@@ -207,7 +203,7 @@ describe("Hamr relay configured model discovery merge", () => {
 		expect(model?.contextWindow).toBe(32768);
 		expect(model?.maxTokens).toBe(16384);
 		expect(model?.name).toBe("Qwen 3.6 27B");
-		expect(model?.input).toEqual(["text"]);
+		expect(model?.input).toEqual(["text", "image"]);
 	});
 
 	it("treats relay-advertised context as authoritative over stale config", async () => {
@@ -287,9 +283,9 @@ describe("Hamr relay discovered-model vision defaults", () => {
 		return registrations[0]?.config.models?.[0]?.input as ("text" | "image")[];
 	}
 
-	it("treats a discovered model without a multimodal capability as text-only", async () => {
+	it("treats a discovered model without an explicit supportsVision flag as vision-capable", async () => {
 		const input = await discoveredInputFor({ id: "qwen3.6-35b-a3b", capabilities: ["completion"] });
-		expect(input).toEqual(["text"]);
+		expect(input).toEqual(["text", "image"]);
 	});
 
 	it("enables image input when the relay advertises multimodal", async () => {

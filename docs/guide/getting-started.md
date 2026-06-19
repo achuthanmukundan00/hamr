@@ -3,10 +3,12 @@
 ## Install
 
 ```sh
-npm install -g @skaft/hamr
+npm install -g --ignore-scripts @hamr/coding-agent
 ```
 
-> **Tip:** Hamr works best with Relay — the local inference gateway that handles model lifecycle, graceful switching, and prefix-cache pre-warming. See the [Relay docs](/guide/relay) for setup.
+> Hamr started as a Pi fork. These commands use the current Hamr package names and repo URLs.
+
+> **Tip:** Hamr works best with Relay, the local inference gateway that handles model lifecycle, graceful switching, and prefix-cache pre-warming. See the [Relay docs](/guide/relay) for setup.
 
 Hamr requires Bun at runtime for the interactive TUI. If Bun isn't installed:
 
@@ -145,7 +147,7 @@ hamr> /exit
 ## Develop From Source
 
 ```sh
-git clone git@github.com:skaft/hamr.git
+git clone https://github.com/skaft-software/hamr.git
 cd hamr
 bun install
 bun run build

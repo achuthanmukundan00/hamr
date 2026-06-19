@@ -1,11 +1,13 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentMessage } from "@hamr/agent";
-import type { AssistantMessage, ToolResultMessage } from "@hamr/ai";
+import type { AssistantMessage, ToolCall, ToolResultMessage } from "@hamr/ai";
 import { Type } from "typebox";
 import type { ExtensionContext, ExtensionFactory } from "../core/extensions/types.ts";
 import { defineTool } from "../core/extensions/types.ts";
+import { Text } from "@hamr/tui";
 import { contentText, fileHints, getAssistantText } from "./helpers.ts";
+import { stripFtsMarks } from "./memory/fts-marks.ts";
 import { HolographicMemory } from "./memory/HolographicMemory.ts";
 import { loadBetterSqlite3 } from "./store/sqlite-loader.ts";
 
@@ -54,6 +56,36 @@ export function getMemory(ctx: ExtensionContext): HolographicMemory | undefined 
 	return memoryHandle.memory;
 }
 
+export function buildAssistantMemoryContent(message: AssistantMessage): string {
+	const parts: string[] = [];
+	const text = sanitizeMemoryTranscriptText(getAssistantText(message)).trim();
+	if (text) parts.push(text);
+
+	for (const block of message.content) {
+		if (block.type !== "toolCall") continue;
+		const call = block as ToolCall;
+		parts.push(`tool_call ${call.name} ${JSON.stringify(call.arguments)}`);
+	}
+
+	return parts.join("\n");
+}
+
+export function sanitizeMemoryTranscriptText(text: string): string {
+	return stripFtsMarks(text)
+		.replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, "")
+		.replace(/<thinking\b[^>]*>[\s\S]*?<\/thinking>/gi, "")
+		.replace(/<function=([^>\s]+)>/gi, "tool_call $1 ")
+		.replace(/<parameter=([^>\s]+)>/gi, "$1=")
+		.replace(/<\/parameter>/gi, " ")
+		.replace(/<\/function>/gi, " ")
+		.replace(/<\/?tool_call>/gi, " ")
+		.replace(/<\/?function_calls>/gi, " ")
+		.replace(/<\/?function_call>/gi, " ")
+		.replace(/[ \t]+\n/g, "\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+}
+
 export function storeMessage(ctx: ExtensionContext, message: AgentMessage): void {
 	const memory = getMemory(ctx);
 	if (!memory) return;
@@ -73,7 +105,7 @@ export function storeMessage(ctx: ExtensionContext, message: AgentMessage): void
 	}
 
 	if (message.role === "assistant") {
-		const text = getAssistantText(message as AssistantMessage);
+		const text = buildAssistantMemoryContent(message as AssistantMessage);
 		if (!text.trim()) return;
 		memory.store({
 			sessionId: ctx.sessionManager.getSessionId(),
@@ -113,6 +145,15 @@ export function registerMemoryTools(pi: Parameters<ExtensionFactory>[0]): void {
 				query: Type.String({ description: "FTS5 query text, for example an error, file path, or feature name." }),
 				limit: Type.Optional(Type.Number({ description: "Maximum results to return. Default 5." })),
 			}),
+			renderResult: (result, options, theme) => {
+				const details = result.details as any;
+				const count = details?.count ?? 0;
+				if (!options.expanded) {
+					return new Text(theme.fg("dim", `${count} result${count !== 1 ? "s" : ""}`), 0, 0);
+				}
+				const output = contentText(result.content);
+				return new Text(theme.fg("toolOutput", output), 0, 0);
+			},
 			execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
 				const memory = getMemory(ctx);
 				if (!memory) return { content: [{ type: "text", text: "FTS5 memory is unavailable." }], details: {} };
@@ -121,10 +162,10 @@ export function registerMemoryTools(pi: Parameters<ExtensionFactory>[0]): void {
 					results.length === 0
 						? "No memory results."
 						: results
-								.map(
-									(result, index) =>
-										`${index + 1}. turn ${result.turnId} ${result.role}${result.toolName ? `/${result.toolName}` : ""}\n${result.snippet || result.content.slice(0, 500)}`,
-								)
+								.map((result, index) => {
+									const excerpt = sanitizeMemoryTranscriptText(result.snippet || result.content.slice(0, 500));
+									return `${index + 1}. turn ${result.turnId} ${result.role}${result.toolName ? `/${result.toolName}` : ""}\n${excerpt}`;
+								})
 								.join("\n\n");
 				return { content: [{ type: "text", text }], details: { count: results.length } };
 			},
@@ -169,6 +210,15 @@ export function registerMemoryTools(pi: Parameters<ExtensionFactory>[0]): void {
 			label: "Memory handoff",
 			description: "Build a structured handoff manifest from Hamr's FTS5 memory for another agent or future turn.",
 			parameters: Type.Object({}),
+			renderResult: (result, options, theme) => {
+				const handoff = result.details as any;
+				if (!options.expanded) {
+					const count = handoff?.entryCount ?? 0;
+					return new Text(theme.fg("dim", `${count} entr${count !== 1 ? "ies" : "y"} · ${handoff?.turnCount ?? 0} turns`), 0, 0);
+				}
+				const output = contentText(result.content);
+				return new Text(theme.fg("toolOutput", output), 0, 0);
+			},
 			execute: async (_toolCallId, _params, _signal, _onUpdate, ctx) => {
 				const memory = getMemory(ctx);
 				if (!memory) return { content: [{ type: "text", text: "FTS5 memory is unavailable." }], details: {} };

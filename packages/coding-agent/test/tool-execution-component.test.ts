@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { getReadmePath } from "../src/config.ts";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
+import { createEditToolDefinition } from "../src/core/tools/edit.ts";
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
@@ -32,7 +33,7 @@ function createFakeTui(): TUI {
 
 describe("ToolExecutionComponent parity", () => {
 	beforeAll(() => {
-		initTheme("dark");
+		initTheme("kawaii");
 	});
 
 	test("stacks custom call and result renderers like the old implementation", () => {
@@ -96,6 +97,44 @@ describe("ToolExecutionComponent parity", () => {
 		);
 
 		expect(component.render(120)).toEqual([]);
+	});
+
+	test("gapless default tool cards do not start with a blank row", () => {
+		const toolDefinition: ToolDefinition = {
+			...createBaseToolDefinition(),
+			renderCall: () => new Text("custom call", 0, 0),
+			renderResult: () => new Text("custom result", 0, 0),
+		};
+
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-gapless-1",
+			{},
+			{},
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		const rendered = component.render(120);
+		expect(rendered[0]).not.toBe("");
+		expect(stripAnsi(rendered.join("\n"))).toContain("custom call");
+	});
+
+	test("gapless self-rendered tool cards do not start with a blank row", () => {
+		const component = new ToolExecutionComponent(
+			"edit",
+			"tool-gapless-2",
+			{ path: "README.md", oldText: "before", newText: "after" },
+			{},
+			createEditToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		const rendered = component.render(120);
+		expect(rendered[0]).not.toBe("");
+		expect(stripAnsi(rendered.join("\n"))).toContain("edit");
 	});
 
 	test("uses built-in rendering for built-in overrides without custom renderers", () => {

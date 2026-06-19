@@ -1,5 +1,8 @@
 # Hamr Production Readiness Plan
 
+> Historical planning note. This compares Hamr against an older Pi-era codebase and is kept for context only.
+> It does not describe the current docs site or a frozen implementation target.
+
 Based on a thorough comparison with `@earendil-works/pi-coding-agent v0.79.1`.
 
 ## Critical Gaps (Must Fix)

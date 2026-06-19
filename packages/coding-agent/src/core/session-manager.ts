@@ -1049,6 +1049,8 @@ export class SessionManager {
 		return undefined;
 	}
 
+
+
 	/**
 	 * Append a custom message entry (for extensions) that participates in LLM context.
 	 * @param customType Extension identifier for filtering on reload

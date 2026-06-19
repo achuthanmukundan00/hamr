@@ -11,10 +11,13 @@
     "headingIndent": 1,
     "bodyIndent": 3,
     "toolIndent": 2,
+    "toolResultIndent": 4,
     "cardPadX": 1,
     "cardPadY": 1,
+    "shadedSurfaces": true,
     "thinkingShaded": false,
-    "gaplessCards": true
+    "gaplessCards": false,
+    "showThoughtHeading": false
   },
   "vars": {
     "cyan": "#00d7ff",

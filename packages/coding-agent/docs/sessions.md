@@ -7,12 +7,12 @@ Pi saves conversations as sessions so you can continue work, branch from earlier
 Sessions auto-save to `~/.hamr/agent/sessions/`, organized by working directory. Each session is a JSONL file with a tree structure.
 
 ```bash
-pi -c                  # Continue most recent session
-pi -r                  # Browse and select from past sessions
-pi --no-session        # Ephemeral mode; do not save
-pi --name "my task"    # Set session display name at startup
-pi --session <path|id> # Use a specific session file or partial session ID
-pi --fork <path|id>    # Fork a session file or partial session ID into a new session
+hamr -c                  # Continue most recent session
+hamr -r                  # Browse and select from past sessions
+hamr --no-session        # Ephemeral mode; do not save
+hamr --name "my task"    # Set session display name at startup
+hamr --session <path|id> # Use a specific session file or partial session ID
+hamr --fork <path|id>    # Fork a session file or partial session ID into a new session
 ```
 
 Use `/session` in interactive mode to see the current session file, session ID, message count, tokens, and cost.
@@ -36,7 +36,7 @@ For the JSONL file format and SessionManager API, see [Session Format](session-f
 
 ## Resuming and Deleting Sessions
 
-`/resume` opens an interactive session picker for the current project. `pi -r` opens the same picker at startup.
+`/resume` opens an interactive session picker for the current project. `hamr -r` opens the same picker at startup.
 
 In the picker you can:
 
@@ -47,7 +47,7 @@ In the picker you can:
 - rename with Ctrl+R
 - delete with Ctrl+D, then confirm
 
-When available, pi uses the `trash` CLI for deletion instead of permanently removing files.
+When available, hamr uses the `trash` CLI for deletion instead of permanently removing files.
 
 ## Naming Sessions
 
@@ -60,11 +60,11 @@ Use `/name <name>` to set a human-readable session name:
 Set the name at startup with `--name` or `-n`:
 
 ```bash
-pi --name "Refactor auth module"
-pi --name "CI audit" -p "Review this build failure"
+hamr --name "Refactor auth module"
+hamr --name "CI audit" -p "Review this build failure"
 ```
 
-Named sessions are easier to find in `/resume` and `pi -r`.
+Named sessions are easier to find in `/resume` and `hamr -r`.
 
 ## Branching with `/tree`
 
@@ -128,7 +128,7 @@ Use `/tree` when you want to keep alternatives together. Use `/fork` or `/clone`
 
 ## Branch Summaries
 
-When `/tree` switches away from one branch to another, pi can summarize the abandoned branch and attach that summary at the new position. This preserves important context from the path you left without replaying the whole branch.
+When `/tree` switches away from one branch to another, hamr can summarize the abandoned branch and attach that summary at the new position. This preserves important context from the path you left without replaying the whole branch.
 
 When prompted, choose one of:
 

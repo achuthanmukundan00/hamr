@@ -4,6 +4,7 @@ import type { AgentTool } from "@hamr/agent";
 import { Container, Text, truncateToWidth } from "@hamr/tui";
 import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
+import { createDiffComponent, looksLikeUnifiedDiff } from "../../modes/interactive/components/diff.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { truncateToVisualLines } from "../../modes/interactive/components/visual-truncate.ts";
 import { theme } from "../../modes/interactive/theme/theme.ts";
@@ -180,8 +181,12 @@ function formatBashCall(args: { command?: string; timeout?: number } | undefined
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
 	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
-	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
-	return theme.fg("toolTitle", theme.bold(`$ ${commandDisplay}`)) + timeoutSuffix;
+	// Only the glyph is bold — the command itself stays at normal weight so the
+	// visual hierarchy reads "tool" first, then its arguments.
+	const glyph = theme.bold(theme.fg("toolTitle", "$"));
+	const commandDisplay =
+		command === null ? invalidArgText(theme) : command ? theme.fg("toolTitle", command) : theme.fg("toolOutput", "...");
+	return `${glyph} ${commandDisplay}${timeoutSuffix}`;
 }
 
 function rebuildBashResultRenderComponent(
@@ -194,6 +199,7 @@ function rebuildBashResultRenderComponent(
 	showImages: boolean,
 	startedAt: number | undefined,
 	endedAt: number | undefined,
+	surroundBg: "toolSuccessBg" | "toolErrorBg" | undefined,
 ): void {
 	const state = component.state;
 	component.clear();
@@ -208,7 +214,25 @@ function rebuildBashResultRenderComponent(
 		}
 	}
 
-	if (output) {
+	// Git diffs (and any unified diff) reuse the same renderer as file edits:
+	// syntax-highlighted code on a neutral base, with green/red background bands.
+	if (output && !options.isPartial && looksLikeUnifiedDiff(output)) {
+		const diff = createDiffComponent(output, { unified: true, surroundBg });
+		component.addChild({
+			render: (width: number) => {
+				const allLines = diff.render(width);
+				if (options.expanded || allLines.length <= BASH_PREVIEW_LINES) {
+					return ["", ...allLines];
+				}
+				const skipped = allLines.length - BASH_PREVIEW_LINES;
+				const hint =
+					theme.fg("muted", `... (${skipped} earlier lines,`) +
+					` ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+				return ["", truncateToWidth(hint, width, "..."), ...allLines.slice(skipped)];
+			},
+			invalidate: () => diff.invalidate?.(),
+		});
+	} else if (output) {
 		const styledOutput = output
 			.split("\n")
 			.map((line) => theme.fg("toolOutput", line))
@@ -288,7 +312,7 @@ export function createBashToolDefinition(
 		) {
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
-			const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
+			const output = new OutputAccumulator({ tempFilePrefix: "hamr-bash" });
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
 			let updateDirty = false;
@@ -429,6 +453,13 @@ export function createBashToolDefinition(
 			}
 			const component =
 				(context.lastComponent as BashResultRenderComponent | undefined) ?? new BashResultRenderComponent();
+			// Match the card surface tool-execution paints behind a settled result,
+			// so diff bands restore it instead of the terminal default on padding.
+			const surroundBg = theme.cards.shadedSurfaces
+				? context.isError
+					? ("toolErrorBg" as const)
+					: ("toolSuccessBg" as const)
+				: undefined;
 			rebuildBashResultRenderComponent(
 				component,
 				result as any,
@@ -436,6 +467,7 @@ export function createBashToolDefinition(
 				context.showImages,
 				state.startedAt,
 				state.endedAt,
+				surroundBg,
 			);
 			component.invalidate();
 			return component;

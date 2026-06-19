@@ -18,7 +18,10 @@ function clearColdStartTimer(): void {
 /** Condense a raw turn-error message (which may be a 502 HTML page) to one line. */
 function summarizeTurnError(raw: string | undefined): string {
 	if (!raw) return "unknown error";
-	const stripped = raw.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+	const stripped = raw
+		.replace(/<[^>]*>/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
 	const text = stripped || raw.trim();
 	return text.length > 200 ? `${text.slice(0, 197)}…` : text;
 }

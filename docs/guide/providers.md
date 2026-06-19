@@ -63,7 +63,7 @@ api_key_env = "OPENROUTER_API_KEY"
 context_window = 64000
 
 [provider.headers]
-HTTP-Referer = "https://github.com/skaft/hamr"
+HTTP-Referer = "https://github.com/skaft-software/hamr"
 X-Title = "Hamr"
 ```
 
@@ -159,7 +159,7 @@ at the bottom of the screen: `Spend: $0.004`. Local providers show
 
 ```toml
 [provider.headers]
-"HTTP-Referer" = "https://github.com/skaft/hamr"
+"HTTP-Referer" = "https://github.com/skaft-software/hamr"
 "X-Title" = "Hamr"
 "X-Custom" = "value"
 ```

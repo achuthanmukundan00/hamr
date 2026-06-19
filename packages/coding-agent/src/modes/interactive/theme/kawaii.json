@@ -2,6 +2,22 @@
 	"$schema": "./theme-schema.json",
 	"name": "kawaii",
 	"modelAdaptive": false,
+	"cards": {
+		"showHeadings": true,
+		"headingGlyph": "",
+		"promptLabel": "PROMPT",
+		"responseLabel": "RESPONSE",
+		"thoughtLabel": "THOUGHT",
+		"headingIndent": 1,
+		"bodyIndent": 3,
+		"toolIndent": 2,
+		"cardPadX": 1,
+		"cardPadY": 1,
+		"shadedSurfaces": true,
+		"thinkingShaded": true,
+		"gaplessCards": true,
+		"showThoughtHeading": false
+	},
 	"vars": {
 		"babyPink": "#ffd1dc",
 		"hotPink": "#ff69b4",
@@ -19,19 +35,19 @@
 		"pinkBrown": "#a06070",
 
 		"pageBg": "#fff5f7",
-		"cardBg": "#fce8ee",
-		"surfaceBg": "#fce0e8",
-		"selectedBg": "#f5ccd8",
+		"cardBg": "#f8e9ee",
+		"surfaceBg": "#f4dde5",
+		"selectedBg": "#ebc7d4",
 
-		"userMsgBg": "#ffe0ea",
-		"toolPendingBg": "#f5e0ea",
-		"toolSuccessBg": "#e5f2e5",
-		"toolErrorBg": "#fce0e0",
+		"userMsgBg": "#fbe3ea",
+		"toolPendingBg": "#f4e2ea",
+		"toolSuccessBg": "#e6f0e8",
+		"toolErrorBg": "#f7e0e2",
 
-		"text": "#6b3a4a",
-		"muted": "#b08090",
-		"dim": "#c8a8b0",
-		"darkGray": "#d0b0b8"
+		"text": "#5f3545",
+		"muted": "#9d6f7f",
+		"dim": "#b795a1",
+		"darkGray": "#ccb0b8"
 	},
 	"colors": {
 		"accent": "hotPink",

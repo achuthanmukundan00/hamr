@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { ThinkingLevel } from "@hamr/agent";
 import type { Model } from "@hamr/ai";
-import { getAgentDir } from "../config.ts";
+import { getAgentDir, getPackageDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
@@ -142,11 +142,19 @@ export async function createAgentSessionServices(
 	const authStorage = options.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, join(agentDir, "models.json"));
+	const resourceLoaderOptions = options.resourceLoaderOptions ?? {};
+	const bundledSkillPaths = resourceLoaderOptions.noSkills ? [] : [join(getPackageDir(), "skills")];
+	const bundledPromptTemplatePaths = resourceLoaderOptions.noPromptTemplates ? [] : [join(getPackageDir(), "prompts")];
 	const resourceLoader = new DefaultResourceLoader({
-		...(options.resourceLoaderOptions ?? {}),
+		...resourceLoaderOptions,
 		cwd,
 		agentDir,
 		settingsManager,
+		additionalSkillPaths: [...(resourceLoaderOptions.additionalSkillPaths ?? []), ...bundledSkillPaths],
+		additionalPromptTemplatePaths: [
+			...(resourceLoaderOptions.additionalPromptTemplatePaths ?? []),
+			...bundledPromptTemplatePaths,
+		],
 	});
 	await resourceLoader.reload(options.resourceLoaderReloadOptions);
 

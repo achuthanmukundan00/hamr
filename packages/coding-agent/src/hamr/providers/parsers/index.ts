@@ -84,7 +84,7 @@ export function ensureParsersRegistered(): void {
 
 // ─── Re-exports ───────────────────────────────────────────
 
-export { getToolCallParserRegistry, toolCallParserRegistry } from "./registry.ts";
+export { toolCallParserRegistry } from "./registry.ts";
 export type {
 	ParsedToolCall,
 	ToolCallParseResult,

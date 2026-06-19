@@ -319,7 +319,7 @@ export function getSelfUpdateUnavailableInstruction(
 ): string {
 	const method = detectInstallMethod();
 	if (method === "bun-binary") {
-		return `Download from: https://github.com/skaft/hamr/releases/latest`;
+		return `Download from: https://github.com/skaft-software/hamr/releases/latest`;
 	}
 	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageName, npmCommand);
 	if (command) {
@@ -456,6 +456,11 @@ export function getBundledInteractiveAssetPath(name: string): string {
 interface PackageJson {
 	name?: string;
 	version?: string;
+	hamrConfig?: {
+		name?: string;
+		configDir?: string;
+	};
+	/** Legacy alias for hamrConfig; read as a fallback for Pi-era package manifests. */
 	piConfig?: {
 		name?: string;
 		configDir?: string;
@@ -470,11 +475,12 @@ try {
 	if (err.code !== "ENOENT") throw e;
 }
 
-const piConfigName: string | undefined = pkg.piConfig?.name;
+const appConfig = pkg.hamrConfig ?? pkg.piConfig;
+const appConfigName: string | undefined = appConfig?.name;
 export const PACKAGE_NAME: string = pkg.name || "@hamr/coding-agent";
-export const APP_NAME: string = piConfigName || "hamr";
-export const APP_TITLE: string = piConfigName ? APP_NAME : "hamr";
-export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".hamr";
+export const APP_NAME: string = appConfigName || "hamr";
+export const APP_TITLE: string = appConfigName ? APP_NAME : "hamr";
+export const CONFIG_DIR_NAME: string = appConfig?.configDir || ".hamr";
 export const VERSION: string = pkg.version || "0.0.0";
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR

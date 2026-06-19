@@ -1,6 +1,24 @@
 {
-	"$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+	"$schema": "https://raw.githubusercontent.com/skaft-software/hamr/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
 	"name": "dark",
+	"modelAdaptive": false,
+	"cards": {
+		"showHeadings": true,
+		"headingGlyph": "model",
+		"promptLabel": "PROMPT",
+		"responseLabel": "RESPONSE",
+		"thoughtLabel": "THOUGHT",
+		"headingIndent": 1,
+		"bodyIndent": 3,
+		"toolIndent": 2,
+		"toolResultIndent": 4,
+		"cardPadX": 1,
+		"cardPadY": 1,
+		"shadedSurfaces": false,
+		"thinkingShaded": false,
+		"gaplessCards": false,
+		"showThoughtHeading": true
+	},
 	"vars": {
 		"cyan": "#00d7ff",
 		"blue": "#5f87ff",

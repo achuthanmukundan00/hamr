@@ -14,7 +14,8 @@ export default defineConfig({
       { text: 'Parsers', link: '/guide/tool-call-parsing' },
       { text: 'Providers', link: '/guide/providers' },
       { text: 'Relay', link: '/guide/relay' },
-      { text: 'GitHub', link: 'https://github.com/skaft/hamr' },
+      { text: 'Fork', link: '/guide/fork-lineage' },
+      { text: 'GitHub', link: 'https://github.com/skaft-software/hamr' },
     ],
     sidebar: [
       {
@@ -49,6 +50,7 @@ export default defineConfig({
         items: [
           { text: 'Architecture', link: '/guide/architecture' },
           { text: 'Runtime Architecture', link: '/architecture/runtime' },
+          { text: 'Fork Lineage', link: '/guide/fork-lineage' },
           { text: 'SDK API', link: '/guide/sdk-api' },
           { text: 'Embedding Hamr', link: '/guide/consuming-hamr' },
           { text: 'Extensions & MCP', link: '/guide/extensions' },
@@ -58,7 +60,7 @@ export default defineConfig({
       },
     ],
     search: { provider: 'local' },
-    socialLinks: [{ icon: 'github', link: 'https://github.com/skaft/hamr' }],
+    socialLinks: [{ icon: 'github', link: 'https://github.com/skaft-software/hamr' }],
     footer: {
       message: 'Skaft Software · MIT License',
       copyright: '© 2026 Skaft Software',

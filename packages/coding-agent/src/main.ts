@@ -511,7 +511,7 @@ export async function main(args: string[], options?: MainOptions) {
 		if (process.platform === "win32" && exitCode === 0 && args[0] === "update") {
 			// We normally prefer process.exit(0) for package commands so bad extensions cannot keep
 			// one-shot commands alive. On Windows, Node can assert after fetch() if process.exit(0)
-			// runs during teardown; let successful `pi update` drain naturally instead.
+			// runs during teardown; let successful `hamr update` drain naturally instead.
 			// https://github.com/nodejs/node/issues/56645
 			return;
 		}
@@ -705,6 +705,8 @@ export async function main(args: string[], options?: MainOptions) {
 			})),
 		];
 
+		const existingSession = sessionManager.buildSessionContext();
+		const hasExistingSession = existingSession.messages.length > 0;
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
 		const scopedModels =
 			modelPatterns && modelPatterns.length > 0 ? await resolveModelScope(modelPatterns, modelRegistry) : [];
@@ -712,23 +714,16 @@ export async function main(args: string[], options?: MainOptions) {
 			options: sessionOptions,
 			cliThinkingFromModel,
 			diagnostics: sessionOptionDiagnostics,
-		} = buildSessionOptions(
-			parsed,
-			scopedModels,
-			sessionManager.buildSessionContext().messages.length > 0,
-			modelRegistry,
-			settingsManager,
-		);
+		} = buildSessionOptions(parsed, scopedModels, hasExistingSession, modelRegistry, settingsManager);
 		diagnostics.push(...sessionOptionDiagnostics);
-		if (
-			!sessionOptions.model &&
-			scopedModels.length === 0 &&
-			sessionManager.buildSessionContext().messages.length === 0
-		) {
+		if (!sessionOptions.model && scopedModels.length === 0 && !hasExistingSession) {
 			const hamrDefault = getHamrDefaultModel(loadHamrStartupConfig(cwd), modelRegistry);
 			if (hamrDefault) {
-				sessionOptions.model = hamrDefault.model;
-				if (!parsed.thinking && hamrDefault.thinkingLevel) {
+				// Keep settings.json authoritative: only use .hamr.toml when there is no saved model.
+				if (settingsManager.getDefaultModel() === undefined) {
+					sessionOptions.model = hamrDefault.model;
+				}
+				if (!parsed.thinking && settingsManager.getDefaultThinkingLevel() === undefined && hamrDefault.thinkingLevel) {
 					sessionOptions.thinkingLevel = hamrDefault.thinkingLevel;
 				}
 			}

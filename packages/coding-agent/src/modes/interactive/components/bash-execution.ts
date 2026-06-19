@@ -28,6 +28,7 @@ export class BashExecutionComponent extends Container {
 	private fullOutputPath?: string;
 	private expanded = false;
 	private contentContainer: Container;
+	private leadingSpacer: Spacer;
 
 	constructor(command: string, ui: TUI, excludeFromContext = false) {
 		super();
@@ -37,8 +38,9 @@ export class BashExecutionComponent extends Container {
 		const colorKey = excludeFromContext ? "dim" : "bashMode";
 		const borderColor = (str: string) => theme.fg(colorKey, str);
 
-		// Add spacer
-		this.addChild(new Spacer(1));
+		// Keep the bash block flush in gapless themes.
+		this.leadingSpacer = new Spacer(theme.cards.gaplessCards ? 0 : 1);
+		this.addChild(this.leadingSpacer);
 
 		// Top border
 		this.addChild(new DynamicBorder(borderColor));
@@ -118,6 +120,8 @@ export class BashExecutionComponent extends Container {
 	}
 
 	private updateDisplay(): void {
+		this.leadingSpacer.setLines(theme.cards.gaplessCards ? 0 : 1);
+
 		// Apply truncation for LLM context limits (same limits as bash tool)
 		const fullOutput = this.outputLines.join("\n");
 		const contextTruncation = truncateTail(fullOutput, {

@@ -8,8 +8,9 @@ import { theme } from "../theme/theme.ts";
 export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
+	modelGlyph?: string;
+	modelAccent?: string;
 }
-
 
 export class ToolExecutionComponent extends Container {
 	private contentBox: Box;
@@ -68,8 +69,9 @@ export class ToolExecutionComponent extends Container {
 		// cards' content margin (PROMPT/RESPONSE headings). Self-rendering tools
 		// get the same indent applied in render().
 		const toolIndent = theme.cards.toolIndent;
-		this.contentBox = new Box(toolIndent, 1, (text: string) => theme.bg("toolPendingBg", text));
-		this.contentText = new Text("", toolIndent, 1, (text: string) => theme.bg("toolPendingBg", text));
+		const pendingBgFn = theme.cards.shadedSurfaces ? (text: string) => theme.bg("toolPendingBg", text) : undefined;
+		this.contentBox = new Box(toolIndent, 1, pendingBgFn);
+		this.contentText = new Text("", toolIndent, 1, pendingBgFn);
 		this.selfRenderContainer = new Container();
 
 		if (this.hasRendererDefinition()) {
@@ -144,7 +146,7 @@ export class ToolExecutionComponent extends Container {
 		if (!output) {
 			return undefined;
 		}
-		return new Text(theme.fg("toolOutput", output), 0, 0);
+		return new Text(theme.fg("toolOutput", output), theme.cards.toolResultIndent, 0);
 	}
 
 	updateArgs(args: any): void {
@@ -221,18 +223,19 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	private getCardPaddingY(): number {
+		return theme.cards.gaplessCards ? 0 : theme.cards.cardPadY;
+	}
+
 	override render(width: number): string[] {
 		if (this.hideComponent) {
 			return [];
 		}
 
 		if (this.hasRendererDefinition() && this.getRenderShell() === "self") {
-			// Self-rendering tools (search_memory, read, image view, diffs, …) draw
-			// their own framing, so they bypass the padded contentBox. Indent their
-			// output here so every tool obeys the same content margin as the cards.
-			const toolIndent = theme.cards.toolIndent;
-			const innerWidth = Math.max(1, width - toolIndent);
-			const pad = " ".repeat(toolIndent);
+			// Self-rendering tools draw their own framing. Keep this wrapper flush
+			// so shaded surfaces start at the same column as the rest of the card.
+			const innerWidth = width;
 			const contentLines = this.selfRenderContainer.render(innerWidth);
 			if (contentLines.length === 0 && this.imageComponents.length === 0) {
 				return [];
@@ -240,17 +243,19 @@ export class ToolExecutionComponent extends Container {
 
 			const lines: string[] = [];
 			if (contentLines.length > 0) {
-				lines.push("");
-				lines.push(...contentLines.map((line) => (line.length > 0 ? pad + line : line)));
+				if (!theme.cards.gaplessCards) {
+					lines.push("");
+				}
+				lines.push(...contentLines);
 			}
 			for (let i = 0; i < this.imageComponents.length; i++) {
 				const spacer = this.imageSpacers[i];
 				if (spacer) {
-					lines.push(...spacer.render(innerWidth).map((line) => (line.length > 0 ? pad + line : line)));
+					lines.push(...spacer.render(innerWidth));
 				}
 				const imageComponent = this.imageComponents[i];
 				if (imageComponent) {
-					lines.push(...imageComponent.render(innerWidth).map((line) => (line.length > 0 ? pad + line : line)));
+					lines.push(...imageComponent.render(innerWidth));
 				}
 			}
 			return lines;
@@ -260,11 +265,14 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private updateDisplay(): void {
-		const bgFn = this.isPartial
-			? (text: string) => theme.bg("toolPendingBg", text)
-			: this.result?.isError
-				? (text: string) => theme.bg("toolErrorBg", text)
-				: (text: string) => theme.bg("toolSuccessBg", text);
+		const bgFn = !theme.cards.shadedSurfaces
+			? undefined
+			: this.isPartial
+				? (text: string) => theme.bg("toolPendingBg", text)
+				: this.result?.isError
+					? (text: string) => theme.bg("toolErrorBg", text)
+					: (text: string) => theme.bg("toolSuccessBg", text);
+		const cardPaddingY = this.getCardPaddingY();
 
 		let hasContent = false;
 		this.hideComponent = false;
@@ -272,6 +280,7 @@ export class ToolExecutionComponent extends Container {
 			const renderContainer = this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox;
 			if (renderContainer instanceof Box) {
 				renderContainer.setBgFn(bgFn);
+				renderContainer.setPaddingY(cardPaddingY);
 			}
 			renderContainer.clear();
 
@@ -323,6 +332,7 @@ export class ToolExecutionComponent extends Container {
 			}
 		} else {
 			this.contentText.setCustomBgFn(bgFn);
+			this.contentText.setPaddingY(cardPaddingY);
 			this.contentText.setText(this.formatToolExecution());
 			hasContent = true;
 		}

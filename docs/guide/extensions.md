@@ -397,6 +397,6 @@ The example demonstrates:
 - [Architecture](/guide/architecture) — module relationships and data flow
 - [Skills](/guide/skills) — SKILL.md format and discovery
 - [MCP](/guide/mcp) — MCP bridge details
-- [Source: EventBus](https://github.com/skaft/hamr/blob/main/src/events/EventBus.ts)
-- [Source: extensions/interfaces.ts](https://github.com/skaft/hamr/blob/main/src/extensions/interfaces.ts)
-- [Source: extensions/builtins.ts](https://github.com/skaft/hamr/blob/main/src/extensions/builtins.ts)
+- [Source: EventBus](https://github.com/skaft-software/hamr/blob/main/packages/coding-agent/src/core/event-bus.ts)
+- [Source: extensions/interfaces.ts](https://github.com/skaft-software/hamr/blob/main/packages/coding-agent/src/core/extensions/types.ts)
+- [Source: extensions/builtins.ts](https://github.com/skaft-software/hamr/blob/main/packages/coding-agent/src/core/extensions/index.ts)

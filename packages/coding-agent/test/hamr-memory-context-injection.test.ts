@@ -1,0 +1,119 @@
+import type { AssistantMessage } from "@hamr/ai";
+import { describe, expect, it } from "vitest";
+import { buildMemoryContextMessage, selectCompactionPolicy } from "../src/hamr/extensions/memory.ts";
+import { buildAssistantMemoryContent, sanitizeMemoryTranscriptText } from "../src/hamr/memory.ts";
+
+describe("hamr memory context injection", () => {
+	it("returns null when there are no auto-retrieved results", () => {
+		expect(buildMemoryContextMessage([], "[Memory: 5 entries across 2 turns]")).toBeNull();
+	});
+
+	it("returns a user message containing the auto-results and index when results exist", () => {
+		const results = ["// Search 'error': 1 result", "//   turn 2 assistant: fixed the error"];
+		const index = "[Memory: 5 entries across 2 turns]";
+		const message = buildMemoryContextMessage(results, index);
+		expect(message).not.toBeNull();
+		expect(message?.role).toBe("user");
+		expect(message?.content).toContain("Auto-retrieved context from prior sessions");
+		expect(message?.content).toContain("fixed the error");
+		expect(message?.content).toContain(index);
+	});
+
+	it("includes a timestamp in the returned message", () => {
+		const before = Date.now();
+		const message = buildMemoryContextMessage(["result"], "[Memory: 1 entry]");
+		const after = Date.now();
+		expect(message?.timestamp).toBeGreaterThanOrEqual(before);
+		expect(message?.timestamp).toBeLessThanOrEqual(after);
+	});
+
+	it("injects a survival manifest even when there are no auto-results", () => {
+		const message = buildMemoryContextMessage([], "[Memory: 3 entries]", {
+			survivalManifest: "## Survival manifest\nTask: finish the feature",
+		});
+		expect(message).not.toBeNull();
+		expect(message?.content).toContain("Survival manifest");
+		expect(message?.content).toContain("finish the feature");
+	});
+
+	it("places the survival manifest before generic auto-retrieved results", () => {
+		const message = buildMemoryContextMessage(["// Search 'x': 1 result"], "[Memory: 3 entries]", {
+			survivalManifest: "## Survival manifest\nTask: finish the feature",
+		});
+		const manifestIndex = message?.content.indexOf("Survival manifest") ?? -1;
+		const autoIndex = message?.content.indexOf("Auto-retrieved context") ?? -1;
+		expect(manifestIndex).toBeGreaterThanOrEqual(0);
+		expect(autoIndex).toBeGreaterThan(manifestIndex);
+	});
+
+	it("selects conservative retrieval for 16k local models", () => {
+		const policy = selectCompactionPolicy({ cloud: false, contextWindow: 16_384 });
+		expect(policy.tier).toBe("local-16k");
+		expect(policy.searchTermLimit).toBe(3);
+		expect(policy.resultsPerTerm).toBe(1);
+		expect(policy.keyLimit).toBe(16);
+	});
+
+	it("selects targeted retrieval for 32k local models", () => {
+		const policy = selectCompactionPolicy({ cloud: false, contextWindow: 32_768 });
+		expect(policy.tier).toBe("local-32k");
+		expect(policy.searchTermLimit).toBe(4);
+		expect(policy.resultsPerTerm).toBe(2);
+	});
+
+	it("selects broader recovery for 131k local models", () => {
+		const policy = selectCompactionPolicy({ cloud: false, contextWindow: 131_072 });
+		expect(policy.tier).toBe("local-131k");
+		expect(policy.searchTermLimit).toBe(6);
+		expect(policy.resultsPerTerm).toBe(3);
+	});
+
+	it("keeps cloud providers on pi default compaction", () => {
+		const policy = selectCompactionPolicy({ cloud: true, contextWindow: 200_000 });
+		expect(policy.tier).toBe("cloud");
+		expect(policy.instructions).toContain("pi's default LLM compaction");
+	});
+
+	it("serializes assistant tool calls into memory content", () => {
+		const message = {
+			role: "assistant",
+			content: [
+				{ type: "text", text: "I will inspect the memory code." },
+				{ type: "toolCall", id: "t1", name: "read", arguments: { file_path: "src/hamr/memory.ts" } },
+				{ type: "toolCall", id: "t2", name: "bash", arguments: { command: "npm test" } },
+			],
+			timestamp: 0,
+		} as AssistantMessage;
+
+		const content = buildAssistantMemoryContent(message);
+		expect(content).toContain("I will inspect the memory code.");
+		expect(content).toContain("tool_call read");
+		expect(content).toContain("src/hamr/memory.ts");
+		expect(content).toContain("npm test");
+	});
+
+	it("strips raw XML tool-call markup from assistant memory text", () => {
+		const message = {
+			role: "assistant",
+			content: [
+				{
+					type: "text",
+					text: "<tool_call>\n<function=bash>\n<parameter=command>git status --short</parameter>\n</function>\n</tool_call>",
+				},
+				{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "git status --short" } },
+			],
+			timestamp: 0,
+		} as AssistantMessage;
+
+		const content = buildAssistantMemoryContent(message);
+		expect(content).not.toContain("<tool_call>");
+		expect(content).not.toContain("<function=");
+		expect(content).not.toContain("<parameter=");
+		expect(content).toContain("tool_call bash");
+		expect(content).toContain("git status --short");
+	});
+
+	it("removes FTS mark tags from memory snippets", () => {
+		expect(sanitizeMemoryTranscriptText("hello <mark>world</mark>")).toBe("hello world");
+	});
+});

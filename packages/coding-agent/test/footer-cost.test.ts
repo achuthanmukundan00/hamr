@@ -14,7 +14,11 @@ describe("footer cost formatting", () => {
 		expect(formatCostPart(1.2, 5, true)).toBe("$1.200 (sub)");
 	});
 
-	it("omits the cost entirely for zero-priced (relay/local) models", () => {
-		expect(formatCostPart(0.5, 0, false)).toBeUndefined();
+	it("omits the cost entirely for zero-priced (relay/local) models with no accumulated cost", () => {
+		expect(formatCostPart(0, 0, false)).toBeUndefined();
+	});
+
+	it("shows accumulated cost even for zero-priced models when spend exists", () => {
+		expect(formatCostPart(0.5, 0, false)).toBe("$0.500");
 	});
 });

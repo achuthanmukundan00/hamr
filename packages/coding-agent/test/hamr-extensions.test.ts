@@ -6,7 +6,7 @@ describe("hamr default extensions composition", () => {
 		// Importing the composition resolves all factory modules; an import cycle
 		// or a broken factory wiring would throw here.
 		expect(Array.isArray(hamrDefaultExtensions)).toBe(true);
-		expect(hamrDefaultExtensions.length).toBe(4);
+		expect(hamrDefaultExtensions.length).toBe(5);
 		for (const factory of hamrDefaultExtensions) {
 			expect(typeof factory).toBe("function");
 		}

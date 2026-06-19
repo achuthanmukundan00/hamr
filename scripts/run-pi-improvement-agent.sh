@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-pi-improvement-agent.sh — Invoke Pi (DeepSeek) as the improvement agent.
+# run-pi-improvement-agent.sh — Invoke Hamr (DeepSeek) as the improvement agent.
 #
 # Reads benchmark artifacts, identifies one product-level issue, applies exactly
 # one minimal patch to Hamr source, runs verification, writes a report, exits.
@@ -21,7 +21,7 @@
 #   PI_AUTO_RESEARCH_MODEL            Model (default: deepseek-v4-pro:high)
 #   PI_AUTO_RESEARCH_TOOLS            Tool allowlist (default: read,bash,edit,write,grep,find,ls)
 #   PI_AUTO_RESEARCH_TIMEOUT_SECONDS  Timeout seconds (default: 900)
-#   PI_AUTO_RESEARCH_EXTRA_ARGS       Extra args passed to pi
+#   PI_AUTO_RESEARCH_EXTRA_ARGS       Extra args passed to hamr
 #   AUTO_RESEARCH_ITERATION           Current iteration number
 #   AUTO_RESEARCH_CURRENT_HEAD        Current git HEAD
 #   AUTO_RESEARCH_REPO_ROOT           Repository root path
@@ -57,10 +57,10 @@ PI_TIMEOUT="${PI_AUTO_RESEARCH_TIMEOUT_SECONDS:-900}"
 PI_EXTRA_ARGS="${PI_AUTO_RESEARCH_EXTRA_ARGS:-}"
 ITERATION="${AUTO_RESEARCH_ITERATION:-?}"
 
-# ─── Check pi is available ───────────────────────────────────
-if ! command -v pi &>/dev/null; then
-  echo "ERROR: 'pi' command not found in PATH." >&2
-  echo "Install pi: npm install -g @earendil-works/pi-coding-agent" >&2
+# ─── Check hamr is available ───────────────────────────────────
+if ! command -v hamr &>/dev/null; then
+  echo "ERROR: 'hamr' command not found in PATH." >&2
+  echo "Install hamr: npm install -g @hamr/coding-agent" >&2
   exit 1
 fi
 
@@ -92,11 +92,11 @@ AGENT_PROMPT_FILE="$ITER_DIR/pi-agent-prompt.md"
 cat > "$AGENT_PROMPT_FILE" <<'PROMPT_HEADER'
 # Auto-Research Improvement Agent — Loop Context
 
-You are Pi, powered by DeepSeek. You are the **improvement agent** in the
+You are Hamr, powered by DeepSeek. You are the **improvement agent** in the
 Hamr auto-research loop.
 
 **Hamr** (running Gemma via Relay) is the **benchmark subject**.
-You are NOT Hamr. You are Pi. You should NOT use Hamr to modify itself.
+You are NOT Hamr. You should NOT use Hamr to modify itself.
 
 ## Loop State
 
@@ -143,11 +143,11 @@ PROMPT_MIDDLE
 # Append the base improvement prompt
 cat "$BASE_PROMPT_FILE" >> "$AGENT_PROMPT_FILE"
 
-echo "[pi-agent] Prompt written to: $AGENT_PROMPT_FILE"
+echo "[hamr-agent] Prompt written to: $AGENT_PROMPT_FILE"
 
-# ─── Build pi command ────────────────────────────────────────
-PI_CMD=(
-  pi
+# ─── Build hamr command ────────────────────────────────────────
+HAMR_CMD=(
+  hamr
   -p
   --no-session
   --provider "$PI_PROVIDER"
@@ -159,27 +159,27 @@ PI_CMD=(
 if [ -n "$PI_EXTRA_ARGS" ]; then
   # Word-split extra args carefully
   IFS=' ' read -ra EXTRA <<< "$PI_EXTRA_ARGS"
-  PI_CMD+=("${EXTRA[@]}")
+  HAMR_CMD+=("${EXTRA[@]}")
 fi
 
 # Pass the prompt file as the message
-PI_CMD+=("@$AGENT_PROMPT_FILE")
+HAMR_CMD+=("@$AGENT_PROMPT_FILE")
 
-echo "[pi-agent] Provider:  $PI_PROVIDER"
-echo "[pi-agent] Model:     $PI_MODEL"
-echo "[pi-agent] Tools:     $PI_TOOLS"
-echo "[pi-agent] Timeout:   ${PI_TIMEOUT}s"
-echo "[pi-agent] Iteration: $ITERATION"
-echo "[pi-agent] Running from: $REPO_ROOT"
+echo "[hamr-agent] Provider:  $PI_PROVIDER"
+echo "[hamr-agent] Model:     $PI_MODEL"
+echo "[hamr-agent] Tools:     $PI_TOOLS"
+echo "[hamr-agent] Timeout:   ${PI_TIMEOUT}s"
+echo "[hamr-agent] Iteration: $ITERATION"
+echo "[hamr-agent] Running from: $REPO_ROOT"
 
-# ─── Run pi with timeout ─────────────────────────────────────
-PI_OUTPUT_FILE="$ITER_DIR/pi-agent-output.txt"
+# ─── Run hamr with timeout ─────────────────────────────────────
+PI_OUTPUT_FILE="$ITER_DIR/hamr-agent-output.txt"
 START_EPOCH=$(date +%s)
 PI_EXIT=0
 
 cd "$REPO_ROOT"
 
-bash "$TIMEOUT_WRAPPER" "$PI_TIMEOUT" "${PI_CMD[@]}" \
+bash "$TIMEOUT_WRAPPER" "$PI_TIMEOUT" "${HAMR_CMD[@]}" \
   > "$PI_OUTPUT_FILE" 2>&1 || PI_EXIT=$?
 
 END_EPOCH=$(date +%s)
@@ -189,17 +189,17 @@ PI_DURATION=$((END_EPOCH - START_EPOCH))
 TIMED_OUT=false
 if [ "$PI_EXIT" -eq 124 ]; then
   TIMED_OUT=true
-  echo "[pi-agent] TIMED OUT after ${PI_DURATION}s (limit: ${PI_TIMEOUT}s)" | tee -a "$PI_OUTPUT_FILE"
+  echo "[hamr-agent] TIMED OUT after ${PI_DURATION}s (limit: ${PI_TIMEOUT}s)" | tee -a "$PI_OUTPUT_FILE"
 elif [ "$PI_EXIT" -ne 0 ]; then
-  echo "[pi-agent] Exited with code $PI_EXIT after ${PI_DURATION}s" | tee -a "$PI_OUTPUT_FILE"
+  echo "[hamr-agent] Exited with code $PI_EXIT after ${PI_DURATION}s" | tee -a "$PI_OUTPUT_FILE"
 else
-  echo "[pi-agent] Completed successfully in ${PI_DURATION}s" | tee -a "$PI_OUTPUT_FILE"
+  echo "[hamr-agent] Completed successfully in ${PI_DURATION}s" | tee -a "$PI_OUTPUT_FILE"
 fi
 
 # ─── Write agent result metadata ──────────────────────────────
 cat > "$ITER_DIR/agent-result.json" <<METAEOF
 {
-  "agent": "pi",
+  "agent": "hamr",
   "provider": "$PI_PROVIDER",
   "model": "$PI_MODEL",
   "tools": "$PI_TOOLS",
@@ -213,14 +213,14 @@ cat > "$ITER_DIR/agent-result.json" <<METAEOF
 }
 METAEOF
 
-echo "[pi-agent] Agent metadata written to: $ITER_DIR/agent-result.json"
+echo "[hamr-agent] Agent metadata written to: $ITER_DIR/agent-result.json"
 
 # ─── Report whether agent-report.md was created ───────────────
 if [ -f "$ITER_DIR/agent-report.md" ]; then
-  echo "[pi-agent] Agent report found: $ITER_DIR/agent-report.md"
+  echo "[hamr-agent] Agent report found: $ITER_DIR/agent-report.md"
 else
-  echo "[pi-agent] No agent report found (Pi may not have written one)."
+  echo "[hamr-agent] No agent report found (hamr may not have written one)."
 fi
 
-# Exit with Pi's exit code so the loop can detect failures
+# Exit with hamr's exit code so the loop can detect failures
 exit $PI_EXIT

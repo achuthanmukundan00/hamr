@@ -41,11 +41,14 @@
 		"transport",
 		"state-management"
 	],
-	"author": "Mario Zechner",
+	"author": "Skaft",
+	"contributors": [
+		"Mario Zechner (original Pi author)"
+	],
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/skaft-software/hamr.git",
 		"directory": "packages/agent"
 	},
 	"engines": {

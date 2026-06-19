@@ -219,11 +219,10 @@ async function discoverRelayModels(
 		max_output_tokens: model.maxOutputTokens,
 		supports_thinking: model.supportsThinking,
 		thinking_levels: model.thinkingLevels as HamrThinkingLevel[],
-		// The relay advertises vision explicitly via a "multimodal" capability, so
-		// a model that doesn't advertise it is text-only. Default undefined → false
-		// here rather than letting modelToProviderModel's `?? true` fallback make
-		// every discovered model falsely claim image support.
-		supports_vision: model.supportsVision ?? false,
+		// Pass supportsVision through unmodified so that modelToProviderModel's
+		// `?? true` default applies consistently: undefined → vision-capable.
+		// Relays that explicitly advertise "text-only" get supportsVision=false.
+		supports_vision: model.supportsVision,
 	}));
 }
 
@@ -243,7 +242,8 @@ function mergeDiscoveredModel(configured: HamrModelConfig, discovered: HamrModel
 	return {
 		...discovered,
 		...configured,
-		display_name: configured.display_name ?? configured.displayName ?? discovered.display_name ?? discovered.displayName,
+		display_name:
+			configured.display_name ?? configured.displayName ?? discovered.display_name ?? discovered.displayName,
 		context_window: modelContextWindow(discovered) ?? modelContextWindow(configured),
 		max_output_tokens: modelMaxOutputTokens(discovered) ?? modelMaxOutputTokens(configured),
 		supports_vision: modelSupportsVision(configured) ?? modelSupportsVision(discovered),
@@ -296,6 +296,13 @@ async function resolveProviderModels(providerId: string, provider: HamrProviderC
 	return mergeProviderModels(configured, discovered);
 }
 
+function detectThinkingFormat(modelId: string): string | undefined {
+	const lower = modelId.toLowerCase();
+	if (/deepseek-?r1/.test(lower)) return "deepseek";
+	if (/\bqwen3\b/.test(lower) || /\bqwen3[.-]/.test(lower)) return "qwen";
+	return undefined;
+}
+
 function modelToProviderModel(
 	model: HamrModelConfig,
 	provider: HamrProviderConfig,
@@ -304,6 +311,7 @@ function modelToProviderModel(
 	const supportsVision = model.supports_vision ?? model.supportsVision ?? true;
 	const contextWindow = modelContextWindow(model) ?? 0;
 	const compatibility = provider.compatibility ?? "openai-compatible";
+	const thinkingFormat = detectThinkingFormat(model.id);
 	// Derive thinkingLevelMap from the actual levels advertised by the relay.
 	//
 	// Semantics of thinkingLevelMap (see packages/ai/src/types.ts): a *missing*
@@ -346,6 +354,7 @@ function modelToProviderModel(
 						supportsUsageInStreaming: false,
 						supportsStrictMode: false,
 						maxTokensField: "max_tokens",
+						...(thinkingFormat !== undefined ? { thinkingFormat } : {}),
 					}
 				: undefined,
 	};

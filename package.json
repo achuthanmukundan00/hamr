@@ -9,17 +9,23 @@
   "scripts": {
     "clean": "cd packages/tui && npm run clean && cd ../ai && npm run clean && cd ../agent && npm run clean && cd ../coding-agent && npm run clean",
     "build": "cd packages/tui && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
     "typecheck": "tsgo -p packages/tui/tsconfig.build.json && tsgo -p packages/ai/tsconfig.build.json && tsgo -p packages/agent/tsconfig.build.json && tsgo -p packages/coding-agent/tsconfig.build.json --noEmit",
-    "lint": "biome check .",
-    "lint:fix": "biome check --write .",
+    "lint": "biome check --write .",
     "test": "cd packages/tui && npm run test && cd ../ai && npm run test && cd ../agent && npm run test && cd ../coding-agent && npm run test",
     "verify": "npm run typecheck && npm run lint && npm run build && npm run test",
-    "hamr": "node packages/coding-agent/dist/cli.js"
+    "hamr": "node packages/coding-agent/dist/cli.js",
+    "release:build": "node scripts/build-release.mjs",
+    "release:verify": "bash scripts/verify-pack.sh",
+    "release": "npm run release:build && npm run release:verify"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
     "@types/node": "^22.0.0",
     "@typescript/native-preview": "^7.0.0-dev",
+    "vitepress": "^1.6.4",
     "shx": "0.4.0",
     "typescript": "^5.9.0"
   },

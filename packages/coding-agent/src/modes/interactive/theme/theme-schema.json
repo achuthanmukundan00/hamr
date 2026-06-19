@@ -1,7 +1,7 @@
 {
 	"$schema": "http://json-schema.org/draft-07/schema#",
-	"title": "Pi Coding Agent Theme",
-	"description": "Theme schema for Pi coding agent",
+	"title": "Hamr Coding Agent Theme",
+	"description": "Theme schema for Hamr coding agent",
 	"type": "object",
 	"required": ["name", "colors"],
 	"properties": {
@@ -40,7 +40,8 @@
 				"toolIndent": { "type": "number", "description": "Left indent for tool/bash output" },
 				"cardPadX": { "type": "number", "description": "Card horizontal padding (wins over layout.cardPadX)" },
 				"cardPadY": { "type": "number", "description": "Card vertical padding (wins over layout.cardPadY)" },
-				"thinkingShaded": { "type": "boolean", "description": "Whether the THOUGHT card uses the model-accent shaded background" },
+				"shadedSurfaces": { "type": "boolean", "description": "Whether message/tool cards paint full-width background surfaces" },
+				"thinkingShaded": { "type": "boolean", "description": "Whether the THOUGHT card uses the dedicated thinking background" },
 				"gaplessCards": { "type": "boolean", "description": "When true, no spacer is inserted between consecutive cards" }
 			},
 			"additionalProperties": false

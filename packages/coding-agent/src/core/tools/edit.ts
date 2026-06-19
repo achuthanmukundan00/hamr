@@ -1,10 +1,10 @@
 import type { AgentTool } from "@hamr/agent";
-import { Box, Container, Spacer, Text } from "@hamr/tui";
+import { Box, type Component, Container, Spacer, Text } from "@hamr/tui";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
 import { type Static, Type } from "typebox";
-import { renderDiff } from "../../modes/interactive/components/diff.ts";
-import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import { createDiffComponent } from "../../modes/interactive/components/diff.ts";
+import type { Theme, ThemeBg } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
 import {
 	applyEditsToNormalizedContent,
@@ -137,7 +137,7 @@ type EditToolResultLike = {
 	details?: EditToolDetails;
 };
 
-type EditCallRenderComponent = Box & {
+type EditCallRenderComponent = Container & {
 	preview?: EditPreview;
 	previewArgsKey?: string;
 	previewPending?: boolean;
@@ -145,7 +145,7 @@ type EditCallRenderComponent = Box & {
 };
 
 function createEditCallRenderComponent(): EditCallRenderComponent {
-	return Object.assign(new Box(1, 1, (text: string) => text), {
+	return Object.assign(new Container(), {
 		preview: undefined as EditPreview | undefined,
 		previewArgsKey: undefined as string | undefined,
 		previewPending: false,
@@ -154,7 +154,7 @@ function createEditCallRenderComponent(): EditCallRenderComponent {
 }
 
 function getEditCallRenderComponent(state: EditRenderState, lastComponent: unknown): EditCallRenderComponent {
-	if (lastComponent instanceof Box) {
+	if (lastComponent instanceof Container) {
 		const component = lastComponent as EditCallRenderComponent;
 		state.callComponent = component;
 		return component;
@@ -197,13 +197,13 @@ function formatEditCall(args: RenderableEditArgs | undefined, theme: Theme, cwd:
 	return `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
 }
 
-function formatEditResult(
+function buildEditResultBody(
 	args: RenderableEditArgs | undefined,
 	preview: EditPreview | undefined,
 	result: EditToolResultLike,
 	theme: Theme,
 	isError: boolean,
-): string | undefined {
+): Component | undefined {
 	const rawPath = str(args?.file_path ?? args?.path);
 	const previewDiff = preview && !("error" in preview) ? preview.diff : undefined;
 	const previewError = preview && "error" in preview ? preview.error : undefined;
@@ -215,32 +215,32 @@ function formatEditResult(
 		if (!errorText || errorText === previewError) {
 			return undefined;
 		}
-		return theme.fg("error", errorText);
+		return new Text(theme.fg("error", errorText), 0, 0);
 	}
 
 	const resultDiff = result.details?.diff;
 	if (resultDiff && resultDiff !== previewDiff) {
-		return renderDiff(resultDiff, { filePath: rawPath ?? undefined });
+		return createDiffComponent(resultDiff, { filePath: rawPath ?? undefined });
 	}
 
 	return undefined;
 }
 
-function getEditHeaderBg(
+function getEditSurfaceBgToken(
 	preview: EditPreview | undefined,
 	settledError: boolean | undefined,
 	theme: Theme,
-): (text: string) => string {
+): ThemeBg | undefined {
+	if (!theme.cards.shadedSurfaces) {
+		return undefined;
+	}
 	if (preview) {
-		if ("error" in preview) {
-			return (text: string) => theme.bg("toolErrorBg", text);
-		}
-		return (text: string) => theme.bg("toolSuccessBg", text);
+		return "error" in preview ? "toolErrorBg" : "toolSuccessBg";
 	}
 	if (settledError) {
-		return (text: string) => theme.bg("toolErrorBg", text);
+		return "toolErrorBg";
 	}
-	return (text: string) => theme.bg("toolPendingBg", text);
+	return "toolPendingBg";
 }
 
 function buildEditCallComponent(
@@ -249,18 +249,25 @@ function buildEditCallComponent(
 	theme: Theme,
 	cwd: string,
 ): EditCallRenderComponent {
-	component.setBgFn(getEditHeaderBg(component.preview, component.settledError, theme));
 	component.clear();
-	component.addChild(new Text(formatEditCall(args, theme, cwd), 0, 0));
+
+	const surfaceBg = getEditSurfaceBgToken(component.preview, component.settledError, theme);
+	const cardPadY = theme.cards.gaplessCards ? 0 : theme.cards.cardPadY;
+	const card = new Box(theme.cards.toolIndent, cardPadY, surfaceBg ? (text: string) => theme.bg(surfaceBg, text) : undefined);
+	card.addChild(new Text(formatEditCall(args, theme, cwd), 0, 0));
+	component.addChild(card);
 
 	if (!component.preview) {
 		return component;
 	}
 
-	const body =
-		"error" in component.preview ? theme.fg("error", component.preview.error) : renderDiff(component.preview.diff);
-	component.addChild(new Spacer(1));
-	component.addChild(new Text(body, 0, 0));
+	card.addChild(new Spacer(1));
+	if ("error" in component.preview) {
+		card.addChild(new Text(theme.fg("error", component.preview.error), 0, 0));
+	} else {
+		const filePath = str(args?.file_path ?? args?.path) ?? undefined;
+		card.addChild(createDiffComponent(component.preview.diff, { filePath, surroundBg: surfaceBg }));
+	}
 	return component;
 }
 
@@ -408,14 +415,16 @@ export function createEditToolDefinition(
 				}
 			}
 
-			const output = formatEditResult(context.args, callComponent?.preview, typedResult, theme, context.isError);
+			const body = buildEditResultBody(context.args, callComponent?.preview, typedResult, theme, context.isError);
 			const component = (context.lastComponent as Container | undefined) ?? new Container();
 			component.clear();
-			if (!output) {
+			if (!body) {
 				return component;
 			}
-			component.addChild(new Spacer(1));
-			component.addChild(new Text(output, 1, 0));
+			if (!theme.cards.gaplessCards) {
+				component.addChild(new Spacer(1));
+			}
+			component.addChild(body);
 			return component;
 		},
 	};

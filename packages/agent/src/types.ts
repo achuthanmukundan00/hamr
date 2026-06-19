@@ -348,6 +348,13 @@ export interface AgentToolResult<T> {
 	/** Arbitrary structured details for logs or UI rendering. */
 	details: T;
 	/**
+	 * Signal that this tool call failed. The agent loop propagates this into the
+	 * ToolResultMessage so the model sees the result as an error rather than a
+	 * success. Without this, a tool that returns an error message but doesn't
+	 * throw will appear successful and the model may retry in a loop.
+	 */
+	isError?: boolean;
+	/**
 	 * Hint that the agent should stop after the current tool batch.
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.
 	 */

@@ -29,7 +29,7 @@ function createTuiStub(columns: number): { columns: number; stub: any } {
 
 describe("BashExecutionComponent width handling (#2569)", () => {
 	beforeAll(() => {
-		initTheme(undefined, false);
+		initTheme("kawaii", false);
 	});
 
 	it("collapsed preview lines respect render-time width, not construction-time width", () => {
@@ -76,5 +76,14 @@ describe("BashExecutionComponent width handling (#2569)", () => {
 			const w = visibleWidth(lines60[i]);
 			expect(w, `Line ${i} visibleWidth=${w} > 60`).toBeLessThanOrEqual(60);
 		}
+	});
+
+	it("does not prepend a blank spacer when gapless cards are enabled", () => {
+		const { stub } = createTuiStub(120);
+		const component = new BashExecutionComponent("pwd", stub);
+		const lines = component.render(120);
+
+		expect(lines[0]).not.toBe("");
+		expect(visibleWidth(lines[0])).toBeGreaterThan(0);
 	});
 });

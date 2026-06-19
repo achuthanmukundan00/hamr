@@ -1,4 +1,7 @@
-const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" aria-hidden="true"><path fill="#fff" fill-rule="evenodd" d="M165.29 165.29 H517.36 V400 H400 V517.36 H282.65 V634.72 H165.29 Z M282.65 282.65 V400 H400 V282.65 Z"/><path fill="#fff" d="M517.36 400 H634.72 V634.72 H517.36 Z"/></svg>`;
+// Brand mark mirrors the Hamr docs/landing: teal hammer-and-pick glyph next to a
+// lowercase monospace wordmark on a near-black background.
+const BRAND_GLYPH = "⚒";
+const BRAND_NAME = "hamr";
 
 function escapeHtml(value: string): string {
 	return value
@@ -25,9 +28,10 @@ function renderPage(options: { title: string; heading: string; message: string; 
     :root {
       --text: #fafafa;
       --text-dim: #a1a1aa;
-      --page-bg: #09090b;
+      --page-bg: #0a0a0e;
+      --accent: #8abeb7;
       --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     }
     * { box-sizing: border-box; }
     html { color-scheme: dark; }
@@ -51,11 +55,20 @@ function renderPage(options: { title: string; heading: string; message: string; 
       align-items: center;
       justify-content: center;
     }
-    .logo {
-      width: 72px;
-      height: 72px;
-      display: block;
-      margin-bottom: 24px;
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 28px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--text);
+    }
+    .brand-mark {
+      color: var(--accent);
+      font-size: 22px;
+      line-height: 1;
     }
     h1 {
       margin: 0 0 10px;
@@ -82,7 +95,7 @@ function renderPage(options: { title: string; heading: string; message: string; 
 </head>
 <body>
   <main>
-    <div class="logo">${LOGO_SVG}</div>
+    <div class="brand"><span class="brand-mark">${BRAND_GLYPH}</span><span>${BRAND_NAME}</span></div>
     <h1>${heading}</h1>
     <p>${message}</p>
     ${details ? `<div class="details">${details}</div>` : ""}

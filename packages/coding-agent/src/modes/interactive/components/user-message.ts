@@ -42,7 +42,7 @@ export class UserMessageComponent extends Container {
 
 		// Keep model color as an accent only. Using it as the card background
 		// makes orange/red models dominate the entire prompt block.
-		const promptBgFn = (content: string) => theme.bg("userMessageBg", content);
+		const promptBgFn = cards.shadedSurfaces ? (content: string) => theme.bg("userMessageBg", content) : undefined;
 		this.contentBox = new Box(cards.cardPadX, cards.cardPadY, promptBgFn);
 
 		// Show the glyph + label heading when configured. Uses model brand color

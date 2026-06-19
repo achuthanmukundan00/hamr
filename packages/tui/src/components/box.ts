@@ -26,6 +26,12 @@ export class Box implements Component {
 		this.bgFn = bgFn;
 	}
 
+	setPaddingY(paddingY: number): void {
+		if (this.paddingY === paddingY) return;
+		this.paddingY = paddingY;
+		this.invalidateCache();
+	}
+
 	addChild(component: Component): void {
 		this.children.push(component);
 		this.invalidateCache();

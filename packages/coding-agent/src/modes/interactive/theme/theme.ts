@@ -132,10 +132,13 @@ const ThemeJsonSchema = Type.Object({
 			headingIndent: Type.Optional(Type.Number()),
 			bodyIndent: Type.Optional(Type.Number()),
 			toolIndent: Type.Optional(Type.Number()),
+			toolResultIndent: Type.Optional(Type.Number()),
 			cardPadX: Type.Optional(Type.Number()),
 			cardPadY: Type.Optional(Type.Number()),
+			shadedSurfaces: Type.Optional(Type.Boolean()),
 			thinkingShaded: Type.Optional(Type.Boolean()),
 			gaplessCards: Type.Optional(Type.Boolean()),
+			showThoughtHeading: Type.Optional(Type.Boolean()),
 		}),
 	),
 });
@@ -159,15 +162,21 @@ export interface CardConfig {
 	headingIndent: number;
 	/** Left padding of the body (markdown) within the card. */
 	bodyIndent: number;
-	/** Left indent applied to tool/bash output so it shares the card margin. */
+	/** Left indent applied to tool card headings within the card Box. */
 	toolIndent: number;
+	/** Left indent applied to tool card results (visually separates result from heading). */
+	toolResultIndent: number;
 	/** Horizontal/vertical padding of the card Box. */
 	cardPadX: number;
 	cardPadY: number;
-	/** Whether the THOUGHT card uses the model-accent shaded background. */
+	/** Whether message/tool cards paint full-width background surfaces. */
+	shadedSurfaces: boolean;
+	/** Whether the THOUGHT card uses the dedicated thinking background when shaded surfaces are enabled. */
 	thinkingShaded: boolean;
 	/** When true, no spacer is inserted between consecutive cards. */
 	gaplessCards: boolean;
+	/** Whether to render the THOUGHT heading in thinking cards. */
+	showThoughtHeading: boolean;
 }
 
 export const DEFAULT_CARD_CONFIG: CardConfig = {
@@ -179,10 +188,13 @@ export const DEFAULT_CARD_CONFIG: CardConfig = {
 	headingIndent: 1,
 	bodyIndent: 3,
 	toolIndent: 2,
+	toolResultIndent: 4,
 	cardPadX: 1,
 	cardPadY: 1,
+	shadedSurfaces: false,
 	thinkingShaded: false,
 	gaplessCards: true,
+	showThoughtHeading: true,
 };
 
 /**
@@ -1230,7 +1242,7 @@ export async function detectTerminalBackgroundTheme({
 }
 
 export function getDefaultTheme(): string {
-	return "hamr";
+	return "dark";
 }
 
 // ============================================================================

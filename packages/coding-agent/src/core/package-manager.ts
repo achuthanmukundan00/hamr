@@ -343,7 +343,7 @@ function collectFiles(
 	return files;
 }
 
-type SkillDiscoveryMode = "pi" | "agents";
+type SkillDiscoveryMode = "hamr" | "agents";
 
 function collectSkillEntries(
 	dir: string,
@@ -402,7 +402,7 @@ function collectSkillEntries(
 			}
 
 			const relPath = toPosixPath(relative(root, fullPath));
-			if (mode === "pi" && dir === root && isFile && entry.name.endsWith(".md") && !ig.ignores(relPath)) {
+			if (mode === "hamr" && dir === root && isFile && entry.name.endsWith(".md") && !ig.ignores(relPath)) {
 				entries.push(fullPath);
 				continue;
 			}
@@ -632,7 +632,7 @@ function collectAutoExtensionEntries(dir: string): string[] {
  */
 function collectResourceFiles(dir: string, resourceType: ResourceType): string[] {
 	if (resourceType === "skills") {
-		return collectSkillEntries(dir, "pi");
+		return collectSkillEntries(dir, "hamr");
 	}
 	if (resourceType === "extensions") {
 		return collectAutoExtensionEntries(dir);
@@ -2304,7 +2304,7 @@ export class DefaultPackageManager implements PackageManager {
 			// Project skills from .hamr/
 			addResources(
 				"skills",
-				collectAutoSkillEntries(projectDirs.skills, "pi"),
+				collectAutoSkillEntries(projectDirs.skills, "hamr"),
 				projectMetadata,
 				projectOverrides.skills,
 				projectBaseDir,
@@ -2356,7 +2356,7 @@ export class DefaultPackageManager implements PackageManager {
 		// User skills from ~/.hamr/agent/
 		addResources(
 			"skills",
-			collectAutoSkillEntries(userDirs.skills, "pi"),
+			collectAutoSkillEntries(userDirs.skills, "hamr"),
 			userMetadata,
 			userOverrides.skills,
 			globalBaseDir,

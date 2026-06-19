@@ -21,9 +21,10 @@ function parserFor(message: AssistantMessage, ctx: ExtensionContext): string {
 export function repairLocalToolCalls(message: AssistantMessage, ctx: ExtensionContext): AssistantMessage | undefined {
 	if (hasToolCalls(message)) return undefined;
 	const text = getAssistantText(message);
-	if (!text.trim()) return undefined;
+	const thinking = getThinkingText(message);
+	if (!text.trim() && !thinking?.trim()) return undefined;
 
-	const parsed = parseModelOutput(text, parserFor(message, ctx), getThinkingText(message));
+	const parsed = parseModelOutput(text, parserFor(message, ctx), thinking);
 	if (parsed.toolCalls.length === 0) return undefined;
 
 	const content: AssistantMessage["content"] = [];

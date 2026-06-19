@@ -106,4 +106,4 @@ export {
 	TUI,
 } from "./tui.ts";
 // Utilities
-export { sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";
+export { applyBackgroundToLine, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";

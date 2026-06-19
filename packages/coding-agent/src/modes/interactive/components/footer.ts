@@ -29,18 +29,35 @@ function pct(used: number, total: number): string {
 	return `${Math.round((used / total) * 100)}%`;
 }
 
+export function formatContextPart(
+	tokens: number | null | undefined,
+	contextWindow: number,
+	percent: number | null | undefined,
+	compact: boolean,
+): string | undefined {
+	if (contextWindow <= 0) return undefined;
+	if (tokens === null || percent === null) {
+		return compact ? `? / ${formatTokens(contextWindow)}` : `? used of ${formatTokens(contextWindow)} tokens`;
+	}
+
+	const used = tokens ?? 0;
+	return compact
+		? `${pct(used, contextWindow)} / ${formatTokens(contextWindow)}`
+		: `${pct(used, contextWindow)} used of ${formatTokens(contextWindow)} tokens`;
+}
+
 /**
  * Format the accumulated cost for the status bar. Uses 3-decimal precision so
  * sub-cent spend (e.g. $0.003) is visible rather than rounding to $0.00.
- * Zero-priced models (relay/local, where input pricing is 0) carry no
- * meaningful cost, so the cost segment is omitted entirely for them.
+ * Shows accumulated cost when present. Omits the segment only when there is
+ * no prior cloud spend AND the current model is zero-priced (relay/local).
  */
 export function formatCostPart(
 	totalCost: number,
 	inputPricePerMillion: number,
 	usingSubscription: boolean,
 ): string | undefined {
-	if (inputPricePerMillion <= 0) return undefined;
+	if (inputPricePerMillion <= 0 && totalCost <= 0) return undefined;
 	return `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
 }
 
@@ -249,19 +266,16 @@ export class FooterComponent implements Component {
 		const usage = this.getSessionUsage();
 		const contextUsage = this.session.getContextUsage();
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
-		const contextPercentValue = contextUsage?.percent ?? 0;
-		const contextUsed = contextWindow > 0 ? Math.round((contextPercentValue / 100) * contextWindow) : 0;
+		const contextPercentValue = contextUsage?.percent;
 		const compact = width < 100;
 
 		const parts: string[] = [];
-		if (contextWindow > 0) {
-			const contextText = compact
-				? `${pct(contextUsed, contextWindow)} / ${formatTokens(contextWindow)}`
-				: `${pct(contextUsed, contextWindow)} used of ${formatTokens(contextWindow)} tokens`;
+		const contextText = formatContextPart(contextUsage?.tokens, contextWindow, contextPercentValue, compact);
+		if (contextText) {
 			const coloredContext =
-				contextPercentValue > 90
+				(contextPercentValue ?? 0) > 90
 					? theme.fg("error", contextText)
-					: contextPercentValue > 70
+					: (contextPercentValue ?? 0) > 70
 						? theme.fg("warning", contextText)
 						: theme.fg("dim", contextText);
 			parts.push(coloredContext);
@@ -277,10 +291,8 @@ export class FooterComponent implements Component {
 		if (usage.totalInput > 0 || usage.totalOutput > 0) {
 			parts.push(theme.fg("dim", `${formatTokens(usage.totalInput)}↑ ${formatTokens(usage.totalOutput)}↓`));
 		}
-		if (usage.totalCacheRead > 0 || usage.totalCacheWrite > 0) {
-			const cacheTotal = usage.totalInput + usage.totalCacheRead + usage.totalCacheWrite;
-			const cacheHitRate = cacheTotal > 0 ? (usage.totalCacheRead / cacheTotal) * 100 : 0;
-			parts.push(theme.fg("dim", `CH${cacheHitRate.toFixed(1)}%`));
+		if ((usage.totalCacheRead > 0 || usage.totalCacheWrite > 0) && usage.latestCacheHitRate !== undefined) {
+			parts.push(theme.fg("dim", `CH${usage.latestCacheHitRate.toFixed(1)}%`));
 		}
 
 		if (state.model) {
@@ -305,20 +317,26 @@ export class FooterComponent implements Component {
 		totalCacheRead: number;
 		totalCacheWrite: number;
 		totalCost: number;
+		latestCacheHitRate: number | undefined;
 	} {
 		let totalInput = 0;
 		let totalOutput = 0;
 		let totalCacheRead = 0;
 		let totalCacheWrite = 0;
 		let totalCost = 0;
+		let latestCacheHitRate: number | undefined;
 		for (const entry of this.session.sessionManager.getEntries()) {
 			if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-			totalInput += entry.message.usage.input;
-			totalOutput += entry.message.usage.output;
-			totalCacheRead += entry.message.usage.cacheRead;
-			totalCacheWrite += entry.message.usage.cacheWrite;
-			totalCost += entry.message.usage.cost.total;
+			const { usage } = entry.message;
+			totalInput += usage.input;
+			totalOutput += usage.output;
+			totalCacheRead += usage.cacheRead;
+			totalCacheWrite += usage.cacheWrite;
+			totalCost += usage.cost.total;
+
+			const latestPromptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+			latestCacheHitRate = latestPromptTokens > 0 ? (usage.cacheRead / latestPromptTokens) * 100 : undefined;
 		}
-		return { totalInput, totalOutput, totalCacheRead, totalCacheWrite, totalCost };
+		return { totalInput, totalOutput, totalCacheRead, totalCacheWrite, totalCost, latestCacheHitRate };
 	}
 }

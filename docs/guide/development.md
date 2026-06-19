@@ -11,7 +11,7 @@ How to set up Hamr for local development and contribute.
 ## Clone and Install
 
 ```bash
-git clone git@github.com:skaft/hamr.git
+git clone https://github.com/skaft-software/hamr.git
 cd hamr
 bun install
 ```

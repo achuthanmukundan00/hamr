@@ -57,14 +57,4 @@ export const toolCallParserRegistry: ToolCallParserRegistry = {
 	},
 };
 
-// ─── Convenience exports ──────────────────────────────────
 
-/** Register all built-in parsers. Called once at module load. */
-export function registerBuiltinParsers(): void {
-	// Imported and registered in index.ts to avoid circular deps
-}
-
-/** Get the singleton registry instance. */
-export function getToolCallParserRegistry(): ToolCallParserRegistry {
-	return toolCallParserRegistry;
-}

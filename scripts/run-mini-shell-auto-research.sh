@@ -86,9 +86,9 @@ if [ ! -f "$REPO_ROOT/dist/cli.js" ]; then
   bun run build
 fi
 
-if ! command -v pi &>/dev/null; then
-  echo "ERROR: 'pi' command not found. Install it first:" >&2
-  echo "  npm install -g @earendil-works/pi-coding-agent" >&2
+if ! command -v hamr &>/dev/null; then
+  echo "ERROR: 'hamr' command not found. Install it first:" >&2
+  echo "  npm install -g @hamr/coding-agent" >&2
   exit 1
 fi
 
