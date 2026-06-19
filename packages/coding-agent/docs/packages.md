@@ -38,6 +38,8 @@ hamr update --extension npm:@foo/bar
 
 These commands manage hamr packages, not the hamr CLI installation. To uninstall hamr itself, see [Quickstart](quickstart.md#uninstall).
 
+Bundled git-backed packages are resolved from the installed checkout at startup. Hamr only refreshes them when you run `hamr update`, `hamr update --extensions`, or the package update flow that checks for available updates.
+
 By default, `install` and `remove` write to user settings (`~/.hamr/agent/settings.json`). Use `-l` to write to project settings (`.hamr/settings.json`) instead. Project settings can be shared with your team, and hamr installs any missing packages automatically on startup after the project is trusted.
 
 To try a package without installing it, use `--extension` or `-e`. This installs to a temporary directory for the current run only:

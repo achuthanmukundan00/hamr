@@ -16,28 +16,28 @@ afterEach(() => {
 // Update infrastructure: Hamr must not check inherited Pi update channels.
 // ---------------------------------------------------------------------------
 describe("update channels are Hamr-owned", () => {
-	it("queries the hamr.dev version endpoint, never a pi/earendil host", async () => {
-		const fetchMock = vi.fn(async () => Response.json({ version: "9.9.9" }));
+	it("queries the @skaft/hamr npm registry entry first, never a pi/earendil host", async () => {
+		const fetchMock = vi.fn(async () => Response.json({ name: "@skaft/hamr", version: "9.9.9" }));
 		vi.stubGlobal("fetch", fetchMock);
 
 		await getLatestHamrVersion("1.0.0");
 
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		const url = String(fetchMock.mock.calls[0]?.[0]);
-		expect(url).toBe("https://hamr.dev/api/latest-version");
+		expect(url).toBe("https://registry.npmjs.org/@skaft%2fhamr/latest");
 		expect(url).not.toMatch(/earendil|pi-mono|\bpi\b/i);
 	});
 
-	it("rewrites changelog links to github.com/skaft/hamr, not earendil-works/pi", () => {
+	it("rewrites changelog links to github.com/skaft-software/hamr, not earendil-works/pi", () => {
 		const legacy = normalizeChangelogLinks(
 			"[notes](https://github.com/earendil-works/pi-mono/blob/main/CHANGELOG.md)",
 			"1.2.3",
 		);
-		expect(legacy).toContain("github.com/skaft/hamr");
+		expect(legacy).toContain("github.com/skaft-software/hamr");
 		expect(legacy).not.toContain("earendil-works/pi");
 
 		const relative = normalizeChangelogLinks("[readme](README.md)", "1.2.3");
-		expect(relative).toContain("github.com/skaft/hamr");
+		expect(relative).toContain("github.com/skaft-software/hamr");
 	});
 });
 
@@ -59,10 +59,10 @@ describe("package metadata is Hamr/Skaft-owned", () => {
 	const packages = ["agent", "ai", "coding-agent", "tui"];
 
 	for (const pkgDir of packages) {
-		it(`@hamr/${pkgDir} metadata points at skaft/hamr`, () => {
+		it(`@hamr/${pkgDir} metadata points at skaft-software/hamr`, () => {
 			const pkg = JSON.parse(readFileSync(join(repoRoot, "packages", pkgDir, "package.json"), "utf-8"));
 			expect(pkg.name).toMatch(/^@hamr\//);
-			expect(pkg.repository?.url).toContain("skaft/hamr");
+			expect(pkg.repository?.url).toContain("skaft-software/hamr");
 			expect(pkg.repository?.url).not.toContain("earendil-works/pi");
 			// Original Pi authorship is preserved as attribution, but the owner is Skaft.
 			expect(pkg.author).toBe("Skaft");

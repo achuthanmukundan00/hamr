@@ -6,7 +6,7 @@
 npm install -g --ignore-scripts @hamr/coding-agent
 ```
 
-> Hamr started as a Pi fork. These commands use the current Hamr package names and repo URLs.
+> Hamr is the de-facto coding agent for local models, built on Pi as an agent toolkit. These commands use the current Hamr package names and repo URLs.
 
 > **Tip:** Hamr works best with Relay, the local inference gateway that handles model lifecycle, graceful switching, and prefix-cache pre-warming. See the [Relay docs](/guide/relay) for setup.
 

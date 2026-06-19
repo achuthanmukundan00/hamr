@@ -101,7 +101,7 @@ export function createLsToolDefinition(
 		name: "ls",
 		label: "ls",
 		description: `List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to ${DEFAULT_LIMIT} entries or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
-		promptSnippet: "List directory contents",
+		// Intentionally no promptSnippet: bash covers ls, so it's not advertised in the system prompt.
 		parameters: lsSchema,
 		async execute(
 			_toolCallId,
@@ -208,12 +208,12 @@ export function createLsToolDefinition(
 			});
 		},
 		renderCall(args, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", theme.cards.headingIndent, 0);
 			text.setText(formatLsCall(args, theme, context.cwd));
 			return text;
 		},
 		renderResult(result, options, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			const text = new Text("", theme.cards.toolResultIndent, 0);
 			text.setText(formatLsResult(result as any, options, theme, context.showImages));
 			return text;
 		},

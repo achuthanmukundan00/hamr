@@ -1,5 +1,6 @@
 import type { ExtensionFactory } from "../../core/extensions/types.ts";
 import { createPersistentEditorExtension } from "../persistent-editor.ts";
+import { hamrContextExtension } from "./context.ts";
 import { hamrMemoryExtension } from "./memory.ts";
 import { hamrProvidersExtension } from "./providers.ts";
 import { createHamrSubagentsExtension } from "./subagents.ts";
@@ -18,6 +19,7 @@ export const hamrDefaultExtensions: ExtensionFactory[] = [
 	createHamrSubagentsExtension(() => hamrDefaultExtensions),
 	createPersistentEditorExtension(),
 	hamrReadLoopGuardExtension,
+	hamrContextExtension,
 ];
 
 export { hamrMemoryExtension } from "./memory.ts";

@@ -50,8 +50,8 @@ type WriteHighlightCache = {
 class WriteCallRenderComponent extends Text {
 	cache?: WriteHighlightCache;
 
-	constructor() {
-		super("", 0, 0);
+	constructor(paddingX: number) {
+		super("", paddingX, 0);
 	}
 }
 
@@ -228,7 +228,8 @@ export function createWriteToolDefinition(
 			const rawPath = str(renderArgs?.file_path ?? renderArgs?.path);
 			const fileContent = str(renderArgs?.content);
 			const component =
-				(context.lastComponent as WriteCallRenderComponent | undefined) ?? new WriteCallRenderComponent();
+				(context.lastComponent as WriteCallRenderComponent | undefined) ??
+				new WriteCallRenderComponent(theme.cards.toolIndent);
 			if (fileContent !== null) {
 				component.cache = context.argsComplete
 					? rebuildWriteHighlightCacheFull(rawPath, fileContent)
@@ -254,7 +255,7 @@ export function createWriteToolDefinition(
 				component.clear();
 				return component;
 			}
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			const text = new Text("", theme.cards.toolResultIndent, 0);
 			text.setText(output);
 			return text;
 		},

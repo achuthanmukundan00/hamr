@@ -1,6 +1,6 @@
 # Runtime Architecture
 
-Hamr started as a Pi fork and the runtime is still evolving. This page is a current map, not a frozen spec. File paths and boundaries will keep moving while the runtime is being built out.
+Hamr is the coding agent for local models, and the runtime is still evolving. This page is a current map, not a frozen spec. File paths and boundaries will keep moving while the runtime is being built out.
 
 ## Current Map
 

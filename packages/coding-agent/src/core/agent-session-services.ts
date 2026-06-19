@@ -143,18 +143,20 @@ export async function createAgentSessionServices(
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, join(agentDir, "models.json"));
 	const resourceLoaderOptions = options.resourceLoaderOptions ?? {};
-	const bundledSkillPaths = resourceLoaderOptions.noSkills ? [] : [join(getPackageDir(), "skills")];
-	const bundledPromptTemplatePaths = resourceLoaderOptions.noPromptTemplates ? [] : [join(getPackageDir(), "prompts")];
+	const packageDir = getPackageDir();
+	const bundledExtensionPaths = resourceLoaderOptions.noExtensions
+		? []
+		: [join(packageDir, "examples", "extensions", "hamr-browser", "index.ts")];
+	const bundledSkillPaths = resourceLoaderOptions.noSkills
+		? []
+		: [join(packageDir, "skills"), join(packageDir, "examples", "extensions", "hamr-browser", "skills")];
 	const resourceLoader = new DefaultResourceLoader({
 		...resourceLoaderOptions,
 		cwd,
 		agentDir,
 		settingsManager,
+		additionalExtensionPaths: [...(resourceLoaderOptions.additionalExtensionPaths ?? []), ...bundledExtensionPaths],
 		additionalSkillPaths: [...(resourceLoaderOptions.additionalSkillPaths ?? []), ...bundledSkillPaths],
-		additionalPromptTemplatePaths: [
-			...(resourceLoaderOptions.additionalPromptTemplatePaths ?? []),
-			...bundledPromptTemplatePaths,
-		],
 	});
 	await resourceLoader.reload(options.resourceLoaderReloadOptions);
 

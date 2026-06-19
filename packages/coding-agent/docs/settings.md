@@ -65,7 +65,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 
 ### Telemetry and update checks
 
-`enableInstallTelemetry` only controls the anonymous install/update ping to `https://hamr.dev/api/report-install`. Opting out of telemetry does not disable update checks; Hamr can still fetch `https://hamr.dev/api/latest-version` to look for the latest version.
+`enableInstallTelemetry` only controls the anonymous install/update ping to `https://hamr.dev/api/report-install`. Opting out of telemetry does not disable update checks; Hamr can still fetch the npm `@skaft/hamr` latest-version metadata, with `https://hamr.dev/api/latest-version` as a fallback.
 
 Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations described here, including update checks, package update checks, and install/update telemetry.
 

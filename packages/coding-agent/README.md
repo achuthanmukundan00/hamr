@@ -19,7 +19,7 @@
 
 Hamr is a minimal terminal coding harness. Adapt Hamr to your workflows, not the other way around, without having to fork and modify Hamr internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Hamr Packages](#hamr-packages) and share them with others via npm or git.
 
-Hamr also ships with a compact built-in workflow pack in `skills/` and `prompts/` for common issue, pickup, PR, and review loops.
+Hamr also ships with a compact built-in workflow pack sourced from `skaft-software/askr` for the core local-model workflows.
 
 Hamr ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask Hamr to build what you want or install a third party Hamr package that matches your workflow.
 
@@ -309,8 +309,8 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 
 Hamr has two separate startup features:
 
-- **Update check:** fetches `https://hamr.dev/api/latest-version` to check whether a newer Hamr version exists. Disable it with `HAMR_SKIP_VERSION_CHECK (or PI_SKIP_VERSION_CHECK)=1`. Disabling update checks only turns off this check.
-- **Install/update telemetry:** after first install or a changelog-detected update, sends an anonymous version ping to `https://hamr.dev/api/report-install`. This setting also controls optional provider attribution headers for OpenRouter, Cloudflare, and direct NVIDIA NIM requests. Opt out by setting `enableInstallTelemetry` to `false` in `settings.json`, or by setting `HAMR_TELEMETRY (or PI_TELEMETRY)=0`. This does not disable update checks; Hamr may still contact `hamr.dev` for the latest version unless update checks are disabled or offline mode is enabled.
+- **Update check:** fetches `https://registry.npmjs.org/@skaft%2fhamr/latest` to check whether a newer Hamr version exists, with `https://hamr.dev/api/latest-version` as a fallback metadata endpoint. Disable it with `HAMR_SKIP_VERSION_CHECK (or PI_SKIP_VERSION_CHECK)=1`. Disabling update checks only turns off this check.
+- **Install/update telemetry:** after first install or a changelog-detected update, sends an anonymous version ping to `https://hamr.dev/api/report-install`. This setting also controls optional provider attribution headers for OpenRouter, Cloudflare, and direct NVIDIA NIM requests. Opt out by setting `enableInstallTelemetry` to `false` in `settings.json`, or by setting `HAMR_TELEMETRY (or PI_TELEMETRY)=0`. This does not disable update checks; Hamr may still contact npm or `hamr.dev` for the latest version unless update checks are disabled or offline mode is enabled.
 
 Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations described here, including update checks, package update checks, and install/update telemetry.
 
@@ -664,7 +664,7 @@ hamr --thinking high "Solve this complex problem"
 | `PI_CODING_AGENT_SESSION_DIR` | Override session storage directory (overridden by `--session-dir`) |
 | `PI_PACKAGE_DIR` | Override package directory (useful for Nix/Guix where store paths tokenize poorly) |
 | `PI_OFFLINE` | Disable startup network operations, including update checks, package update checks, and install/update telemetry |
-| `HAMR_SKIP_VERSION_CHECK (or PI_SKIP_VERSION_CHECK)` | Skip the Hamr version update check at startup. This prevents the `hamr.dev` latest-version request |
+| `HAMR_SKIP_VERSION_CHECK (or PI_SKIP_VERSION_CHECK)` | Skip the Hamr version update check at startup. This prevents npm latest-version requests and Hamr fallback metadata requests |
 | `HAMR_TELEMETRY (or PI_TELEMETRY)` | Override install/update telemetry and provider attribution headers. Use `1`/`true`/`yes` to enable or `0`/`false`/`no` to disable. This does not disable update checks |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
 | `VISUAL`, `EDITOR` | External editor for Ctrl+G |

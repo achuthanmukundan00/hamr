@@ -19,6 +19,22 @@ function replaceTabs(text: string): string {
 	return text.replace(/\t/g, "   ");
 }
 
+function truncateForBand(text: string, width: number, ellipsis = "..."): string {
+	if (visibleWidth(text) <= width) {
+		return text;
+	}
+
+	const ellipsisWidth = visibleWidth(ellipsis);
+	if (ellipsisWidth >= width) {
+		const clipped = truncateToWidth(ellipsis, width, "", false);
+		return clipped.endsWith("\x1b[0m") ? clipped.slice(0, -4) : clipped;
+	}
+
+	const clipped = truncateToWidth(text, width - ellipsisWidth, "", false);
+	const withoutReset = clipped.endsWith("\x1b[0m") ? clipped.slice(0, -4) : clipped;
+	return `${withoutReset}${ellipsis}`;
+}
+
 /**
  * Parse the internal edit-diff format emitted by `generateDiffString`.
  * Lines look like: "+123 content", "-123 content", " 123 content", "     ...".
@@ -163,7 +179,7 @@ class DiffComponent implements Component {
 			row.kind === "added" ? "toolDiffAdded" : row.kind === "removed" ? "toolDiffRemoved" : "toolDiffContext";
 		const gutter = `${theme.fg(signColor, sign)}${theme.fg("toolDiffContext", row.lineNum.padStart(this.numWidth, " "))} `;
 
-		const line = truncateToWidth(gutter + this.highlight(row.content, row.lang ?? this.lang), width);
+		const line = truncateForBand(gutter + this.highlight(row.content, row.lang ?? this.lang), width);
 
 		if (row.kind === "added") return this.band(line, width, "toolDiffAddedBg");
 		if (row.kind === "removed") return this.band(line, width, "toolDiffRemovedBg");

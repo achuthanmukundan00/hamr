@@ -1,6 +1,6 @@
 import type { TextContent } from "@hamr/ai";
 import type { Component } from "@hamr/tui";
-import { Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@hamr/tui";
+import { Box, Container, Markdown, type MarkdownTheme, Text } from "@hamr/tui";
 import type { MessageRenderer } from "../../../core/extensions/types.ts";
 import type { CustomMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
@@ -27,10 +27,8 @@ export class CustomMessageComponent extends Container {
 		this.customRenderer = customRenderer;
 		this.markdownTheme = markdownTheme;
 
-		this.addChild(new Spacer(1));
-
 		// Create box with purple background (used for default rendering)
-		this.box = new Box(1, 1, (t) => theme.bg("customMessageBg", t));
+		this.box = new Box(theme.cards.cardPadX, theme.cards.cardPadY, (t) => theme.bg("customMessageBg", t));
 
 		this.rebuild();
 	}
@@ -75,9 +73,9 @@ export class CustomMessageComponent extends Container {
 		this.box.clear();
 
 		// Default rendering: label + content
+		const cards = theme.cards;
 		const label = theme.fg("customMessageLabel", `\x1b[1m[${this.message.customType}]\x1b[22m`);
-		this.box.addChild(new Text(label, 0, 0));
-		this.box.addChild(new Spacer(1));
+		this.box.addChild(new Text(label, cards.headingIndent, 0));
 
 		// Extract text content
 		let text: string;
@@ -91,7 +89,7 @@ export class CustomMessageComponent extends Container {
 		}
 
 		this.box.addChild(
-			new Markdown(text, 0, 0, this.markdownTheme, {
+			new Markdown(text, cards.bodyIndent, 0, this.markdownTheme, {
 				color: (text: string) => theme.fg("customMessageText", text),
 			}),
 		);

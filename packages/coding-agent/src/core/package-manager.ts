@@ -861,6 +861,26 @@ export class DefaultPackageManager implements PackageManager {
 		this.progressCallback?.(event);
 	}
 
+	private getConfiguredPackageSources(includeDefaults = false): Array<{ pkg: PackageSource; scope: SourceScope }> {
+		const globalSettings = this.settingsManager.getGlobalSettings();
+		const projectSettings = this.settingsManager.getProjectSettings();
+		const sources: Array<{ pkg: PackageSource; scope: SourceScope }> = [];
+
+		for (const pkg of projectSettings.packages ?? []) {
+			sources.push({ pkg, scope: "project" });
+		}
+		for (const pkg of globalSettings.packages ?? []) {
+			sources.push({ pkg, scope: "user" });
+		}
+		if (includeDefaults) {
+			for (const pkg of this.settingsManager.getDefaultPackages()) {
+				sources.push({ pkg, scope: "user" });
+			}
+		}
+
+		return this.dedupePackages(sources);
+	}
+
 	private async withProgress(
 		action: ProgressEvent["action"],
 		source: string,
@@ -883,17 +903,7 @@ export class DefaultPackageManager implements PackageManager {
 		const globalSettings = this.settingsManager.getGlobalSettings();
 		const projectSettings = this.settingsManager.getProjectSettings();
 
-		// Collect all packages with scope (project first so cwd resources win collisions)
-		const allPackages: Array<{ pkg: PackageSource; scope: SourceScope }> = [];
-		for (const pkg of projectSettings.packages ?? []) {
-			allPackages.push({ pkg, scope: "project" });
-		}
-		for (const pkg of globalSettings.packages ?? []) {
-			allPackages.push({ pkg, scope: "user" });
-		}
-
-		// Dedupe: project scope wins over global for same package identity
-		const packageSources = this.dedupePackages(allPackages);
+		const packageSources = this.getConfiguredPackageSources(true);
 		await this.resolvePackageSources(packageSources, accumulator, onMissing);
 
 		const globalBaseDir = this.agentDir;
@@ -1026,30 +1036,30 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	async update(source?: string): Promise<void> {
-		const globalSettings = this.settingsManager.getGlobalSettings();
-		const projectSettings = this.settingsManager.getProjectSettings();
 		const identity = source ? this.getPackageIdentity(source) : undefined;
 		let matched = false;
 		const updateSources: ConfiguredUpdateSource[] = [];
 
-		for (const pkg of globalSettings.packages ?? []) {
-			const sourceStr = typeof pkg === "string" ? pkg : pkg.source;
-			if (identity && this.getPackageIdentity(sourceStr, "user") !== identity) continue;
+		for (const entry of this.getConfiguredPackageSources(true).filter(
+			(
+				pkg,
+			): pkg is {
+				pkg: PackageSource;
+				scope: Exclude<SourceScope, "temporary">;
+			} => pkg.scope !== "temporary",
+		)) {
+			const sourceStr = typeof entry.pkg === "string" ? entry.pkg : entry.pkg.source;
+			if (identity && this.getPackageIdentity(sourceStr, entry.scope) !== identity) continue;
 			matched = true;
-			updateSources.push({ source: sourceStr, scope: "user" });
-		}
-		for (const pkg of projectSettings.packages ?? []) {
-			const sourceStr = typeof pkg === "string" ? pkg : pkg.source;
-			if (identity && this.getPackageIdentity(sourceStr, "project") !== identity) continue;
-			matched = true;
-			updateSources.push({ source: sourceStr, scope: "project" });
+			updateSources.push({ source: sourceStr, scope: entry.scope });
 		}
 
 		if (source && !matched) {
 			throw new Error(
 				this.buildNoMatchingPackageMessage(source, [
-					...(globalSettings.packages ?? []),
-					...(projectSettings.packages ?? []),
+					...((this.settingsManager.getProjectSettings().packages ?? []) as PackageSource[]),
+					...((this.settingsManager.getGlobalSettings().packages ?? []) as PackageSource[]),
+					...this.settingsManager.getDefaultPackages(),
 				]),
 			);
 		}
@@ -1157,17 +1167,7 @@ export class DefaultPackageManager implements PackageManager {
 			return [];
 		}
 
-		const globalSettings = this.settingsManager.getGlobalSettings();
-		const projectSettings = this.settingsManager.getProjectSettings();
-		const allPackages: Array<{ pkg: PackageSource; scope: SourceScope }> = [];
-		for (const pkg of projectSettings.packages ?? []) {
-			allPackages.push({ pkg, scope: "project" });
-		}
-		for (const pkg of globalSettings.packages ?? []) {
-			allPackages.push({ pkg, scope: "user" });
-		}
-
-		const packageSources = this.dedupePackages(allPackages);
+		const packageSources = this.getConfiguredPackageSources(true);
 		const checks = packageSources
 			.filter(
 				(entry): entry is { pkg: PackageSource; scope: Exclude<SourceScope, "temporary"> } =>
