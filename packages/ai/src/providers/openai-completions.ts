@@ -125,12 +125,6 @@ export interface OpenAICompletionsOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
 }
 
-interface RawHttpResult {
-	status: number;
-	bodyText: string;
-	headers: Record<string, string>;
-}
-
 interface OpenAICompatCacheControl {
 	type: "ephemeral";
 	ttl?: string;
@@ -526,48 +520,6 @@ function buildRawOpenAICompatibleHeaders(apiKey: string, headers?: Record<string
 	return merged;
 }
 
-async function dispatchRawOpenAICompatibleHttp(
-	url: string,
-	body: unknown,
-	headers: Record<string, string>,
-	timeoutMs: number,
-	externalSignal?: AbortSignal,
-): Promise<RawHttpResult> {
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), timeoutMs);
-	const onExternalAbort = () => controller.abort();
-
-	if (externalSignal) {
-		if (externalSignal.aborted) {
-			clearTimeout(timer);
-			throw new Error("Request was aborted");
-		}
-		externalSignal.addEventListener("abort", onExternalAbort, { once: true });
-	}
-
-	try {
-		const response = await fetch(url, {
-			method: "POST",
-			headers,
-			body: JSON.stringify(body),
-			signal: controller.signal,
-		});
-		return {
-			status: response.status,
-			bodyText: await response.text(),
-			headers: headersToRecord(response.headers),
-		};
-	} catch (error) {
-		if (error instanceof DOMException && error.name === "AbortError") {
-			throw new Error(externalSignal?.aborted ? "Request was aborted" : `Request timed out after ${timeoutMs}ms`);
-		}
-		throw error;
-	} finally {
-		clearTimeout(timer);
-		externalSignal?.removeEventListener("abort", onExternalAbort);
-	}
-}
-
 function parseRawOpenAICompatibleError(status: number, bodyText: string): Error {
 	let detail = bodyText.trim();
 	try {
@@ -583,68 +535,6 @@ function parseRawOpenAICompatibleError(status: number, bodyText: string): Error 
 	return new Error(detail ? `${status} ${detail}` : `Provider error (${status})`);
 }
 
-function pushRawTextBlock(output: AssistantMessage, stream: AssistantMessageEventStream, text: string): void {
-	const block: TextContent = { type: "text", text };
-	output.content.push(block);
-	const contentIndex = output.content.length - 1;
-	stream.push({ type: "text_start", contentIndex, partial: output });
-	stream.push({ type: "text_delta", contentIndex, delta: text, partial: output });
-	stream.push({ type: "text_end", contentIndex, content: text, partial: output });
-}
-
-function pushRawThinkingBlock(
-	output: AssistantMessage,
-	stream: AssistantMessageEventStream,
-	thinking: string,
-	signature: string,
-): void {
-	const block: ThinkingContent = { type: "thinking", thinking, thinkingSignature: signature };
-	output.content.push(block);
-	const contentIndex = output.content.length - 1;
-	stream.push({ type: "thinking_start", contentIndex, partial: output });
-	stream.push({ type: "thinking_delta", contentIndex, delta: thinking, partial: output });
-	stream.push({ type: "thinking_end", contentIndex, content: thinking, partial: output });
-}
-
-function pushRawToolCallBlocks(
-	output: AssistantMessage,
-	stream: AssistantMessageEventStream,
-	toolCalls: unknown,
-): void {
-	if (!Array.isArray(toolCalls)) {
-		return;
-	}
-	for (const rawToolCall of toolCalls) {
-		const toolCallRecord = rawToolCall as {
-			id?: unknown;
-			function?: { name?: unknown; arguments?: unknown };
-		};
-		const rawArguments = toolCallRecord.function?.arguments;
-		const delta =
-			typeof rawArguments === "string"
-				? rawArguments
-				: rawArguments && typeof rawArguments === "object" && !Array.isArray(rawArguments)
-					? JSON.stringify(rawArguments)
-					: "";
-		const block: ToolCall = {
-			type: "toolCall",
-			id: typeof toolCallRecord.id === "string" ? toolCallRecord.id : "",
-			name: typeof toolCallRecord.function?.name === "string" ? toolCallRecord.function.name : "",
-			arguments:
-				typeof rawArguments === "string"
-					? parseStreamingJson(rawArguments)
-					: rawArguments && typeof rawArguments === "object" && !Array.isArray(rawArguments)
-						? (rawArguments as Record<string, unknown>)
-						: {},
-		};
-		output.content.push(block);
-		const contentIndex = output.content.length - 1;
-		stream.push({ type: "toolcall_start", contentIndex, partial: output });
-		stream.push({ type: "toolcall_delta", contentIndex, delta, partial: output });
-		stream.push({ type: "toolcall_end", contentIndex, toolCall: block, partial: output });
-	}
-}
-
 async function streamOpenAICompatibleWithRawHttp(
 	model: Model<"openai-completions">,
 	params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
@@ -652,92 +542,266 @@ async function streamOpenAICompatibleWithRawHttp(
 	stream: AssistantMessageEventStream,
 	options?: OpenAICompletionsOptions,
 ): Promise<void> {
-	const body = { ...params, stream: false } as Record<string, unknown>;
-	delete body.stream_options;
+	// params already has stream: true and stream_options (if compat allows) from buildParams.
+	const body = { ...params } as Record<string, unknown>;
 
-	const headers = buildRawOpenAICompatibleHeaders(options?.apiKey ?? "", options?.headers);
-	const timeoutMs = options?.timeoutMs ?? 600000;
-	const response = await dispatchRawOpenAICompatibleHttp(
-		`${model.baseUrl.replace(/\/+$/, "")}/chat/completions`,
-		body,
-		headers,
-		timeoutMs,
-		options?.signal,
-	);
-
-	await options?.onResponse?.({ status: response.status, headers: response.headers }, model);
-	if (response.status < 200 || response.status >= 300) {
-		throw parseRawOpenAICompatibleError(response.status, response.bodyText);
-	}
-
-	const parsed = JSON.parse(response.bodyText) as {
-		id?: string;
-		model?: string;
-		choices?: Array<{
-			message?: {
-				content?: string | null;
-				reasoning_content?: string;
-				reasoning?: string;
-				reasoning_text?: string;
-				tool_calls?: unknown;
-			};
-			finish_reason?: string | null;
-			usage?: unknown;
-		}>;
-		usage?: unknown;
+	const headers = {
+		...buildRawOpenAICompatibleHeaders(options?.apiKey ?? "", options?.headers),
+		Accept: "text/event-stream",
 	};
+	const timeoutMs = options?.timeoutMs ?? 600000;
+	const url = `${model.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+	const externalSignal = options?.signal;
 
-	output.responseId = typeof parsed.id === "string" ? parsed.id : undefined;
-	if (typeof parsed.model === "string" && parsed.model.length > 0 && parsed.model !== model.id) {
-		output.responseModel = parsed.model;
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	const onExternalAbort = () => controller.abort();
+
+	if (externalSignal?.aborted) {
+		clearTimeout(timer);
+		throw new Error("Request was aborted");
+	}
+	if (externalSignal) {
+		externalSignal.addEventListener("abort", onExternalAbort, { once: true });
 	}
 
-	const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
-	if (parsed.usage) {
-		output.usage = parseChunkUsage(parsed.usage as Record<string, unknown>, model);
-	} else {
-		const choiceUsage = (choice as { usage?: Record<string, unknown> } | undefined)?.usage;
-		if (choiceUsage) {
-			output.usage = parseChunkUsage(choiceUsage, model);
+	let response: Response;
+	try {
+		response = await fetch(url, {
+			method: "POST",
+			headers,
+			body: JSON.stringify(body),
+			signal: controller.signal,
+		});
+	} catch (error) {
+		clearTimeout(timer);
+		externalSignal?.removeEventListener("abort", onExternalAbort);
+		if (error instanceof DOMException && error.name === "AbortError") {
+			throw new Error(externalSignal?.aborted ? "Request was aborted" : `Request timed out after ${timeoutMs}ms`);
 		}
+		throw error;
 	}
 
-	const finishReasonResult = mapStopReason(choice?.finish_reason ?? "stop");
-	output.stopReason = finishReasonResult.stopReason;
-	if (finishReasonResult.errorMessage) {
-		output.errorMessage = finishReasonResult.errorMessage;
+	await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+
+	if (response.status < 200 || response.status >= 300) {
+		clearTimeout(timer);
+		externalSignal?.removeEventListener("abort", onExternalAbort);
+		const bodyText = await response.text();
+		throw parseRawOpenAICompatibleError(response.status, bodyText);
 	}
+
+	interface StreamingToolCallBlock extends ToolCall {
+		partialArgs?: string;
+		streamIndex?: number;
+	}
+	type StreamingBlock = TextContent | ThinkingContent | StreamingToolCallBlock;
+
+	let textBlock: TextContent | null = null;
+	let thinkingBlock: ThinkingContent | null = null;
+	let hasFinishReason = false;
+	const toolCallBlocksByIndex = new Map<number, StreamingToolCallBlock>();
+	const toolCallBlocksById = new Map<string, StreamingToolCallBlock>();
+	const blocks = output.content as StreamingBlock[];
+
+	const getContentIndex = (block: StreamingBlock) => blocks.indexOf(block);
+	const ensureTextBlock = () => {
+		if (!textBlock) {
+			textBlock = { type: "text", text: "" };
+			blocks.push(textBlock);
+			stream.push({ type: "text_start", contentIndex: getContentIndex(textBlock), partial: output });
+		}
+		return textBlock;
+	};
+	const ensureThinkingBlock = (sig: string) => {
+		if (!thinkingBlock) {
+			thinkingBlock = { type: "thinking", thinking: "", thinkingSignature: sig };
+			blocks.push(thinkingBlock);
+			stream.push({ type: "thinking_start", contentIndex: getContentIndex(thinkingBlock), partial: output });
+		}
+		return thinkingBlock;
+	};
+	const ensureToolCallBlock = (toolCall: { index?: number; id?: string; function?: { name?: string } }) => {
+		const streamIndex = typeof toolCall.index === "number" ? toolCall.index : undefined;
+		let block = streamIndex !== undefined ? toolCallBlocksByIndex.get(streamIndex) : undefined;
+		if (!block && toolCall.id) block = toolCallBlocksById.get(toolCall.id);
+		if (!block) {
+			block = {
+				type: "toolCall",
+				id: toolCall.id ?? "",
+				name: toolCall.function?.name ?? "",
+				arguments: {},
+				partialArgs: "",
+				streamIndex,
+			};
+			if (streamIndex !== undefined) toolCallBlocksByIndex.set(streamIndex, block);
+			if (toolCall.id) toolCallBlocksById.set(toolCall.id, block);
+			blocks.push(block);
+			stream.push({ type: "toolcall_start", contentIndex: getContentIndex(block), partial: output });
+		}
+		if (toolCall.id) toolCallBlocksById.set(toolCall.id, block);
+		return block;
+	};
+	const finishBlock = (block: StreamingBlock) => {
+		const contentIndex = getContentIndex(block);
+		if (contentIndex === -1) return;
+		if (block.type === "text") {
+			stream.push({ type: "text_end", contentIndex, content: block.text, partial: output });
+		} else if (block.type === "thinking") {
+			stream.push({ type: "thinking_end", contentIndex, content: block.thinking, partial: output });
+		} else if (block.type === "toolCall") {
+			block.arguments = parseStreamingJson(block.partialArgs);
+			delete block.partialArgs;
+			delete block.streamIndex;
+			stream.push({ type: "toolcall_end", contentIndex, toolCall: block, partial: output });
+		}
+	};
 
 	stream.push({ type: "start", partial: output });
 
-	const message = choice?.message;
-	const reasoning =
-		typeof message?.reasoning_content === "string" && message.reasoning_content.trim().length > 0
-			? message.reasoning_content
-			: typeof message?.reasoning === "string" && message.reasoning.trim().length > 0
-				? message.reasoning
-				: typeof message?.reasoning_text === "string" && message.reasoning_text.trim().length > 0
-					? message.reasoning_text
-					: undefined;
-	if (reasoning) {
-		pushRawThinkingBlock(output, stream, reasoning, "reasoning_content");
+	try {
+		const reader = response.body!.getReader();
+		const decoder = new TextDecoder();
+		let buffer = "";
+		let done = false;
+
+		try {
+			while (!done) {
+				const { done: readerDone, value } = await reader.read();
+				if (readerDone) break;
+				buffer += decoder.decode(value, { stream: true });
+				const lines = buffer.split("\n");
+				buffer = lines.pop() ?? "";
+
+				for (const line of lines) {
+					const trimmed = line.trim();
+					if (!trimmed.startsWith("data:")) continue;
+					const data = trimmed.slice(5).trim();
+					if (data === "[DONE]") {
+						done = true;
+						break;
+					}
+					if (!data) continue;
+
+					let chunk: Record<string, unknown>;
+					try {
+						chunk = JSON.parse(data) as Record<string, unknown>;
+					} catch {
+						continue;
+					}
+
+					if (typeof chunk.id === "string") output.responseId ||= chunk.id;
+					if (typeof chunk.model === "string" && chunk.model.length > 0 && chunk.model !== model.id) {
+						output.responseModel ||= chunk.model;
+					}
+					if (chunk.usage) {
+						output.usage = parseChunkUsage(chunk.usage as Record<string, unknown>, model);
+					}
+
+					const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
+					const choice = choices[0] as
+						| { delta?: Record<string, unknown>; finish_reason?: string | null; usage?: Record<string, unknown> }
+						| undefined;
+					if (!choice) continue;
+
+					if (!chunk.usage && (choice as Record<string, unknown>).usage) {
+						output.usage = parseChunkUsage((choice as Record<string, unknown>).usage as Record<string, unknown>, model);
+					}
+
+					if (choice.finish_reason) {
+						const result = mapStopReason(choice.finish_reason);
+						output.stopReason = result.stopReason;
+						if (result.errorMessage) output.errorMessage = result.errorMessage;
+						hasFinishReason = true;
+					}
+
+					const delta = choice.delta;
+					if (delta) {
+						const content = delta.content;
+						if (typeof content === "string" && content.length > 0) {
+							const block = ensureTextBlock();
+							block.text += content;
+							stream.push({
+								type: "text_delta",
+								contentIndex: getContentIndex(block),
+								delta: content,
+								partial: output,
+							});
+						}
+
+						const reasoningFields = ["reasoning_content", "reasoning", "reasoning_text"];
+						let foundField: string | null = null;
+						for (const field of reasoningFields) {
+							if (typeof delta[field] === "string" && (delta[field] as string).length > 0) {
+								foundField = field;
+								break;
+							}
+						}
+						if (foundField) {
+							const rdelta = delta[foundField] as string;
+							const block = ensureThinkingBlock(foundField);
+							block.thinking += rdelta;
+							stream.push({
+								type: "thinking_delta",
+								contentIndex: getContentIndex(block),
+								delta: rdelta,
+								partial: output,
+							});
+						}
+
+						const toolCalls = delta.tool_calls;
+						if (Array.isArray(toolCalls)) {
+							for (const tc of toolCalls as Array<{
+								index?: number;
+								id?: string;
+								function?: { name?: string; arguments?: string };
+							}>) {
+								const block = ensureToolCallBlock(tc);
+								if (!block.id && tc.id) {
+									block.id = tc.id;
+									toolCallBlocksById.set(tc.id, block);
+								}
+								if (!block.name && tc.function?.name) block.name = tc.function.name;
+								let toolDelta = "";
+								if (tc.function?.arguments) {
+									toolDelta = tc.function.arguments;
+									block.partialArgs = (block.partialArgs ?? "") + toolDelta;
+									block.arguments = parseStreamingJson(block.partialArgs);
+								}
+								stream.push({
+									type: "toolcall_delta",
+									contentIndex: getContentIndex(block),
+									delta: toolDelta,
+									partial: output,
+								});
+							}
+						}
+					}
+				}
+			}
+		} finally {
+			reader.releaseLock();
+		}
+	} catch (error) {
+		clearTimeout(timer);
+		externalSignal?.removeEventListener("abort", onExternalAbort);
+		if (error instanceof DOMException && error.name === "AbortError") {
+			throw new Error(externalSignal?.aborted ? "Request was aborted" : `Request timed out after ${timeoutMs}ms`);
+		}
+		throw error;
 	}
 
-	if (typeof message?.content === "string" && message.content.trim().length > 0) {
-		pushRawTextBlock(output, stream, message.content);
+	clearTimeout(timer);
+	externalSignal?.removeEventListener("abort", onExternalAbort);
+
+	for (const block of blocks) {
+		finishBlock(block);
 	}
 
-	pushRawToolCallBlocks(output, stream, message?.tool_calls);
-
-	if (options?.signal?.aborted) {
-		throw new Error("Request was aborted");
-	}
-	if (output.stopReason === "aborted") {
-		throw new Error("Request was aborted");
-	}
-	if (output.stopReason === "error") {
-		throw new Error(output.errorMessage || "Provider returned an error stop reason");
-	}
+	if (externalSignal?.aborted) throw new Error("Request was aborted");
+	if (output.stopReason === "aborted") throw new Error("Request was aborted");
+	if (output.stopReason === "error") throw new Error(output.errorMessage ?? "Provider returned an error stop reason");
+	if (!hasFinishReason) throw new Error("Stream ended without finish_reason");
 
 	stream.push({ type: "done", reason: output.stopReason, message: output });
 	stream.end();
