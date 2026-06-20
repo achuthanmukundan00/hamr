@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ThinkingLevel } from "@hamr/agent";
-import type { Model } from "@hamr/ai";
+import { type Api, getModel, type Model } from "@hamr/ai";
 import { parse as parseToml } from "toml";
 import type { ProviderConfig } from "../core/extensions/types.ts";
 import type { ModelRegistry } from "../core/model-registry.ts";
@@ -28,6 +28,7 @@ interface HamrModelConfig {
 	defaultThinking?: HamrThinkingLevel;
 	tool_call_parser?: string;
 	toolCallParser?: string;
+	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 }
 
 interface HamrProviderConfig {
@@ -306,10 +307,17 @@ function detectThinkingFormat(modelId: string): string | undefined {
 function modelToProviderModel(
 	model: HamrModelConfig,
 	provider: HamrProviderConfig,
+	providerId: string,
 ): NonNullable<ProviderConfig["models"]>[number] {
 	const thinking = model.supports_thinking ?? model.supportsThinking ?? false;
 	const supportsVision = model.supports_vision ?? model.supportsVision ?? true;
-	const contextWindow = modelContextWindow(model) ?? 0;
+	// When this configured entry shadows a known built-in model (same provider + id),
+	// inherit pricing and context limits from the built-in unless the config sets them
+	// explicitly. This mirrors pi's modelOverride semantics (config merged onto the
+	// built-in model), so e.g. adding an API key for the built-in `deepseek` provider
+	// keeps its real cost data instead of zeroing it.
+	const builtin = getModel(providerId as never, model.id as never) as Model<Api> | undefined;
+	const contextWindow = modelContextWindow(model) ?? builtin?.contextWindow ?? 0;
 	const compatibility = provider.compatibility ?? "openai-compatible";
 	const thinkingFormat = detectThinkingFormat(model.id);
 	// Derive thinkingLevelMap from the actual levels advertised by the relay.
@@ -344,9 +352,10 @@ function modelToProviderModel(
 		reasoning: thinking,
 		thinkingLevelMap,
 		input: supportsVision ? ["text", "image"] : ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		cost: model.cost ?? builtin?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow,
-		maxTokens: modelMaxOutputTokens(model) ?? (contextWindow > 0 ? Math.min(16384, contextWindow) : 16384),
+		maxTokens:
+			modelMaxOutputTokens(model) ?? builtin?.maxTokens ?? (contextWindow > 0 ? Math.min(16384, contextWindow) : 16384),
 		compat:
 			compatibility === "openai-compatible"
 				? {
@@ -354,6 +363,16 @@ function modelToProviderModel(
 						supportsUsageInStreaming: false,
 						supportsStrictMode: false,
 						maxTokensField: "max_tokens",
+						// Enable Anthropic-style cache_control markers on system prompt,
+						// tools, and last user message so relay backends that support
+						// prompt caching (vLLM, LiteLLM) can serve from cache. Markers
+						// are harmless for backends that don't support caching.
+						cacheControlFormat: "anthropic",
+						// Route requests to the same replica for cache affinity.
+						sendSessionAffinityHeaders: true,
+						// Relay backends (LiteLLM, vLLM) typically support long cache
+						// retention with Anthropic-format ttl markers.
+						supportsLongCacheRetention: true,
 						...(thinkingFormat !== undefined ? { thinkingFormat } : {}),
 					}
 				: undefined,
@@ -413,7 +432,7 @@ export async function buildHamrProviderRegistrations(config: HamrStartupConfig):
 					LOCAL_API_KEY,
 				authHeader: false,
 				headers: providerHeaders(provider),
-				models: models.map((model) => modelToProviderModel(model, provider)),
+				models: models.map((model) => modelToProviderModel(model, provider, providerId)),
 			},
 		});
 	}

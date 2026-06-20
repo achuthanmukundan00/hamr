@@ -18,10 +18,11 @@ function sanitizeStatusText(text: string): string {
 }
 
 function formatTokens(count: number): string {
-	if (!Number.isFinite(count) || count < 0) return "0";
-	if (count < 1000) return String(Math.round(count));
-	if (count < 1000 * 1000) return `${Math.round(count / 1000)}K`;
-	return `${(count / (1000 * 1000)).toFixed(1)}M`;
+	if (count < 1000) return count.toString();
+	if (count < 10000) return `${(count / 1000).toFixed(1)}K`;
+	if (count < 1000000) return `${Math.round(count / 1000)}K`;
+	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
+	return `${Math.round(count / 1000000)}M`;
 }
 
 function pct(used: number, total: number): string {
@@ -36,14 +37,13 @@ export function formatContextPart(
 	compact: boolean,
 ): string | undefined {
 	if (contextWindow <= 0) return undefined;
-	if (tokens === null || percent === null) {
+	if (tokens === null || tokens === undefined || percent === null || percent === undefined) {
 		return compact ? `? / ${formatTokens(contextWindow)}` : `? used of ${formatTokens(contextWindow)} tokens`;
 	}
 
-	const used = tokens ?? 0;
 	return compact
-		? `${pct(used, contextWindow)} / ${formatTokens(contextWindow)}`
-		: `${pct(used, contextWindow)} used of ${formatTokens(contextWindow)} tokens`;
+		? `${pct(tokens, contextWindow)} / ${formatTokens(contextWindow)}`
+		: `${pct(tokens, contextWindow)} used of ${formatTokens(contextWindow)} tokens`;
 }
 
 /**
@@ -128,7 +128,6 @@ export class FooterComponent implements Component {
 		return table;
 	})();
 
-	private autoCompactEnabled = true;
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private requestRender?: () => void;
@@ -144,9 +143,7 @@ export class FooterComponent implements Component {
 		this.session = session;
 	}
 
-	setAutoCompactEnabled(enabled: boolean): void {
-		this.autoCompactEnabled = enabled;
-	}
+	setAutoCompactEnabled(_enabled: boolean): void {}
 
 	invalidate(): void {
 		// Rendered directly from session/provider state.
@@ -268,47 +265,54 @@ export class FooterComponent implements Component {
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
 		const contextPercentValue = contextUsage?.percent;
 		const compact = width < 100;
-		const ultraCompact = width < 85;
 
 		const parts: string[] = [];
-		const contextText = formatContextPart(contextUsage?.tokens, contextWindow, contextPercentValue, compact);
-		if (contextText) {
-			const coloredContext =
-				(contextPercentValue ?? 0) > 90
-					? theme.fg("error", contextText)
-					: (contextPercentValue ?? 0) > 70
-						? theme.fg("warning", contextText)
-						: theme.fg("dim", contextText);
-			parts.push(coloredContext);
-		} else if (!compact && this.autoCompactEnabled) {
-			parts.push(theme.fg("dim", "0% used"));
+
+		// Context usage — always shown.
+		const contextPercentDisplay =
+			contextPercentValue !== null && contextPercentValue !== undefined
+				? `${contextPercentValue.toFixed(1)}%/${formatTokens(contextWindow)}`
+				: `?/${formatTokens(contextWindow)}`;
+		const coloredContext =
+			(contextPercentValue ?? 0) > 90
+				? theme.fg("error", contextPercentDisplay)
+				: (contextPercentValue ?? 0) > 70
+					? theme.fg("warning", contextPercentDisplay)
+					: theme.fg("dim", contextPercentDisplay);
+		parts.push(coloredContext);
+
+		// Cost — show whenever there's accumulated spend or an active OAuth subscription.
+		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
+		if (usage.totalCost > 0 || usingSubscription) {
+			parts.push(theme.fg("dim", `$${usage.totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`));
 		}
 
-		if (!ultraCompact) {
-			const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
-			const costPart = formatCostPart(usage.totalCost, state.model?.cost?.input ?? 0, usingSubscription);
-			if (costPart) {
-				parts.push(theme.fg("dim", costPart));
-			}
-			if (usage.totalInput > 0 || usage.totalOutput > 0) {
-				parts.push(theme.fg("dim", `${formatTokens(usage.totalInput)}↑ ${formatTokens(usage.totalOutput)}↓`));
-			}
-			if ((usage.totalCacheRead > 0 || usage.totalCacheWrite > 0) && usage.latestCacheHitRate !== undefined) {
-				parts.push(theme.fg("dim", `CH${usage.latestCacheHitRate.toFixed(1)}%`));
-			}
+		// Token counts — compact: ↑10k ↓5k
+		if (usage.totalInput > 0 || usage.totalOutput > 0) {
+			const tokens: string[] = [];
+			if (usage.totalInput > 0) tokens.push(`↑${formatTokens(usage.totalInput)}`);
+			if (usage.totalOutput > 0) tokens.push(`↓${formatTokens(usage.totalOutput)}`);
+			parts.push(theme.fg("dim", tokens.join(" ")));
 		}
 
+		// Cache hit rate — always show when cache has been used
+		if ((usage.totalCacheRead > 0 || usage.totalCacheWrite > 0) && usage.latestCacheHitRate !== undefined) {
+			parts.push(theme.fg("dim", `CH${usage.latestCacheHitRate.toFixed(1)}%`));
+		}
+
+		// Model — compact: provider/ glyph name thinking
 		if (state.model) {
-			parts.push(theme.fg("muted", `(${providerDisplayName(state.model.provider)})`));
+			const providerTag = compact
+				? theme.fg("muted", `${state.model.provider}/`)
+				: theme.fg("muted", `(${providerDisplayName(state.model.provider)}) `);
 			const glyph = theme.modelGlyph(state.model.provider, state.model.name ?? state.model.id);
 			const modelName = state.model.name || state.model.id;
 			const modelBrandAnsi = theme.modelColor(state.model.provider, modelName);
 			const model = `${modelBrandAnsi}${glyph} ${modelName}\x1b[39m`;
-			const thinking = theme.fg("dim", `• ${this.session.thinkingLevel || "off"}`);
-			parts.push(`${model} ${thinking}`);
+			const thinking = state.model.reasoning ? theme.fg("dim", ` ${this.session.thinkingLevel || "off"}`) : "";
+			parts.push(`${providerTag}${model}${thinking}`);
 		} else {
-			parts.push(theme.fg("muted", "(no provider)"));
-			parts.push(theme.fg("dim", "no-model • off"));
+			parts.push(theme.fg("dim", "no-model"));
 		}
 
 		return parts.join("  ");

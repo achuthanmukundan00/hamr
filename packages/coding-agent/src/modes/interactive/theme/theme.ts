@@ -31,6 +31,7 @@ const ThemeJsonSchema = Type.Object({
 	$schema: Type.Optional(Type.String()),
 	name: Type.String(),
 	modelAdaptive: Type.Optional(Type.Boolean()),
+	adaptiveBackground: Type.Optional(Type.Boolean()),
 	vars: Type.Optional(Type.Record(Type.String(), ColorValueSchema)),
 	colors: Type.Object({
 		// Core UI (10 colors)
@@ -186,14 +187,14 @@ export const DEFAULT_CARD_CONFIG: CardConfig = {
 	responseLabel: "RESPONSE",
 	thoughtLabel: "THOUGHT",
 	headingIndent: 1,
-	bodyIndent: 3,
+	bodyIndent: 1,
 	toolIndent: 1,
-	toolResultIndent: 3,
+	toolResultIndent: 1,
 	cardPadX: 1,
 	cardPadY: 1,
 	shadedSurfaces: false,
 	thinkingShaded: false,
-	gaplessCards: true,
+	gaplessCards: false,
 	showThoughtHeading: true,
 };
 
@@ -436,6 +437,76 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
 		throw new Error(`Invalid hex color: ${hex}`);
 	}
 	return { r, g, b };
+}
+
+function rgbToHex({ r, g, b }: RgbColor): string {
+	const toHex = (n: number) =>
+		Math.max(0, Math.min(255, Math.round(n)))
+			.toString(16)
+			.padStart(2, "0");
+	return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+interface HslColor {
+	h: number; // 0-360
+	s: number; // 0-1
+	l: number; // 0-1
+}
+
+function rgbToHsl({ r, g, b }: RgbColor): HslColor {
+	const nr = r / 255;
+	const ng = g / 255;
+	const nb = b / 255;
+	const max = Math.max(nr, ng, nb);
+	const min = Math.min(nr, ng, nb);
+	const l = (max + min) / 2;
+
+	if (max === min) return { h: 0, s: 0, l };
+
+	const d = max - min;
+	const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+	let h = 0;
+	if (max === nr) h = ((ng - nb) / d + (ng < nb ? 6 : 0)) * 60;
+	else if (max === ng) h = ((nb - nr) / d + 2) * 60;
+	else h = ((nr - ng) / d + 4) * 60;
+
+	return { h, s, l };
+}
+
+function hslToRgb({ h, s, l }: HslColor): RgbColor {
+	if (s === 0) {
+		const v = Math.round(l * 255);
+		return { r: v, g: v, b: v };
+	}
+	const hue2rgb = (p: number, q: number, t: number) => {
+		if (t < 0) t += 1;
+		if (t > 1) t -= 1;
+		if (t < 1 / 6) return p + (q - p) * 6 * t;
+		if (t < 1 / 2) return q;
+		if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+		return p;
+	};
+	const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+	const p = 2 * l - q;
+	const hr = h / 360;
+	return {
+		r: Math.round(hue2rgb(p, q, hr + 1 / 3) * 255),
+		g: Math.round(hue2rgb(p, q, hr) * 255),
+		b: Math.round(hue2rgb(p, q, hr - 1 / 3) * 255),
+	};
+}
+
+/** Relative luminance (WCAG 2.1) — returns 0-1 where >0.5 suggests light background. */
+function relativeLuminance({ r, g, b }: RgbColor): number {
+	const toLinear = (c: number) => {
+		const v = c / 255;
+		return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+	};
+	return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+}
+
+function clamp(value: number, min: number, max: number): number {
+	return Math.max(min, Math.min(max, value));
 }
 
 // The 6x6x6 color cube channel values (indices 0-5)
@@ -1089,9 +1160,103 @@ function loadThemeJson(name: string): ThemeJson {
 	return parseThemeJsonContent(name, content);
 }
 
+/**
+ * Compute card background colors that blend naturally with the detected
+ * terminal background. On dark terminals cards lift slightly lighter;
+ * on light terminals they sink slightly darker. Hue is partially inherited
+ * from the terminal background so cards feel native to any terminal theme.
+ *
+ * Font/text colors are preserved from the base theme resolution — only
+ * surface/card backgrounds and their dependents are adapted.
+ */
+function computeTerminalAdaptiveColors(
+	terminalRgb: RgbColor,
+	baseColors: Record<string, string | number>,
+): Record<string, string> {
+	const termHsl = rgbToHsl(terminalRgb);
+
+	// Blend terminal hue into each theme background color while keeping the
+	// theme's designed lightness (card elevation). On a black/white terminal
+	// (saturation ≈ 0) this is a near no-op — cards look exactly as the
+	// theme author intended. On a coloured terminal (solarized, pink, etc.)
+	// cards inherit a subtle hue tint at ~20% blend.
+	const adaptColor = (key: string): string | undefined => {
+		const raw = baseColors[key];
+		if (raw === undefined || raw === "") return undefined;
+		const baseHex = typeof raw === "number" ? ansi256ToHex(raw) : raw;
+		if (!baseHex.startsWith("#")) return undefined;
+
+		const baseRgb = hexToRgb(baseHex);
+		const baseHsl = rgbToHsl(baseRgb);
+
+		// Both terminal and base are effectively greyscale — nothing to blend
+		if (baseHsl.s < 0.02 && termHsl.s < 0.02) return baseHex;
+
+		// Blend 20% terminal hue into the base, keeping the base's designed
+		// lightness and most of its saturation.
+		const hueBlend = 0.2;
+		const satBlend = 0.1;
+		const lumBlend = 0.03;
+
+		const h = baseHsl.h * (1 - hueBlend) + termHsl.h * hueBlend;
+		const s = baseHsl.s * (1 - satBlend) + termHsl.s * satBlend;
+		const l = baseHsl.l * (1 - lumBlend) + termHsl.l * lumBlend;
+
+		return rgbToHex(hslToRgb({ h, s: clamp(s, 0, 1), l: clamp(l, 0.02, 0.97) }));
+	};
+
+	const result: Record<string, string> = {};
+	const adaptiveKeys = [
+		"cardBg",
+		"surfaceBg",
+		"thinkingBg",
+		"statusBarBg",
+		"editorBg",
+		"userMessageBg",
+		"customMessageBg",
+		"toolPendingBg",
+		"toolSuccessBg",
+		"toolErrorBg",
+		"toolWarningBg",
+		"selectedBg",
+		"editorSelection",
+		"toolDiffAddedBg",
+		"toolDiffRemovedBg",
+	];
+	for (const key of adaptiveKeys) {
+		const adapted = adaptColor(key);
+		if (adapted !== undefined) result[key] = adapted;
+	}
+
+	return result;
+}
+
 function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string): Theme {
 	const colorMode = mode ?? (getCapabilities().trueColor ? "truecolor" : "256color");
+
+	// Detect terminal background for adaptive themes
+	const adaptiveBg = themeJson.adaptiveBackground ?? false;
+	let terminalRgb: RgbColor | undefined;
+	if (adaptiveBg) {
+		const envDetection = detectTerminalBackgroundFromEnv();
+		if (envDetection.source === "COLORFGBG" && envDetection.confidence === "high") {
+			const idx = getColorFgBgBackgroundIndex(process.env.COLORFGBG ?? "");
+			if (idx !== undefined) {
+				terminalRgb = hexToRgb(ansi256ToHex(idx));
+			}
+		}
+	}
+
 	const resolvedColors = resolveThemeColors(themeJson.colors, themeJson.vars);
+
+	// Apply terminal-background-adaptive card shading if enabled and detected
+	if (adaptiveBg && terminalRgb) {
+		const adaptive = computeTerminalAdaptiveColors(terminalRgb, resolvedColors);
+		for (const [key, value] of Object.entries(adaptive)) {
+			(resolvedColors as Record<string, string | number>)[key] = value;
+		}
+	}
+
 	const fgColors: Record<ThemeColor, string | number> = {} as Record<ThemeColor, string | number>;
 	const bgColors: Record<ThemeBg, string | number> = {} as Record<ThemeBg, string | number>;
 	const bgColorKeys: Set<string> = new Set([

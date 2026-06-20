@@ -184,7 +184,14 @@ export class HamrBrowserController {
 			return "Hamr Browser is already closed";
 		}
 		try {
+			// Snag the owning Browser before closing the context — after
+			// context.close(), context.browser() returns null.
+			const browser = this.context.browser();
 			await this.context.close();
+			// Browser.close() force-kills the underlying Chromium process.
+			// context.close() alone does not reliably do this for
+			// launchPersistentContext, which is how we spawn the browser.
+			await browser?.close();
 			return "Closed Hamr Browser";
 		} catch (error) {
 			throw conciseError(error, "Failed to close Hamr Browser");

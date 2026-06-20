@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AgentMessage } from "@hamr/agent";
 import type { AssistantMessage, TextContent, ToolCall, ToolResultMessage } from "@hamr/ai";
 import type { ExtensionContext, ExtensionFactory, SessionBeforeCompactEvent } from "../../core/extensions/types.ts";
@@ -5,6 +6,7 @@ import { registerHandoffTool } from "../handoff/HandoffManager.ts";
 import { contentText } from "../helpers.ts";
 import type { HolographicMemory } from "../memory/HolographicMemory.ts";
 import {
+	getCurrentTurnId,
 	getMemory,
 	registerMemoryTools,
 	sanitizeMemoryTranscriptText,
@@ -12,6 +14,49 @@ import {
 	storeMessage,
 } from "../memory.ts";
 import { isCloudProvider, loadHamrStartupConfig } from "../startup-config.ts";
+
+// ─── Stable context injection (preserves Anthropic prefix caching) ──────────
+
+/** Number of turns between memory context refreshes for cloud providers. */
+const CLOUD_CONTEXT_REFRESH_INTERVAL = 5;
+/** Number of turns between memory context refreshes for local/relay providers. */
+const LOCAL_CONTEXT_REFRESH_INTERVAL = 2;
+
+/** Track the last injected context hash and turn number per session. */
+const contextInjectionState = new Map<string, { hash: string; turnIndex: number }>();
+
+function clearContextInjectionState(sessionId: string): void {
+	contextInjectionState.delete(sessionId);
+}
+
+function shouldInjectContext(sessionId: string, contextHash: string, turnIndex: number, isCloud: boolean): boolean {
+	const state = contextInjectionState.get(sessionId);
+	if (!state) {
+		contextInjectionState.set(sessionId, { hash: contextHash, turnIndex });
+		return true;
+	}
+
+	// Skip if content hasn't changed
+	if (state.hash === contextHash) return false;
+
+	// Throttle refreshes: cloud providers get memory context every N turns,
+	// local providers get it more frequently (they need the help).
+	const interval = isCloud ? CLOUD_CONTEXT_REFRESH_INTERVAL : LOCAL_CONTEXT_REFRESH_INTERVAL;
+	if (turnIndex - state.turnIndex < interval) return false;
+
+	state.hash = contextHash;
+	state.turnIndex = turnIndex;
+	return true;
+}
+
+function hashContext(autoResults: string[], index: string, survivalManifest?: string | null): string {
+	return createHash("sha256")
+		.update(autoResults.join("\n"))
+		.update(index)
+		.update(survivalManifest ?? "")
+		.digest("hex")
+		.slice(0, 16);
+}
 
 /**
  * Builds the user message injected into context from FTS5 auto-retrieval.
@@ -437,9 +482,19 @@ export const hamrMemoryExtension: ExtensionFactory = async (pi) => {
 		};
 	});
 
-	// Context injection: auto-search memory and prepend retrieved context for
+	// Context injection: auto-search memory and append retrieved context for
 	// resumed sessions. A survival manifest (if any) is surfaced first and
-	// prominently. Skipped entirely when there is nothing to inject.
+	// prominently.
+	//
+	// Memory context is APPENDED (not prepended) to preserve Anthropic's
+	// longest-prefix prompt caching. Prepending would change the first message
+	// after the system prompt on every turn, breaking the entire conversation
+	// cache. Appending adds new content after the stable prefix, so all prior
+	// messages continue to hit the cache.
+	//
+	// For cloud providers (Anthropic, OpenAI, etc.), auto-injection is skipped
+	// unless a survival manifest exists from a prior local-model compaction.
+	// Cloud models have proper LLM compaction and don't need FTS5 context.
 	pi.on("context", (event, ctx) => {
 		const memory = getMemory(ctx);
 		if (!memory) return;
@@ -457,6 +512,12 @@ export const hamrMemoryExtension: ExtensionFactory = async (pi) => {
 		const survivalManifest = survival?.content ?? null;
 		const provider = ctx.model?.provider;
 		const cloud = !provider || isCloudProvider(config, provider);
+
+		// Cloud providers: skip auto-injection entirely unless a survival
+		// manifest from a prior local compaction exists. Cloud models rely on
+		// proper LLM compaction, not FTS5 context injection.
+		if (cloud && !survivalManifest) return;
+
 		const policy = selectCompactionPolicy({ cloud, contextWindow: ctx.model?.contextWindow });
 
 		const terms = memory.getSuggestedSearchTerms();
@@ -476,13 +537,29 @@ export const hamrMemoryExtension: ExtensionFactory = async (pi) => {
 			}
 		}
 
+		// Stable injection: only add context when it has meaningfully changed.
+		// Uses a content hash to detect real changes and a turn-interval throttle
+		// to avoid injecting on every single turn.
+		const contextHash = hashContext(autoResults, index, survivalManifest);
+		const turnId = getCurrentTurnId();
+		if (!shouldInjectContext(sessionId, contextHash, turnId, cloud)) return;
+
 		const message = buildMemoryContextMessage(autoResults, index, { survivalManifest });
 		if (!message) return;
-		return { messages: [message, ...event.messages] };
+
+		// APPEND memory context after existing messages to preserve prefix cache.
+		// Prepending would break Anthropic's longest-prefix cache at the first
+		// message boundary after the system prompt.
+		return { messages: [...event.messages, message] };
 	});
 
 	// Advance the memory turn counter at the end of each turn.
 	pi.on("turn_end", (event) => {
 		setCurrentTurnId(event.turnIndex + 1);
+	});
+
+	// Clean up context injection state when session shuts down.
+	pi.on("session_shutdown", (_, ctx) => {
+		clearContextInjectionState(ctx.sessionManager.getSessionId());
 	});
 };

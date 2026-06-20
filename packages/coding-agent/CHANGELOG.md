@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.4.2] - 2026-06-20
+
+### Breaking
+
+- **Skills no longer bundled as `skills/*.md`.** Built-in skills (`using-hamr`, `frontend-design`, plus all askr skills) are now bundled from `dist/askr/skills` at build time. The `skills/` directory is removed from the npm package and from the `hamr.skills` manifest. Duplicate detection prevents bundling askr when the user has already installed it via pi packages, so the user-installed version always wins.
+
+### Added
+
+- **Subagents: parallel/chain/stages with child-process workers.** The `delegate_subagents` tool was rewritten from fork-based serial execution to a full child-process executor. Workers spawn as isolated `hamr --mode json -p` processes. Three modes: `tasks` (parallel batch with bounded concurrency), `chain` (serial with `{previous}` placeholder), and `stages` (sequential stages, each parallel or chain internally). Full JSONL disk-persisted logs (`.hamr/subagents/runs/<runId>/`); only bounded recent events and output tails are kept in memory. Configurable via env vars: `HAMR_SUBAGENT_MAX_TASKS` (default 64), `HAMR_SUBAGENT_MAX_CONCURRENCY` (default 4), `HAMR_SUBAGENT_MAX_LOCAL_CONCURRENCY` (default 1 for relay/local). Live status widget above the editor shows running/queued/done/failed counts.
+- **Provider-agnostic model loading events.** Both SSE comment-based (`:relay loading model=...`) and JSON-based (`{"event":"loading",...}`) cold-start indicators are now surfaced in the TUI status bar and emitted as `model_loading` agent events. No longer restricted to relay — any provider that emits loading events gets shown.
+- **Adaptive card backgrounds.** Theme cards now compute blend-adaptive backgrounds from the detected terminal background color via HSL color-space blending. Cards lift slightly lighter on dark terminals and sink slightly darker on light terminals, respecting the terminal's native theme. Controlled by `adaptiveBackground` in theme JSON (default true for built-in themes).
+- **Kitty keyboard protocol key-release support.** `SettingsList` now accepts `wantsKeyRelease` so Escape works when the terminal only sends release events (Kitty flag 2). The global interrupt listener filters out key-release events so they don't steal focus from components that handle them. Added `isKeyRelease` and `isKeyRepeat` utilities to `@hamr/tui`.
+
+### Changed
+
+- **Adjacent user messages are no longer merged.** The OpenAI-compatible provider previously merged consecutive user messages into a single block to satisfy strict relay chat templates. This is removed because merged messages broke Anthropic's longest-prefix prompt cache (the merged content changed every turn). Adjacent user messages now pass through as separate turns.
+- **Prompt cache key always sent for relay.** Previously the `prompt_cache_key` was gated on `sessionId` being present for relay. It is now always sent for relay providers, matching the `session_id` header behavior.
+- **Skills index always shown in system prompt.** Previously the skills section was gated on whether the `read` tool was active. Skills are now always included (progressive disclosure — the model loads full SKILL.md on demand via `read`). The skill discovery guideline was tightened to `"Discover and load it via \`ls\`/\`read\`"`.
+- **Footer refactored.** Context usage line is always shown (not conditionally hidden when context is low). Cost line always shown when there's accumulated spend or an active OAuth subscription. Token formatting improved: 4-digit values now show one decimal (`12.3K`), 7-digit values show one decimal (`1.2M`). Removed dead `autoCompactEnabled` plumbing.
+- **Context breakdown (`/context`) display fixed.** The 25-slot icon grid now fills based on absolute token count (4K tokens per slot) instead of percentage, so the bar is meaningful at any context size. Overflow is shown with a `+` marker. Skills now show as 0 tokens since they're loaded on demand. The display handles edge cases (`0` context window, null tokens) gracefully.
+- **Hamr Browser close hardened.** `browser.close()` is now called after `context.close()` to force-kill the underlying Chromium process for `launchPersistentContext`.
+- **Card layout refreshed.** Default card indents reduced (`bodyIndent: 1`, `toolResultIndent: 1`). Cards are no longer gapless by default (`gaplessCards: false`). Theme colors updated across dark, hamr, kawaii, light, and pinkOut themes.
+- **Build: askr bundled at build time.** A `bundle-askr` script fetches the latest askr release from GitHub and copies skills into `dist/askr/skills/` during `npm run build`. Removes the stale vendored `skills/` directory.
+- **Pipeline keywords changed to uppercase K/M.** Token formatting everywhere now uses `K` and `M` instead of `k` and `m` for consistency with standard notation.
+- **Splash screen safety guards.** The splash no longer blind-clears the chat container when messages are present. `splashRendered` is reset on session state changes to prevent stale state.
+
+### Fixed
+
+- **Prompt caching efficiency restored to ~99% (was 25-30%).** Three fixes targeting Anthropic's longest-prefix cache model:
+  - Memory context messages are now **appended** (not prepended) to the conversation, preserving the stable prefix for cache hits.
+  - Memory context injection is **throttled** (every 5 turns for cloud, every 2 for local) and **deduplicated** via content hashing — no longer injected on every turn.
+  - Cloud providers (Anthropic, OpenAI) now **skip FTS5 context injection entirely** unless a survival manifest exists; they use proper LLM compaction instead.
+- **Relay providers now emit Anthropic-style `cache_control` markers** on system prompts, tools, and conversation messages. Session-affinity headers (`x-session-affinity`, `session_id`, `x-client-request-id`) are sent for cache-replica routing. Long cache retention (`ttl: 1h`) is enabled. Markers are harmless for backends without caching support.
+- **Relay configured models inherit built-in cost and context.** When a `.hamr.toml` model entry shadows a known built-in model id (same provider), it now inherits pricing and context limits from the built-in rather than zeroing them — so e.g. adding an API key for the built-in `deepseek` provider keeps its real cost data.
+- **Kitty key-release interrupt fix.** The global interrupt listener now filters out key-release events so the focused component (e.g. SettingsList) receives the press event without interference.
 
 ## [0.4.0] - 2026-06-19
 

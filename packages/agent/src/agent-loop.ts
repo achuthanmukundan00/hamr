@@ -339,6 +339,10 @@ async function streamAssistantResponse(
 				}
 				break;
 
+			case "loading":
+				await emit({ type: "model_loading", model: event.model, elapsedMs: event.elapsedMs });
+				break;
+
 			case "done":
 			case "error": {
 				const finalMessage = await response.result();
