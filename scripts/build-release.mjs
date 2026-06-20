@@ -153,12 +153,23 @@ function main() {
 
 	// Vendor the built @hamr/* libraries into node_modules so they ship inside
 	// the tarball (bundledDependencies copies them from here at pack time).
+	// Strip `dependencies` from each bundled package.json: all @hamr/* deps are
+	// already hoisted into @skaft/hamr's top-level dependencies. Leaving them in
+	// causes npm@11 global-prefix installs to create empty stub directories for
+	// those deps (npm sees both @hamr/tui and @skaft/hamr claiming the same dep,
+	// deduplicates into a stub, then installs the real files nowhere). Without the
+	// field, npm installs each dep exactly once at the @skaft/hamr level and
+	// Node.js finds them correctly via the normal parent-traversal algorithm.
 	for (const lib of LIB_PACKAGES) {
 		const libDir = join(ROOT, "packages", lib);
 		const dest = join(STAGING, "node_modules", "@hamr", lib);
 		mkdirSync(dest, { recursive: true });
 		cpSync(join(libDir, "dist"), join(dest, "dist"), { recursive: true });
-		cpSync(join(libDir, "package.json"), join(dest, "package.json"));
+		const libPkgStripped = { ...readJson(join(libDir, "package.json")) };
+		delete libPkgStripped.dependencies;
+		delete libPkgStripped.devDependencies;
+		delete libPkgStripped.peerDependencies;
+		writeFileSync(join(dest, "package.json"), `${JSON.stringify(libPkgStripped, null, 2)}\n`);
 	}
 
 	// Targeted workaround for protobufjs@7.6.4 under `npm install -g --prefix DIR
@@ -186,9 +197,12 @@ function main() {
 		delete protoPkg.scripts.postinstall;
 		writeFileSync(protoStagedPkg, `${JSON.stringify(protoPkg, null, 2)}\n`);
 	}
+	// npm pack only bundles packages that are listed in both bundledDependencies
+	// AND dependencies — so pin the exact version from the bundled copy.
+	stagedPkg.dependencies["protobufjs"] = protoPkg.version;
 	stagedPkg.bundledDependencies.push("protobufjs");
 	stagedPkg.bundledDependencies.sort();
-	// Re-write staged package.json to include protobufjs in bundledDependencies.
+	// Re-write staged package.json to include protobufjs in both fields.
 	writeFileSync(join(STAGING, "package.json"), `${JSON.stringify(stagedPkg, null, 2)}\n`);
 
 	console.log("→ Packing…");
