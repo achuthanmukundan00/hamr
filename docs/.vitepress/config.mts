@@ -4,6 +4,7 @@ export default defineConfig({
   title: 'Hamr',
   description: 'Local-first coding agent for Relay and your consumer GPU.',
   base: '/',
+  sitemap: { hostname: 'https://hamr-6j6.pages.dev' },
   cleanUrls: true,
   appearance: 'dark',
   head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }]],

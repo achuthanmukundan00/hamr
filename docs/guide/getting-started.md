@@ -3,83 +3,69 @@
 ## Install
 
 ```sh
-npm install -g --ignore-scripts @hamr/coding-agent
+npm install -g @skaft/hamr
 ```
-
-> Hamr is the de-facto coding agent for local models, built on Pi as an agent toolkit. These commands use the current Hamr package names and repo URLs.
 
 > **Tip:** Hamr works best with Relay, the local inference gateway that handles model lifecycle, graceful switching, and prefix-cache pre-warming. See the [Relay docs](/guide/relay) for setup.
 
-Hamr requires Bun at runtime for the interactive TUI. If Bun isn't installed:
-
-```sh
-curl -fsSL https://bun.sh/install | bash
-```
-
 ## Quick Start
 
-Hamr works out of the box with Relay (or any OpenAI-compatible local server) running at `http://127.0.0.1:1234/v1`. Start your local inference server, then:
+Hamr defaults to Relay (or any OpenAI-compatible local server) at `http://127.0.0.1:1234/v1`. Start your inference server, then:
 
 ```sh
-hamr doctor
+hamr doctor            # quick check — config, skills, sessions
+hamr doctor --full     # probe /models and send a test completion
 ```
 
-## Create Project Config
+No config file is required for local Relay at the default address.
 
-Run `hamr config init` to scaffold a `.hamr.toml`, or copy the example:
+## Config Files
 
-```sh
-cp .hamr.toml.example .hamr.toml
-```
+Hamr merges config from two locations — later wins:
 
-Edit `.hamr.toml` to pick your provider and model. Example for local Relay:
+1. `~/.config/hamr/config.toml` — global, machine-wide defaults
+2. `.hamr.toml` — project-local, walks up from cwd until found
+
+Create either file by hand. There is no scaffold command.
+
+### Local inference (Relay)
+
+Put this in `~/.config/hamr/config.toml` or `.hamr.toml`:
 
 ```toml
 [active]
 provider = "relay"
-model = "Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf"
+model = "your-model-name.gguf"
 thinking = "off"
 
 [providers.relay]
 enabled = true
-name = "Relay"
-compatibility = "openai-compatible"
 base_url = "http://127.0.0.1:1234/v1"
-
-[[providers.relay.models]]
-id = "Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf"
-display_name = "Qwen3.6 35B"
-context_window = 131072
-supports_thinking = false
 ```
 
-### Cloud Providers
+Set `model` to the exact ID your server reports from `GET /models`. The `base_url` line is only needed if you're not running on the default port.
 
-For hosted APIs, set `api_key_env` to the environment variable holding your key:
+### Cloud providers
+
+Set `api_key_env` to the environment variable holding your key:
 
 ```toml
 [active]
 provider = "deepseek"
-model = "deepseek-v4-pro"
-thinking = "off"
+model = "deepseek-chat"
 
 [providers.deepseek]
 enabled = true
-name = "DeepSeek"
-compatibility = "openai-compatible"
-base_url = "https://api.deepseek.com/v1"
 api_key_env = "DEEPSEEK_API_KEY"
 ```
 
-Built-in providers: `relay` (local), `deepseek`, `openai`, `anthropic`, `openrouter`.
+Built-in provider IDs: `relay`, `deepseek`, `openai`, `anthropic`, `openrouter`, `groq`, `mistral`, `together`.
 
-### Custom OpenAI-Compatible Endpoint
+### Custom OpenAI-compatible endpoint
 
 ```toml
 [providers.custom]
 enabled = true
-name = "Custom"
-compatibility = "openai-compatible"
 base_url = "http://127.0.0.1:8080/v1"
 
 [[providers.custom.models]]
@@ -89,59 +75,36 @@ context_window = 131072
 supports_thinking = false
 ```
 
-Use `api_key_env = "MY_KEY"` for auth endpoints. Set `compatibility = "anthropic-compatible"` for Anthropic-format APIs.
-
-### Custom Headers
-
-Add arbitrary headers per provider (Cloudflare Access, proxies, etc.):
+### Custom headers (Cloudflare Access, proxies)
 
 ```toml
 [providers.relay.headers]
-"CF-Access-Client-Id" = "your-id.access"
-"CF-Access-Client-Secret" = "your-secret"
-```
-
-### Config Layers
-
-Hamr merges config left-to-right (later wins):
-
-1. Built-in defaults (Relay on `localhost:1234`)
-2. `~/.config/hamr/config.toml` (global)
-3. `.hamr.toml` (project-local)
-
-## Check The Setup
-
-```sh
-hamr doctor            # quick check — config, skills, sessions
-hamr doctor --full     # full check — probes /models and sends a test chat completion
+"CF-Access-Client-Id" = "${CF_ACCESS_CLIENT_ID}"
+"CF-Access-Client-Secret" = "${CF_ACCESS_CLIENT_SECRET}"
 ```
 
 ## First Session
 
 ```sh
-hamr inspect           # project overview
-hamr inspect --skills  # list discovered skills
-hamr inspect --docs    # browse project documentation
-hamr ask --question "Summarize this repository in five bullets."
 hamr run --task "Fix the failing test" --yes
 ```
 
 Interactive TUI:
 
 ```sh
-hamr chat
+hamr
 ```
 
-Inside chat:
+Inside the TUI:
 
 ```txt
-hamr> /settings      — switch providers, models, skills, mcp
-hamr> /tools         — list available tools
-hamr> /budget        — token usage stats
-hamr> /test-provider — probe current provider
-hamr> /verify        — run verification command
-hamr> /undo-last-edit
-hamr> /exit
+/settings      — switch providers, models, skills, mcp
+/tools         — list available tools
+/budget        — token usage stats
+/test-provider — probe current provider
+/verify        — run verification command
+/undo-last-edit
+/exit
 ```
 
 ## Develop From Source

@@ -60,16 +60,34 @@ Inside the TUI:
 
 ## Configuration
 
-hamr reads `.hamr.toml` from the project directory and `~/.config/hamr/settings.toml` for global defaults. Common settings:
+hamr reads config from two locations — later wins:
+
+- `~/.config/hamr/config.toml` — global, machine-wide defaults
+- `.hamr.toml` — project-local, walks up from cwd until found
+
+Create either file by hand. Example for a cloud provider:
 
 ```toml
-[provider]
-name = "anthropic"
+[active]
+provider = "anthropic"
 model = "claude-sonnet-4-6"
 
-[tui]
-theme = "hamr"           # hamr | dark | light | gruvbox | catppuccin | nord | …
-alternateScreen = false  # true for alternate screen (no native scrollback)
+[providers.anthropic]
+enabled = true
+compatibility = "anthropic-compatible"
+api_key_env = "ANTHROPIC_API_KEY"
+```
+
+Example for local inference (Relay or any OpenAI-compatible server):
+
+```toml
+[active]
+provider = "relay"
+model = "your-model-name.gguf"
+
+[providers.relay]
+enabled = true
+base_url = "http://127.0.0.1:1234/v1"
 ```
 
 ## Extensions
