@@ -814,7 +814,9 @@ async function streamOpenAICompatibleWithRawHttp(
 	if (externalSignal?.aborted) throw new Error("Request was aborted");
 	if (output.stopReason === "aborted") throw new Error("Request was aborted");
 	if (output.stopReason === "error") throw new Error(output.errorMessage ?? "Provider returned an error stop reason");
-	if (!hasFinishReason) throw new Error("Stream ended without finish_reason");
+	if (!hasFinishReason) {
+		output.stopReason = "stop";
+	}
 
 	stream.push({ type: "done", reason: output.stopReason, message: output });
 	stream.end();
