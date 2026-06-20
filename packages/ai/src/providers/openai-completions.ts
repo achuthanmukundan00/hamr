@@ -726,6 +726,7 @@ async function streamOpenAICompatibleWithRawHttp(
 						output.stopReason = result.stopReason;
 						if (result.errorMessage) output.errorMessage = result.errorMessage;
 						hasFinishReason = true;
+						done = true;
 					}
 
 					const delta = choice.delta;
