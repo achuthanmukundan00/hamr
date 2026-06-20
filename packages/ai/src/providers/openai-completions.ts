@@ -508,7 +508,11 @@ function shouldUseRawOpenAICompatibleHttp(
 	return headerNames.has("cf-access-client-id") || headerNames.has("cf-access-client-secret");
 }
 
-function buildRawOpenAICompatibleHeaders(apiKey: string, headers?: Record<string, string>): Record<string, string> {
+function buildRawOpenAICompatibleHeaders(
+	apiKey: string,
+	headers?: Record<string, string>,
+	sessionId?: string,
+): Record<string, string> {
 	const merged: Record<string, string> = {
 		Accept: "application/json",
 		"Content-Type": "application/json",
@@ -516,6 +520,10 @@ function buildRawOpenAICompatibleHeaders(apiKey: string, headers?: Record<string
 	};
 	if (apiKey !== "not-needed" && !("Authorization" in merged) && !("authorization" in merged)) {
 		merged.Authorization = `Bearer ${apiKey}`;
+	}
+	if (sessionId) {
+		merged["x-session-affinity"] = sessionId;
+		merged["x-client-request-id"] = sessionId;
 	}
 	return merged;
 }
@@ -544,9 +552,14 @@ async function streamOpenAICompatibleWithRawHttp(
 ): Promise<void> {
 	// params already has stream: true and stream_options (if compat allows) from buildParams.
 	const body = { ...params } as Record<string, unknown>;
+	// For non-relay raw-HTTP callers (not-needed key, CF Access) buildParams doesn't
+	// set prompt_cache_key. Inject it here so all raw-HTTP sessions are isolated.
+	if (options?.sessionId && !body.prompt_cache_key) {
+		body.prompt_cache_key = clampOpenAIPromptCacheKey(options.sessionId);
+	}
 
 	const headers = {
-		...buildRawOpenAICompatibleHeaders(options?.apiKey ?? "", options?.headers),
+		...buildRawOpenAICompatibleHeaders(options?.apiKey ?? "", options?.headers, options?.sessionId),
 		Accept: "text/event-stream",
 	};
 	const timeoutMs = options?.timeoutMs ?? 600000;
@@ -870,10 +883,15 @@ function buildParams(
 		model: model.id,
 		messages,
 		stream: true,
+		// Send a session-scoped cache key so concurrent or sequential sessions
+		// against the same model get isolated KV cache slots. Relay always gets it;
+		// OpenAI gets it when caching is active; long-retention providers get it too.
 		prompt_cache_key:
-			(model.baseUrl.includes("api.openai.com") && cacheRetention !== "none") ||
-			(cacheRetention === "long" && compat.supportsLongCacheRetention)
-				? clampOpenAIPromptCacheKey(options?.sessionId)
+			options?.sessionId &&
+			(model.provider === "relay" ||
+				(model.baseUrl.includes("api.openai.com") && cacheRetention !== "none") ||
+				(cacheRetention === "long" && compat.supportsLongCacheRetention))
+				? clampOpenAIPromptCacheKey(options.sessionId)
 				: undefined,
 		prompt_cache_retention: cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined,
 	};
