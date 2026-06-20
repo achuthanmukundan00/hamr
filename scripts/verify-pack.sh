@@ -33,6 +33,9 @@ echo "  @skaft/hamr package verification"
 echo "  $(basename "$TARBALL")"
 echo "============================================"
 echo ""
+node -e 'const p=require("./package.json"); console.log(`  Package: ${p.name}@${p.version}`)' 2>/dev/null || true
+echo "  Tarball: $TARBALL"
+echo ""
 
 TMP="$(mktemp -d)"
 cleanup() { rm -rf "$TMP"; }
@@ -79,6 +82,43 @@ info "Checking package contents…"
 for leak in src specs scripts .hamr.toml npm-shrinkwrap.json; do
   if [ -e "$PKG_DIR/$leak" ]; then fail "leaked '$leak' in package"; else pass "no '$leak' in package"; fi
 done
+
+# Confirm the protobufjs workaround shipped correctly: package must be bundled
+# and its postinstall must be gone (guards against the npm@11 lifecycle-vs-
+# extraction timing bug on `npm install -g --prefix DIR file.tgz`).
+info "Verifying protobufjs bundle (postinstall workaround)…"
+if tar -tf "$TARBALL" | grep -q 'node_modules/protobufjs/package.json'; then
+  pass "protobufjs bundled in tarball"
+else
+  fail "protobufjs NOT found in tarball — postinstall workaround missing"
+fi
+PROTO_SCRIPTS="$(tar -xOf "$TARBALL" package/node_modules/protobufjs/package.json 2>/dev/null | node -e "process.stdin.setEncoding('utf8');let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const s=JSON.parse(d).scripts||{};console.log(s.postinstall||'null')}catch{console.log('parse-error')}})")"
+if [ "$PROTO_SCRIPTS" = "null" ]; then
+  pass "protobufjs bundled copy has no postinstall"
+else
+  fail "protobufjs bundled copy still has postinstall: $PROTO_SCRIPTS"
+fi
+
+# Global-prefix install — the exact path that triggered the protobufjs bug.
+# Skipped automatically when npm is too old to support --prefix with -g reliably.
+info "Testing global-prefix install (npm install -g --prefix)…"
+GLOBAL_PREFIX="$TMP/global-prefix"
+mkdir -p "$GLOBAL_PREFIX"
+if npm install -g --prefix "$GLOBAL_PREFIX" --no-audit --no-fund --loglevel=error "$TARBALL" > "$TMP/global-install.log" 2>&1; then
+  pass "npm install -g --prefix succeeded"
+  GLOBAL_BIN="$GLOBAL_PREFIX/bin/hamr"
+  if [ -f "$GLOBAL_BIN" ] || [ -L "$GLOBAL_BIN" ]; then
+    if GVER="$("$GLOBAL_BIN" --version 2>/dev/null)"; then
+      pass "global hamr --version → $GVER"
+    else
+      fail "global hamr --version failed"
+    fi
+  else
+    fail "global hamr binary not found at $GLOBAL_BIN"
+  fi
+else
+  fail "npm install -g --prefix failed:"; sed 's/^/      /' "$TMP/global-install.log"; echo ""
+fi
 
 echo ""
 echo "============================================"
