@@ -1,7 +1,6 @@
 import { Text } from "@hamr/tui";
 import type { ExtensionCommandContext, ExtensionFactory, MessageRenderOptions } from "../../core/extensions/types.ts";
 import type { CustomMessage } from "../../core/messages.ts";
-import { formatSkillsForPrompt } from "../../core/skills.ts";
 import type { Theme, ThemeColor } from "../../modes/interactive/theme/theme.ts";
 
 // ─── Token estimation ─────────────────────────────────────────────────────────
@@ -26,17 +25,16 @@ export interface ContextBreakdown {
 
 function computeBreakdown(ctx: ExtensionCommandContext): ContextBreakdown {
 	const model = ctx.model;
-	const usage = ctx.getContextUsage();
+	const contextUsage = ctx.getContextUsage();
+	const contextWindow = contextUsage?.contextWindow ?? model?.contextWindow ?? 0;
+	const tokens = contextUsage?.tokens ?? null;
+	const percent = contextUsage?.percent ?? null;
 	const opts = ctx.getSystemPromptOptions();
 	const systemPromptText = ctx.getSystemPrompt();
 
-	const contextWindow = usage?.contextWindow ?? model?.contextWindow ?? 0;
-	const tokens = usage?.tokens ?? null;
-	const percent = usage?.percent ?? null;
-
-	// Estimate each system-prompt section by re-rendering it in isolation.
-	const skillsText = formatSkillsForPrompt(opts.skills ?? []);
-	const skillsTokens = estimateChars(skillsText);
+	// Estimate each system-prompt section.
+	// Skills are no longer in the system prompt (loaded on demand).
+	const skillsTokens = 0;
 
 	const contextFilesText = (opts.contextFiles ?? [])
 		.map(({ path, content }) => `<project_instructions path="${path}">\n${content}\n</project_instructions>\n\n`)
@@ -44,7 +42,7 @@ function computeBreakdown(ctx: ExtensionCommandContext): ContextBreakdown {
 	const contextFilesTokens = estimateChars(contextFilesText);
 
 	const totalSystemTokens = estimateChars(systemPromptText);
-	const baseSystemTokens = Math.max(0, totalSystemTokens - skillsTokens - contextFilesTokens);
+	const baseSystemTokens = Math.max(0, totalSystemTokens - contextFilesTokens);
 
 	const messagesAndTools = tokens !== null ? Math.max(0, tokens - totalSystemTokens) : null;
 
@@ -72,8 +70,12 @@ function fmt(n: number): string {
 function renderDisplay(breakdown: ContextBreakdown, theme: Theme): string {
 	const { contextWindow, tokens, percent } = breakdown;
 
-	const TOTAL_SLOTS = 25;
-	const filledSlots = percent !== null ? Math.round((percent / 100) * TOTAL_SLOTS) : 0;
+	// 25 slots at 4k tokens each = meaningful fill at any context size.
+	const SLOTS = 25;
+	const TOKENS_PER_SLOT = 4000;
+	const filledSlots = tokens !== null ? Math.round(tokens / TOKENS_PER_SLOT) : 0;
+	const cappedFilled = Math.min(filledSlots, SLOTS);
+	const showOverflow = filledSlots > SLOTS;
 	const usageColor: ThemeColor = (percent ?? 0) > 90 ? "error" : (percent ?? 0) > 70 ? "warning" : "accent";
 
 	const iconRows: string[] = [];
@@ -81,12 +83,25 @@ function renderDisplay(breakdown: ContextBreakdown, theme: Theme): string {
 		const icons: string[] = [];
 		for (let col = 0; col < 5; col++) {
 			const slot = row * 5 + col;
-			icons.push(slot < filledSlots ? theme.fg(usageColor, "⛁") : theme.fg("dim", "⛶"));
+			if (slot < cappedFilled) {
+				icons.push(theme.fg(usageColor, "⛁"));
+			} else if (slot === cappedFilled && showOverflow) {
+				icons.push(theme.fg(usageColor, "+"));
+			} else {
+				icons.push(theme.fg("dim", "⛶"));
+			}
 		}
 		iconRows.push(icons.join(" "));
 	}
 
-	const tokenStr = tokens !== null ? `${fmt(tokens)}/${fmt(contextWindow)} tokens` : `?/${fmt(contextWindow)} tokens`;
+	const tokenStr =
+		tokens !== null && contextWindow > 0
+			? `${fmt(tokens)}/${fmt(contextWindow)} tokens`
+			: tokens !== null
+				? `${fmt(tokens)}/0 tokens`
+				: contextWindow > 0
+					? `?/${fmt(contextWindow)} tokens`
+					: "? / ? tokens";
 	const pctStr = percent !== null ? ` (${Math.round(percent)}%)` : "";
 	const freeTokens = tokens !== null && contextWindow > 0 ? contextWindow - tokens : null;
 	const freePct = freeTokens !== null && contextWindow > 0 ? (freeTokens / contextWindow) * 100 : null;
@@ -118,7 +133,7 @@ function renderDisplay(breakdown: ContextBreakdown, theme: Theme): string {
 	);
 	lines.push(
 		`${INDENT}${dot("dim", "⛶")} ${bold("Free space:")} ${
-			freeTokens !== null ? `${fmt(freeTokens)} (${Math.round(freePct!)}%)` : "unknown"
+			freeTokens !== null && contextWindow > 0 ? `${fmt(freeTokens)} (${Math.round(freePct!)}%)` : "unknown"
 		}`,
 	);
 

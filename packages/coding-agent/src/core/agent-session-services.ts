@@ -149,7 +149,24 @@ export async function createAgentSessionServices(
 		: [join(packageDir, "examples", "extensions", "hamr-browser", "index.ts")];
 	const bundledSkillPaths = resourceLoaderOptions.noSkills
 		? []
-		: [join(packageDir, "skills"), join(packageDir, "examples", "extensions", "hamr-browser", "skills")];
+		: (() => {
+				const paths = [join(packageDir, "examples", "extensions", "hamr-browser", "skills")];
+				// Only bundle askr if the user hasn't installed it separately.
+				// Avoids duplicate skills and respects user-installed version.
+				const hasAskrInstalled =
+					(settingsManager.getGlobalSettings().packages ?? []).some((pkg) => {
+						const source = typeof pkg === "string" ? pkg : pkg.source;
+						return source.includes("skaft-software/askr");
+					}) ||
+					(settingsManager.getProjectSettings().packages ?? []).some((pkg) => {
+						const source = typeof pkg === "string" ? pkg : pkg.source;
+						return source.includes("skaft-software/askr");
+					});
+				if (!hasAskrInstalled) {
+					paths.push(join(packageDir, "dist", "askr", "skills"));
+				}
+				return paths;
+			})();
 	const resourceLoader = new DefaultResourceLoader({
 		...resourceLoaderOptions,
 		cwd,

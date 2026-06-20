@@ -7,6 +7,8 @@ import { describe, it } from "node:test";
 import {
 	decodeKittyPrintable,
 	decodePrintableKey,
+	isKeyRelease,
+	isKeyRepeat,
 	Key,
 	matchesKey,
 	parseKey,
@@ -610,5 +612,82 @@ describe("parseKey", () => {
 		it("should parse double bracket pageUp", () => {
 			assert.strictEqual(parseKey("\x1b[[5~"), "pageUp");
 		});
+	});
+});
+
+describe("isKeyRelease", () => {
+	it("returns false for plain escape byte", () => {
+		assert.strictEqual(isKeyRelease("\x1b"), false);
+	});
+
+	it("returns false for ctrl+c control character", () => {
+		assert.strictEqual(isKeyRelease("\x03"), false);
+	});
+
+	it("returns false for Kitty press event", () => {
+		// \x1b[27;1:1u = escape, modifier 1, event type 1 (press)
+		assert.strictEqual(isKeyRelease("\x1b[27;1:1u"), false);
+	});
+
+	it("returns true for Kitty release event (escape)", () => {
+		// \x1b[27;1:3u = escape, modifier 1, event type 3 (release)
+		assert.strictEqual(isKeyRelease("\x1b[27;1:3u"), true);
+	});
+
+	it("returns true for Kitty release event (ctrl+c)", () => {
+		// ctrl+c release: codepoint 99, ctrl modifier 4, +1 = 5, event 3
+		assert.strictEqual(isKeyRelease("\x1b[99;5:3u"), true);
+	});
+
+	it("returns true for functional key release", () => {
+		// backspace release: \x1b[127;1:3u
+		assert.strictEqual(isKeyRelease("\x1b[127;1:3u"), true);
+	});
+
+	it("returns true for arrow key release", () => {
+		// up arrow release: \x1b[1;1:3A
+		assert.strictEqual(isKeyRelease("\x1b[1;1:3A"), true);
+	});
+
+	it("returns true for home/end release", () => {
+		// home release: \x1b[1;1:3H
+		assert.strictEqual(isKeyRelease("\x1b[1;1:3H"), true);
+	});
+
+	it("returns true for tilde-based functional key release", () => {
+		// delete release: \x1b[3;1:3~
+		assert.strictEqual(isKeyRelease("\x1b[3;1:3~"), true);
+	});
+
+	it("ignores bracketed paste content even with :3 patterns", () => {
+		// Paste containing MAC address-like pattern
+		assert.strictEqual(isKeyRelease("\x1b[200~90:62:3F:A5\x1b[201~"), false);
+	});
+
+	it("returns false for Kitty repeat event (not a release)", () => {
+		// escape repeat: \x1b[27;1:2u
+		assert.strictEqual(isKeyRelease("\x1b[27;1:2u"), false);
+	});
+});
+
+describe("isKeyRepeat", () => {
+	it("returns false for plain escape byte", () => {
+		assert.strictEqual(isKeyRepeat("\x1b"), false);
+	});
+
+	it("returns true for Kitty repeat event (escape)", () => {
+		assert.strictEqual(isKeyRepeat("\x1b[27;1:2u"), true);
+	});
+
+	it("returns false for Kitty press event", () => {
+		assert.strictEqual(isKeyRepeat("\x1b[27;1:1u"), false);
+	});
+
+	it("returns false for Kitty release event", () => {
+		assert.strictEqual(isKeyRepeat("\x1b[27;1:3u"), false);
+	});
+
+	it("ignores bracketed paste content", () => {
+		assert.strictEqual(isKeyRepeat("\x1b[200~90:62:2F:A5\x1b[201~"), false);
 	});
 });

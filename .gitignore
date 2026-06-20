@@ -1,22 +1,12 @@
-node_modules/
-dist/
-.cache/
-*.tsbuildinfo
-docs/.vitepress/cache/
-docs/.vitepress/dist/
-test-results/
-coverage/
-.DS_Store
-*.log
 .env
-.hamr.toml
-.pi/
-relay/
+node_modules/
+docs/.vitepress/cache
+test-results/
+*.bak-*
+*.bak
 
-# hamr runtime state + run artifacts
-.hamr/
-hamr-session-*.html
-
-# release build artifacts
-release/
-releases/
+# python test tooling
+.venv-test/
+__pycache__/
+*.pyc
+.pytest_cache/

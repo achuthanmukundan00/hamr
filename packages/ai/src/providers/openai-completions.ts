@@ -76,50 +76,6 @@ function isImageContentBlock(block: { type: string }): block is ImageContent {
 	return block.type === "image";
 }
 
-function mergeAdjacentUserMessages(messages: Message[]): Message[] {
-	const merged: Message[] = [];
-
-	for (const message of messages) {
-		const previous = merged[merged.length - 1];
-		if (message.role === "user" && previous?.role === "user") {
-			previous.content = mergeUserMessageContent(previous.content, message.content);
-			continue;
-		}
-		merged.push(message);
-	}
-
-	return merged;
-}
-
-function mergeUserMessageContent(
-	left: string | (TextContent | ImageContent)[],
-	right: string | (TextContent | ImageContent)[],
-): string | (TextContent | ImageContent)[] {
-	if (typeof left === "string" && typeof right === "string") {
-		if (left.length === 0) return right;
-		if (right.length === 0) return left;
-		return `${left}\n\n${right}`;
-	}
-
-	const leftBlocks: (TextContent | ImageContent)[] =
-		typeof left === "string"
-			? left.length > 0
-				? [{ type: "text", text: left } satisfies TextContent]
-				: []
-			: [...left];
-	const rightBlocks: (TextContent | ImageContent)[] =
-		typeof right === "string"
-			? right.length > 0
-				? [{ type: "text", text: right } satisfies TextContent]
-				: []
-			: [...right];
-
-	if (leftBlocks.length === 0) return rightBlocks;
-	if (rightBlocks.length === 0) return leftBlocks;
-
-	return [...leftBlocks, { type: "text", text: "\n\n" } satisfies TextContent, ...rightBlocks];
-}
-
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -182,7 +138,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 
 		try {
 			const apiKey = options?.apiKey;
-			if (apiKey === undefined || apiKey === null) {
+			if (!apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 			const compat = getCompat(model);
@@ -477,7 +433,7 @@ export const streamSimpleOpenAICompletions: StreamFunction<"openai-completions",
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
-	if (apiKey === undefined || apiKey === null) {
+	if (!apiKey) {
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
@@ -688,6 +644,17 @@ async function streamOpenAICompatibleWithRawHttp(
 
 				for (const line of lines) {
 					const trimmed = line.trim();
+
+					// SSE comment lines: relay loading events
+					if (trimmed.startsWith(":")) {
+						const comment = trimmed.slice(1).trim();
+						const relayMatch = comment.match(/^relay loading model=(.+)$/);
+						if (relayMatch) {
+							stream.push({ type: "loading", model: relayMatch[1]!.trim(), elapsedMs: 0 });
+						}
+						continue;
+					}
+
 					if (!trimmed.startsWith("data:")) continue;
 					const data = trimmed.slice(5).trim();
 					if (data === "[DONE]") {
@@ -700,6 +667,14 @@ async function streamOpenAICompatibleWithRawHttp(
 					try {
 						chunk = JSON.parse(data) as Record<string, unknown>;
 					} catch {
+						continue;
+					}
+
+					// JSON loading event (provider-agnostic cold-start indicator)
+					if (chunk.event === "loading") {
+						const loadingModel = typeof chunk.model === "string" ? chunk.model : model.id;
+						const loadingElapsed = typeof chunk.elapsedMs === "number" ? chunk.elapsedMs : 0;
+						stream.push({ type: "loading", model: loadingModel, elapsedMs: loadingElapsed });
 						continue;
 					}
 
@@ -886,15 +861,11 @@ function buildParams(
 		model: model.id,
 		messages,
 		stream: true,
-		// Send a session-scoped cache key so concurrent or sequential sessions
-		// against the same model get isolated KV cache slots. Relay always gets it;
-		// OpenAI gets it when caching is active; long-retention providers get it too.
 		prompt_cache_key:
-			options?.sessionId &&
-			(model.provider === "relay" ||
-				(model.baseUrl.includes("api.openai.com") && cacheRetention !== "none") ||
-				(cacheRetention === "long" && compat.supportsLongCacheRetention))
-				? clampOpenAIPromptCacheKey(options.sessionId)
+			model.provider === "relay" ||
+			(model.baseUrl.includes("api.openai.com") && cacheRetention !== "none") ||
+			(cacheRetention === "long" && compat.supportsLongCacheRetention)
+				? clampOpenAIPromptCacheKey(options?.sessionId)
 				: undefined,
 		prompt_cache_retention: cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined,
 	};
@@ -1163,9 +1134,7 @@ export function convertMessages(
 		return id;
 	};
 
-	const transformedMessages = mergeAdjacentUserMessages(
-		transformMessages(context.messages, model, (id) => normalizeToolCallId(id)),
-	);
+	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
 
 	if (context.systemPrompt) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;

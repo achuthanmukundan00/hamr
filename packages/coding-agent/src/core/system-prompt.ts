@@ -67,9 +67,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 			prompt += "</project_context>\n";
 		}
 
-		// Append skills section (only if read tool is available)
-		const customPromptHasRead = !selectedTools || selectedTools.includes("read");
-		if (customPromptHasRead && skills.length > 0) {
+		// Append skills index (names + descriptions) for progressive disclosure.
+		// The full SKILL.md body is loaded on demand via read when a task matches.
+		if (skills.length > 0) {
 			prompt += formatSkillsForPrompt(skills);
 		}
 
@@ -107,7 +107,6 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const hasGrep = tools.includes("grep");
 	const hasFind = tools.includes("find");
 	const hasLs = tools.includes("ls");
-	const hasRead = tools.includes("read");
 	const hasWrite = tools.includes("write");
 	const hasEdit = tools.includes("edit");
 	const hasMutation = hasWrite || hasEdit || hasBash;
@@ -126,7 +125,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	// Always include these
 	addGuideline("Show file paths clearly.");
-	addGuideline("Skill or template fits task? Use it first.");
+	addGuideline("Skill or template fits task? Discover and load it via `ls`/`read`.");
 	addGuideline("Use bundled skills and extensions first, only make your own if they don't exist");
 
 	// Tool-call discipline applies to every session (critical for local-model parsers).
@@ -178,8 +177,9 @@ hamr docs (*read* only when asked about hamr — SDK, extensions, themes, skills
 		prompt += "</project_context>\n";
 	}
 
-	// Append skills section (only if read tool is available)
-	if (hasRead && skills.length > 0) {
+	// Append skills index (names + descriptions) for progressive disclosure.
+	// The full SKILL.md body is loaded on demand via read when a task matches.
+	if (skills.length > 0) {
 		prompt += formatSkillsForPrompt(skills);
 	}
 

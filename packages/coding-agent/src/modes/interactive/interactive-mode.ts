@@ -35,6 +35,7 @@ import {
 	fuzzyFilter,
 	getCapabilities,
 	hyperlink,
+	isKeyRelease,
 	Loader,
 	type LoaderIndicatorOptions,
 	Markdown,
@@ -338,6 +339,7 @@ export class InteractiveMode {
 	private retryLoader: Loader | undefined = undefined;
 	private retryCountdown: CountdownTimer | undefined = undefined;
 	private retryEscapeHandler?: () => void;
+	private modelLoadingText: Text | undefined = undefined;
 
 	// Messages queued while compaction is running
 	private compactionQueuedMessages: CompactionQueuedMessage[] = [];
@@ -1668,6 +1670,7 @@ export class InteractiveMode {
 	}
 
 	private renderCurrentSessionState(): void {
+		this.splashRendered = false;
 		this.chatContainer.clear();
 		this.pendingMessagesContainer.clear();
 		this.compactionQueuedMessages = [];
@@ -1775,8 +1778,14 @@ export class InteractiveMode {
 
 		if (currentKey === this.splashRenderedModelKey) return;
 
-		// Splash is only ever shown when chatContainer has no messages,
-		// so we can safely clear it and re-render the full splash.
+		// Re-render the splash in-place to reflect the new model/thinking
+		// brand colour.  The splash should be the only content here;
+		// if any messages have crept in, the flag is stale — bail out instead
+		// of destroying the conversation.
+		if (this.chatContainer.children.length > 0) {
+			this.splashRendered = false;
+			return;
+		}
 		this.chatContainer.clear();
 		this.renderSplashScreen();
 	}
@@ -2566,6 +2575,10 @@ export class InteractiveMode {
 	 */
 	private registerGlobalInterruptListener(): void {
 		this.ui.addInputListener((data) => {
+			// Ignore key-release events from Kitty protocol flag 2 so the
+			// focused component (e.g. SettingsList) receives the press event.
+			if (isKeyRelease(data)) return undefined;
+
 			if (!this.keybindings.matches(data, "app.interrupt")) return undefined;
 			// Custom editors supplied by extensions may not implement autocomplete.
 			const activeEditor = this.editor as { isShowingAutocomplete?: () => boolean };
@@ -3193,6 +3206,20 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 			}
+
+			case "model_loading": {
+				this.statusContainer.clear();
+				const loadingModel = event.model;
+				const loadingMs = event.elapsedMs;
+				const label =
+					loadingMs > 0
+						? `Model loading (${loadingModel}) — ${(loadingMs / 1000).toFixed(0)}s…`
+						: `Model loading (${loadingModel})…`;
+				this.modelLoadingText = new Text(theme.fg("muted", label), 1, 0);
+				this.statusContainer.addChild(this.modelLoadingText);
+				this.ui.requestRender();
+				break;
+			}
 		}
 	}
 
@@ -3233,6 +3260,11 @@ export class InteractiveMode {
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
+		// Once we have real messages in the chat, the splash is no longer
+		// the only visible content.  Mark it stale so refreshSplashIfLive()
+		// does not blind-clear everything when model/thinking level changes.
+		this.splashRendered = false;
+
 		// Capture the active model at the time this message was added so the
 		// card heading retains model identity after mid-session model switches.
 		const model = this.session.model;
@@ -3472,6 +3504,7 @@ export class InteractiveMode {
 	}
 
 	private rebuildChatFromMessages(): void {
+		this.splashRendered = false;
 		this.chatContainer.clear();
 		const context = this.sessionManager.buildSessionContext();
 		this.renderSessionContext(context);

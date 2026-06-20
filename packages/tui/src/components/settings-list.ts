@@ -45,6 +45,10 @@ export class SettingsList implements Component {
 	private searchInput?: Input;
 	private searchEnabled: boolean;
 
+	// Accept key-release events (Kitty protocol flag 2) so escape
+	// works even when the terminal only sends release events.
+	wantsKeyRelease = true;
+
 	// Submenu state
 	private submenuComponent: Component | null = null;
 	private submenuItemIndex: number | null = null;

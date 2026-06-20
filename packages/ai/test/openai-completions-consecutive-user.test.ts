@@ -22,7 +22,7 @@ const relayModel: Model<"openai-completions"> = {
 };
 
 describe("openai-completions consecutive user turns", () => {
-	it("merges adjacent user messages for strict relay chat templates", () => {
+	it("passes through adjacent user messages unmerged", () => {
 		const context: Context = {
 			systemPrompt: "You are helpful.",
 			messages: [
@@ -42,18 +42,18 @@ describe("openai-completions consecutive user turns", () => {
 
 		const messages = convertMessages(relayModel, context, relayModel.compat);
 
-		expect(messages).toHaveLength(2);
+		expect(messages).toHaveLength(3);
 		expect(messages[0]).toEqual({
 			role: "system",
 			content: "You are helpful.",
 		});
 		expect(messages[1]).toEqual({
 			role: "user",
-			content: [
-				{ type: "text", text: "Auto-retrieved context from prior sessions." },
-				{ type: "text", text: "\n\n" },
-				{ type: "text", text: "Read package.json and tell me the package name" },
-			],
+			content: "Auto-retrieved context from prior sessions.",
+		});
+		expect(messages[2]).toEqual({
+			role: "user",
+			content: [{ type: "text", text: "Read package.json and tell me the package name" }],
 		});
 	});
 });
