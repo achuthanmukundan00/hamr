@@ -202,10 +202,14 @@ docs/spec file with line numbers and the same secret redaction used by the local
 
 ## `hamr config`
 
+Opens the TUI package manager for installing and managing extensions and skills.
+Provider configuration is done by editing `~/.config/hamr/config.toml` or `.hamr.toml` directly.
+
 ```sh
-bun run hamr -- config init
-bun run hamr -- config show
-bun run hamr -- config get provider.model
+hamr config          # open TUI package manager
+hamr install <pkg>   # install a package/extension
+hamr remove <pkg>    # remove a package/extension
+hamr list            # list installed packages
 ```
 
 ## `hamr doctor`

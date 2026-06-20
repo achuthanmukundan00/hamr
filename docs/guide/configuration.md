@@ -20,13 +20,17 @@ Local always wins over global. Global always wins over defaults.
 
 ## Quick Start
 
-```bash
-# Generate a config in the current repo
-hamr config init
+Create the file by hand — there is no scaffold command:
 
-# Edit directly
+```bash
+# Global (applies everywhere)
+vim ~/.config/hamr/config.toml
+
+# Project-local (committed to the repo)
 vim .hamr.toml
 ```
+
+> `hamr config` (without a subcommand) opens the TUI package manager for installing extensions and skills, not for editing provider config.
 
 ## Config Format (TOML)
 
