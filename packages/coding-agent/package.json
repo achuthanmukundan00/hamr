@@ -1,6 +1,6 @@
 {
 	"name": "@hamr/coding-agent",
-	"version": "0.4.0",
+	"version": "0.4.1",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"homepage": "https://hamr.pages.dev",
 	"type": "module",
