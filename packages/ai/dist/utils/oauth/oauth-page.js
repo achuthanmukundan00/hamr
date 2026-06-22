@@ -1,0 +1,118 @@
+// Brand mark mirrors the Hamr docs/landing: teal hammer-and-pick glyph next to a
+// lowercase monospace wordmark on a near-black background.
+const BRAND_GLYPH = "⚒";
+const BRAND_NAME = "hamr";
+function escapeHtml(value) {
+    return value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
+function renderPage(options) {
+    const title = escapeHtml(options.title);
+    const heading = escapeHtml(options.heading);
+    const message = escapeHtml(options.message);
+    const details = options.details ? escapeHtml(options.details) : undefined;
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${title}</title>
+  <style>
+    :root {
+      --text: #fafafa;
+      --text-dim: #a1a1aa;
+      --page-bg: #0a0a0e;
+      --accent: #8abeb7;
+      --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+      --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    * { box-sizing: border-box; }
+    html { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: var(--page-bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      text-align: center;
+    }
+    main {
+      width: 100%;
+      max-width: 560px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 28px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--text);
+    }
+    .brand-mark {
+      color: var(--accent);
+      font-size: 22px;
+      line-height: 1;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 28px;
+      line-height: 1.15;
+      font-weight: 650;
+      color: var(--text);
+    }
+    p {
+      margin: 0;
+      line-height: 1.7;
+      color: var(--text-dim);
+      font-size: 15px;
+    }
+    .details {
+      margin-top: 16px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-dim);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand"><span class="brand-mark">${BRAND_GLYPH}</span><span>${BRAND_NAME}</span></div>
+    <h1>${heading}</h1>
+    <p>${message}</p>
+    ${details ? `<div class="details">${details}</div>` : ""}
+  </main>
+</body>
+</html>`;
+}
+export function oauthSuccessHtml(message) {
+    return renderPage({
+        title: "Authentication successful",
+        heading: "Authentication successful",
+        message,
+    });
+}
+export function oauthErrorHtml(message, details) {
+    return renderPage({
+        title: "Authentication failed",
+        heading: "Authentication failed",
+        message,
+        details,
+    });
+}
+//# sourceMappingURL=oauth-page.js.map

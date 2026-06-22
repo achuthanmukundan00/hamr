@@ -1,0 +1,25 @@
+{
+  "name": "@hamr/browser-extension",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Hamr Browser extension: an isolated visible browser controlled by Hamr tools",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest --run"
+  },
+  "hamr": {
+    "extensions": ["./index.ts"],
+    "skills": ["./skills"]
+  },
+  "dependencies": {
+    "playwright": "^1.57.0",
+    "typebox": "1.1.38"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.4"
+  },
+  "keywords": ["hamr-package", "hamr", "browser", "playwright"]
+}

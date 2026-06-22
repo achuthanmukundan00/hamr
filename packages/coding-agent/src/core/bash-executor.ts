@@ -7,7 +7,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { createWriteStream, type WriteStream } from "node:fs";
+import { chmodSync, createWriteStream, openSync, type WriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripAnsi } from "../utils/ansi.ts";
@@ -67,11 +67,25 @@ export async function executeBashWithOperations(
 		}
 		const id = randomBytes(8).toString("hex");
 		tempFilePath = join(tmpdir(), `hamr-bash-${id}.log`);
-		tempFileStream = createWriteStream(tempFilePath);
+		// 0o600: bash output may contain secrets the model read (e.g. `cat ~/.ssh/id_rsa`).
+		const fd = openSync(tempFilePath, "w", 0o600);
+		tempFileStream = createWriteStream(tempFilePath, { fd });
+		try {
+			chmodSync(tempFilePath, 0o600);
+		} catch {
+			/* umask defense */
+		}
 		for (const chunk of outputChunks) {
 			tempFileStream.write(chunk);
 		}
 	};
+
+	/** Flush and close the temp file stream, resolving only after the OS has the bytes. */
+	const flushTempFile = (): Promise<void> =>
+		new Promise((resolve) => {
+			if (!tempFileStream) return resolve();
+			tempFileStream.end(() => resolve());
+		});
 
 	const decoder = new TextDecoder();
 
@@ -115,9 +129,7 @@ export async function executeBashWithOperations(
 		if (truncationResult.truncated) {
 			ensureTempFile();
 		}
-		if (tempFileStream) {
-			tempFileStream.end();
-		}
+		await flushTempFile();
 		const cancelled = options?.signal?.aborted ?? false;
 
 		return {
@@ -135,9 +147,7 @@ export async function executeBashWithOperations(
 			if (truncationResult.truncated) {
 				ensureTempFile();
 			}
-			if (tempFileStream) {
-				tempFileStream.end();
-			}
+			await flushTempFile();
 			return {
 				output: truncationResult.truncated ? truncationResult.content : fullOutput,
 				exitCode: undefined,
@@ -148,7 +158,7 @@ export async function executeBashWithOperations(
 		}
 
 		if (tempFileStream) {
-			tempFileStream.end();
+			await flushTempFile();
 		}
 
 		throw err;

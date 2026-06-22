@@ -129,7 +129,7 @@ export class AssistantMessageComponent extends Container {
 		const cards = theme.cards;
 		const glyph = cards.headingGlyph === "model" ? this.modelGlyph : cards.headingGlyph || undefined;
 		const showHeadings = cards.showHeadings && !!glyph;
-		const responseBg = cards.shadedSurfaces ? (s: string) => theme.bg("cardBg", s) : undefined;
+		const responseBg = cards.shadedSurfaces ? theme.modelAdaptiveBgFn(this.modelAccent, "cardBg") : undefined;
 		const thinkingBg = cards.shadedSurfaces
 			? (s: string) => theme.bg(cards.thinkingShaded ? "thinkingBg" : "cardBg", s)
 			: undefined;
@@ -145,6 +145,13 @@ export class AssistantMessageComponent extends Container {
 		let blocksAdded = 0;
 		for (let i = 0; i < message.content.length; i++) {
 			const content = message.content[i];
+
+			// Insert a spacer before every card except the first when gaplessCards is off.
+			// Placing spacers before cards (not after) avoids a trailing gap that would
+			// double up with chatContainer-level spacers between components.
+			if (!theme.cards.gaplessCards && blocksAdded > 0) {
+				this.contentContainer.addChild(new Spacer(1));
+			}
 
 			// ── Text (response) block ─────────────────────────────────
 			if (content.type === "text" && content.text.trim()) {
@@ -178,11 +185,6 @@ export class AssistantMessageComponent extends Container {
 					this.contentContainer.addChild(thinkingCard);
 					blocksAdded++;
 				}
-			}
-
-			// Insert a spacer between consecutive cards when gaplessCards is off.
-			if (!theme.cards.gaplessCards && blocksAdded > 1) {
-				this.contentContainer.addChild(new Spacer(1));
 			}
 		}
 

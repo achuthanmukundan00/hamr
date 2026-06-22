@@ -33,6 +33,7 @@ export function agentLoop(
 	context: AgentContext,
 	config: AgentLoopConfig,
 	signal?: AbortSignal,
+	toolSignal?: AbortSignal,
 	streamFn?: StreamFn,
 ): EventStream<AgentEvent, AgentMessage[]> {
 	const stream = createAgentStream();
@@ -45,6 +46,7 @@ export function agentLoop(
 			stream.push(event);
 		},
 		signal,
+		toolSignal,
 		streamFn,
 	).then((messages) => {
 		stream.end(messages);
@@ -65,6 +67,7 @@ export function agentLoopContinue(
 	context: AgentContext,
 	config: AgentLoopConfig,
 	signal?: AbortSignal,
+	toolSignal?: AbortSignal,
 	streamFn?: StreamFn,
 ): EventStream<AgentEvent, AgentMessage[]> {
 	if (context.messages.length === 0) {
@@ -84,6 +87,7 @@ export function agentLoopContinue(
 			stream.push(event);
 		},
 		signal,
+		toolSignal,
 		streamFn,
 	).then((messages) => {
 		stream.end(messages);
@@ -98,6 +102,7 @@ export async function runAgentLoop(
 	config: AgentLoopConfig,
 	emit: AgentEventSink,
 	signal?: AbortSignal,
+	toolSignal?: AbortSignal,
 	streamFn?: StreamFn,
 ): Promise<AgentMessage[]> {
 	const newMessages: AgentMessage[] = [...prompts];
@@ -113,7 +118,7 @@ export async function runAgentLoop(
 		await emit({ type: "message_end", message: prompt });
 	}
 
-	await runLoop(currentContext, newMessages, config, signal, emit, streamFn);
+	await runLoop(currentContext, newMessages, config, signal, toolSignal, emit, streamFn);
 	return newMessages;
 }
 
@@ -122,6 +127,7 @@ export async function runAgentLoopContinue(
 	config: AgentLoopConfig,
 	emit: AgentEventSink,
 	signal?: AbortSignal,
+	toolSignal?: AbortSignal,
 	streamFn?: StreamFn,
 ): Promise<AgentMessage[]> {
 	if (context.messages.length === 0) {
@@ -138,7 +144,7 @@ export async function runAgentLoopContinue(
 	await emit({ type: "agent_start" });
 	await emit({ type: "turn_start" });
 
-	await runLoop(currentContext, newMessages, config, signal, emit, streamFn);
+	await runLoop(currentContext, newMessages, config, signal, toolSignal, emit, streamFn);
 	return newMessages;
 }
 
@@ -157,6 +163,7 @@ async function runLoop(
 	newMessages: AgentMessage[],
 	initialConfig: AgentLoopConfig,
 	signal: AbortSignal | undefined,
+	toolSignal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFn?: StreamFn,
 ): Promise<void> {
@@ -205,7 +212,7 @@ async function runLoop(
 			const toolResults: ToolResultMessage[] = [];
 			hasMoreToolCalls = false;
 			if (toolCalls.length > 0) {
-				const executedToolBatch = await executeToolCalls(currentContext, message, config, signal, emit);
+				const executedToolBatch = await executeToolCalls(currentContext, message, config, signal, toolSignal, emit);
 				toolResults.push(...executedToolBatch.messages);
 				hasMoreToolCalls = !executedToolBatch.terminate;
 
@@ -379,6 +386,7 @@ async function executeToolCalls(
 	assistantMessage: AssistantMessage,
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
+	toolSignal: AbortSignal | undefined,
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
@@ -386,9 +394,9 @@ async function executeToolCalls(
 		(tc) => currentContext.tools?.find((t) => t.name === tc.name)?.executionMode === "sequential",
 	);
 	if (config.toolExecution === "sequential" || hasSequentialToolCall) {
-		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
+		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, toolSignal, emit);
 	}
-	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
+	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, toolSignal, emit);
 }
 
 type ExecutedToolCallBatch = {
@@ -402,6 +410,7 @@ async function executeToolCallsSequential(
 	toolCalls: AgentToolCall[],
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
+	toolSignal: AbortSignal | undefined,
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallOutcome[] = [];
@@ -424,7 +433,7 @@ async function executeToolCallsSequential(
 				isError: preparation.isError,
 			};
 		} else {
-			const executed = await executePreparedToolCall(preparation, signal, emit);
+			const executed = await executePreparedToolCall(preparation, toolSignal, emit);
 			finalized = await finalizeExecutedToolCall(
 				currentContext,
 				assistantMessage,
@@ -441,6 +450,7 @@ async function executeToolCallsSequential(
 		finalizedCalls.push(finalized);
 		messages.push(toolResultMessage);
 
+		// Check lifecycle signal to decide whether to continue to next tool
 		if (signal?.aborted) {
 			break;
 		}
@@ -458,6 +468,7 @@ async function executeToolCallsParallel(
 	toolCalls: AgentToolCall[],
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
+	toolSignal: AbortSignal | undefined,
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallEntry[] = [];
@@ -486,7 +497,7 @@ async function executeToolCallsParallel(
 		}
 
 		finalizedCalls.push(async () => {
-			const executed = await executePreparedToolCall(preparation, signal, emit);
+			const executed = await executePreparedToolCall(preparation, toolSignal, emit);
 			const finalized = await finalizeExecutedToolCall(
 				currentContext,
 				assistantMessage,
@@ -631,7 +642,7 @@ async function prepareToolCall(
 
 async function executePreparedToolCall(
 	prepared: PreparedToolCall,
-	signal: AbortSignal | undefined,
+	toolSignal: AbortSignal | undefined,
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallOutcome> {
 	const updateEvents: Promise<void>[] = [];
@@ -641,7 +652,7 @@ async function executePreparedToolCall(
 		const result = await prepared.tool.execute(
 			prepared.toolCall.id,
 			prepared.args as never,
-			signal,
+			toolSignal,
 			(partialResult) => {
 				if (!acceptingUpdates) return;
 				updateEvents.push(

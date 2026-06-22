@@ -1,5 +1,10 @@
 .env
 node_modules/
+
+# Local hamr config may contain live credentials (API keys, CF-Access tokens)
+.hamr.toml
+.hamr.toml.bak
+.hamr.toml.bak-*
 docs/.vitepress/cache
 test-results/
 *.bak-*

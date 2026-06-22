@@ -110,6 +110,43 @@ export interface LabelEntry extends SessionEntryBase {
 	label: string | undefined;
 }
 
+/**
+ * Policy describing how a spawned session behaves relative to its parent.
+ *
+ * This is the shared contract used by both `delegate_subagents` (background,
+ * handoff-merge) and `/fork` (foreground, no-merge). Both create child nodes
+ * in the session tree; they differ only in execution and merge semantics.
+ */
+export interface SpawnPolicy {
+	/** How the child inherits context from the parent */
+	contextInheritance: "full" | "scoped" | "none";
+	/** Execution mode */
+	executionMode: "foreground" | "background";
+	/** How results merge back into the parent */
+	mergePolicy: "none" | "handoff-only";
+}
+
+/**
+ * Entry that records a spawn point in the parent session tree.
+ *
+ * When a child session is spawned (via `delegate_subagents` or `/fork`),
+ * this entry is appended to the parent tree at the fork point. It carries
+ * enough metadata to correlate the child, its results, and its merge policy.
+ */
+export interface SpawnPointEntry extends SessionEntryBase {
+	type: "spawn_point";
+	/** Session ID of the spawned child */
+	childSessionId: string;
+	/** Path to the child session file, if persisted */
+	childSessionPath?: string;
+	/** The spawn policy used */
+	policy: SpawnPolicy;
+	/** Run ID from the subagent system (optional, for correlation with log dirs) */
+	runId?: string;
+	/** Short preview of the task that was spawned (optional) */
+	taskPreview?: string;
+}
+
 /** Session metadata entry (e.g., user-defined display name). */
 export interface SessionInfoEntry extends SessionEntryBase {
 	type: "session_info";
@@ -146,7 +183,8 @@ export type SessionEntry =
 	| CustomEntry
 	| CustomMessageEntry
 	| LabelEntry
-	| SessionInfoEntry;
+	| SessionInfoEntry
+	| SpawnPointEntry;
 
 /** Raw file entry (includes header) */
 export type FileEntry = SessionHeader | SessionEntry;
@@ -198,6 +236,10 @@ export type ReadonlySessionManager = Pick<
 	| "getEntries"
 	| "getTree"
 	| "getSessionName"
+	| "getChildren"
+	| "getSpawnPoints"
+	| "appendSpawnPoint"
+	| "mergeHandoff"
 >;
 
 function createSessionId(): string {
@@ -1033,6 +1075,82 @@ export class SessionManager {
 		};
 		this._appendEntry(entry);
 		return entry.id;
+	}
+
+	// =========================================================================
+	// Spawn / Join / Merge Contract
+	// =========================================================================
+
+	/**
+	 * Record a spawn point in the session tree.
+	 *
+	 * This is the parent-side half of the spawn contract. When a child session
+	 * is created (by `delegate_subagents` or `/fork`), this entry is appended
+	 * to the parent tree at the current leaf position. It carries:
+	 * - The child session ID for correlation
+	 * - The path to the child's persisted session file (if any)
+	 * - The spawn policy (context inheritance, execution mode, merge policy)
+	 * - Optional run ID and task preview for subagent correlation
+	 *
+	 * Returns the entry ID so callers can later merge results via `mergeHandoff()`.
+	 */
+	appendSpawnPoint(
+		childSessionId: string,
+		policy: SpawnPolicy,
+		childSessionPath?: string,
+		runId?: string,
+		taskPreview?: string,
+	): string {
+		const entry: SpawnPointEntry = {
+			type: "spawn_point",
+			id: generateId(this.byId),
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+			childSessionId,
+			childSessionPath,
+			policy,
+			runId,
+			taskPreview,
+		};
+		this._appendEntry(entry);
+		return entry.id;
+	}
+
+	/**
+	 * Merge handoff output from a child session back into the parent tree.
+	 *
+	 * Creates a `custom_message` entry that participates in LLM context,
+	 * attached as a child of the spawn point entry. This is the merge half
+	 * of the spawn/join/merge contract.
+	 *
+	 * @param spawnPointEntryId The entry ID returned by `appendSpawnPoint()`
+	 * @param customType Unique identifier for the merge type (e.g., "subagent_handoff")
+	 * @param content Human-readable merge content to inject into LLM context
+	 * @param details Optional structured details (e.g., per-worker results)
+	 * @returns The entry ID of the created custom message entry
+	 */
+	mergeHandoff(spawnPointEntryId: string, customType: string, content: string, details?: unknown): string {
+		if (!this.byId.has(spawnPointEntryId)) {
+			throw new Error(`Spawn point entry ${spawnPointEntryId} not found`);
+		}
+
+		// Temporarily move leaf to the spawn point so the merge entry is
+		// attached as a child of the spawn point.
+		const previousLeaf = this.leafId;
+		this.leafId = spawnPointEntryId;
+		try {
+			const entryId = this.appendCustomMessageEntry(customType, content, true, details);
+			return entryId;
+		} finally {
+			this.leafId = previousLeaf;
+		}
+	}
+
+	/**
+	 * Get all spawn point entries in the current session.
+	 */
+	getSpawnPoints(): SpawnPointEntry[] {
+		return this.getEntries().filter((e): e is SpawnPointEntry => e.type === "spawn_point");
 	}
 
 	/** Get the current session name from the latest session_info entry, if any. */

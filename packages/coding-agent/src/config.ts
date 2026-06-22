@@ -477,7 +477,7 @@ try {
 
 const appConfig = pkg.hamrConfig ?? pkg.piConfig;
 const appConfigName: string | undefined = appConfig?.name;
-export const PACKAGE_NAME: string = pkg.name || "@hamr/coding-agent";
+export const PACKAGE_NAME: string = pkg.name || "@skaft/hamr";
 export const APP_NAME: string = appConfigName || "hamr";
 export const APP_TITLE: string = appConfigName ? APP_NAME : "hamr";
 export const CONFIG_DIR_NAME: string = appConfig?.configDir || ".hamr";

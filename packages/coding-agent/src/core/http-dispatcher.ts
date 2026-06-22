@@ -39,11 +39,53 @@ export function formatHttpIdleTimeoutMs(timeoutMs: number): string {
 	return `${timeoutMs / 1000} sec`;
 }
 
-export function applyHttpProxySettings(httpProxy: string | undefined): void {
+/**
+ * Validate that a proxy URL is well-formed and uses an http(s) scheme.
+ * Returns the normalized proxy string on success, or undefined if invalid/empty.
+ */
+export function validateProxyUrl(httpProxy: string | undefined): string | undefined {
 	const proxy = httpProxy?.trim();
+	if (!proxy) return undefined;
+	let url: URL;
+	try {
+		url = new URL(proxy);
+	} catch {
+		throw new Error(`Invalid httpProxy value (not a valid URL): ${proxy}. Proxy has NOT been applied.`);
+	}
+	if (url.protocol !== "http:" && url.protocol !== "https:") {
+		throw new Error(
+			`Invalid httpProxy scheme '${url.protocol}' (only http: and https: are allowed). Proxy has NOT been applied.`,
+		);
+	}
+	if (!url.hostname) {
+		throw new Error(`Invalid httpProxy value (missing host): ${proxy}. Proxy has NOT been applied.`);
+	}
+	return proxy;
+}
+
+/**
+ * Warn prominently when an HTTP proxy is active, since it receives all LLM
+ * traffic including Authorization and provider-specific credential headers.
+ */
+export function warnProxyActive(proxy: string | undefined): void {
+	if (!proxy) return;
+	let host: string | undefined;
+	try {
+		host = new URL(proxy).host;
+	} catch {
+		host = proxy;
+	}
+	console.warn(
+		`[hamr] HTTP proxy is active (${host}). All LLM provider requests, including API key and provider credential headers, will be routed through this proxy. Verify the proxy is trusted.`,
+	);
+}
+
+export function applyHttpProxySettings(httpProxy: string | undefined): void {
+	const proxy = validateProxyUrl(httpProxy);
 	if (!proxy) return;
 	process.env.HTTP_PROXY ??= proxy;
 	process.env.HTTPS_PROXY ??= proxy;
+	warnProxyActive(proxy);
 }
 
 export function configureHttpDispatcher(timeoutMs: number = DEFAULT_HTTP_IDLE_TIMEOUT_MS): void {

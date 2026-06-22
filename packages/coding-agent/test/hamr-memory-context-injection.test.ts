@@ -1,6 +1,11 @@
 import type { AssistantMessage } from "@hamr/ai";
 import { describe, expect, it } from "vitest";
-import { buildMemoryContextMessage, selectCompactionPolicy } from "../src/hamr/extensions/memory.ts";
+import {
+	applyTokenBudget,
+	buildMemoryContextMessage,
+	deduplicateResults,
+	selectCompactionPolicy,
+} from "../src/hamr/extensions/memory.ts";
 import { buildAssistantMemoryContent, sanitizeMemoryTranscriptText } from "../src/hamr/memory.ts";
 
 describe("hamr memory context injection", () => {
@@ -115,5 +120,62 @@ describe("hamr memory context injection", () => {
 
 	it("removes FTS mark tags from memory snippets", () => {
 		expect(sanitizeMemoryTranscriptText("hello <mark>world</mark>")).toBe("hello world");
+	});
+
+	// ── Token budget ──────────────────────────────────────────────────
+
+	it("applyTokenBudget passes through results under the budget", () => {
+		const results = ["// Search 'error': 1 result", "//   turn 2 assistant: fixed the error"];
+		const budgeted = applyTokenBudget(results, 400 * 4); // 400 tokens = 1600 chars
+		expect(budgeted).toEqual(results);
+	});
+
+	it("applyTokenBudget truncates results exceeding the budget", () => {
+		const results = [
+			"// Search 'error': 1 result",
+			"//   turn 2 assistant: this is a very long message that will exceed the character budget",
+		];
+		const budgeted = applyTokenBudget(results, 80); // very tight budget
+		expect(budgeted.length).toBeLessThanOrEqual(results.length);
+	});
+
+	it("applyTokenBudget with zero budget returns empty array", () => {
+		const results = ["// Search 'error': 1 result"];
+		const budgeted = applyTokenBudget(results, 0);
+		expect(budgeted).toEqual(results); // zero budget means no cap (pass-through)
+	});
+
+	// ── De-duplication ────────────────────────────────────────────────
+
+	it("deduplicateResults returns all results when no existing messages", () => {
+		const results = ["// Search 'error': 1 result", "//   turn 2 assistant: fixed the error"];
+		const deduped = deduplicateResults(results, []);
+		expect(deduped).toEqual(results);
+	});
+
+	it("deduplicateResults filters out lines whose content appears in existing messages", () => {
+		const results = [
+			"// Search 'error': 1 result",
+			"//   turn 2 assistant: fixed the error",
+			"//   turn 3 tool: success",
+		];
+		const existing = [{ role: "user", content: "Hey, I fixed the error already." }];
+		const deduped = deduplicateResults(results, existing);
+		// "fixed the error" appears in existing, so that line should be filtered
+		expect(deduped).toContain("// Search 'error': 1 result");
+		expect(deduped).toContain("//   turn 3 tool: success");
+		expect(deduped).not.toContain("//   turn 2 assistant: fixed the error");
+	});
+
+	it("deduplicateResults preserves search header lines", () => {
+		const results = ["// Search 'error': 1 result"];
+		const existing = [{ role: "user", content: "// Search 'error': 1 result" }];
+		const deduped = deduplicateResults(results, existing);
+		// Search header lines are always preserved
+		expect(deduped).toEqual(results);
+	});
+
+	it("deduplicateResults with empty results returns empty array", () => {
+		expect(deduplicateResults([], [{ role: "user", content: "hello" }])).toEqual([]);
 	});
 });

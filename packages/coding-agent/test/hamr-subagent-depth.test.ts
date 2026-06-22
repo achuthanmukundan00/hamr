@@ -10,6 +10,7 @@ async function toolsAtDepth(depth: number): Promise<Map<string, AnyTool>> {
 	const pi = {
 		registerTool: (tool: AnyTool) => tools.set(tool.name, tool),
 		registerShortcut: () => {},
+		on: () => {},
 	} as unknown as Parameters<ExtensionFactory>[0];
 	await createHamrSubagentsExtension(() => [] as ExtensionFactory[], depth)(pi);
 	return tools;

@@ -58,10 +58,21 @@ describe("config paths are Hamr-owned", () => {
 describe("package metadata is Hamr/Skaft-owned", () => {
 	const packages = ["agent", "ai", "coding-agent", "tui"];
 
+	// The published CLI is renamed to @skaft/hamr; the internal workspace packages
+	// (bundled into the CLI) keep their @hamr/ scope.
+	// In the development workspace the package is @hamr/coding-agent; the release
+	// build script (scripts/build-release.mjs) renames it to @skaft/hamr.
+	const expectedName: Record<string, RegExp> = {
+		"coding-agent": /^@hamr\/coding-agent$/,
+		agent: /^@hamr\//,
+		ai: /^@hamr\//,
+		tui: /^@hamr\//,
+	};
+
 	for (const pkgDir of packages) {
-		it(`@hamr/${pkgDir} metadata points at skaft-software/hamr`, () => {
+		it(`${pkgDir} metadata points at skaft-software/hamr`, () => {
 			const pkg = JSON.parse(readFileSync(join(repoRoot, "packages", pkgDir, "package.json"), "utf-8"));
-			expect(pkg.name).toMatch(/^@hamr\//);
+			expect(pkg.name).toMatch(expectedName[pkgDir]);
 			expect(pkg.repository?.url).toContain("skaft-software/hamr");
 			expect(pkg.repository?.url).not.toContain("earendil-works/pi");
 			// Original Pi authorship is preserved as attribution, but the owner is Skaft.
