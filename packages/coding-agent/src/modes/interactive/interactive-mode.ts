@@ -1890,8 +1890,11 @@ export class InteractiveMode {
 	private setHiddenThinkingLabel(label?: string): void {
 		this.hiddenThinkingLabel = label ?? this.defaultHiddenThinkingLabel;
 		for (const child of this.chatContainer.children) {
-			if (child instanceof AssistantMessageComponent) {
-				child.setHiddenThinkingLabel(this.hiddenThinkingLabel);
+			if (
+				"setHiddenThinkingLabel" in child &&
+				typeof (child as Record<string, unknown>).setHiddenThinkingLabel === "function"
+			) {
+				(child as unknown as AssistantMessageComponent).setHiddenThinkingLabel(this.hiddenThinkingLabel);
 			}
 		}
 		if (this.streamingComponent) {
@@ -2932,17 +2935,37 @@ export class InteractiveMode {
 					const model = this.session.model;
 					const modelAccent = model ? theme.modelHexColor(model.provider, model.name) : undefined;
 					const modelGlyph = model ? theme.modelGlyph(model.provider, model.name) : undefined;
-					this.streamingComponent = new AssistantMessageComponent(
-						undefined,
-						this.hideThinkingBlock,
-						this.getMarkdownThemeWithSettings(),
-						this.hiddenThinkingLabel,
-						modelAccent,
-						modelGlyph,
-					);
+					const roleRenderer = this.session.extensionRunner.getRoleMessageRenderer("assistant");
 					this.streamingMessage = event.message;
-					this.chatContainer.addChild(this.streamingComponent);
-					this.streamingComponent.updateContent(this.streamingMessage);
+					if (roleRenderer) {
+						const component = roleRenderer(
+							{
+								message: event.message,
+								expanded: this.toolOutputExpanded,
+								modelAccent,
+								modelGlyph,
+								markdownTheme: this.getMarkdownThemeWithSettings(),
+								hideThinkingBlock: this.hideThinkingBlock,
+								hiddenThinkingLabel: this.hiddenThinkingLabel,
+							},
+							theme,
+						);
+						if (component) {
+							this.streamingComponent = component as unknown as AssistantMessageComponent;
+							this.chatContainer.addChild(this.streamingComponent);
+						}
+					} else {
+						this.streamingComponent = new AssistantMessageComponent(
+							undefined,
+							this.hideThinkingBlock,
+							this.getMarkdownThemeWithSettings(),
+							this.hiddenThinkingLabel,
+							modelAccent,
+							modelGlyph,
+						);
+						this.chatContainer.addChild(this.streamingComponent);
+						this.streamingComponent.updateContent(this.streamingMessage);
+					}
 					this.ui.requestRender();
 				}
 				break;
@@ -3275,7 +3298,14 @@ export class InteractiveMode {
 		// default) each card relies on its own top/bottom padding, which keeps
 		// spacing consistent instead of mixing shaded card padding with an
 		// unshaded spacer. Themes can opt back into a spacer.
-		if (!theme.cards.gaplessCards && this.chatContainer.children.length > 0) {
+		//
+		// Skip when the last chat child is already a Spacer (avoids doubling
+		// when a component like BashExecution adds its own lead spacer).
+		if (
+			!theme.cards.gaplessCards &&
+			this.chatContainer.children.length > 0 &&
+			!(this.chatContainer.children[this.chatContainer.children.length - 1] instanceof Spacer)
+		) {
 			this.chatContainer.addChild(new Spacer(1));
 		}
 
@@ -3329,22 +3359,52 @@ export class InteractiveMode {
 							if (!theme.cards.gaplessCards) {
 								this.chatContainer.addChild(new Spacer(1));
 							}
+							const roleRenderer = this.session.extensionRunner.getRoleMessageRenderer("user");
+							if (roleRenderer) {
+								const component = roleRenderer(
+									{
+										message,
+										expanded: this.toolOutputExpanded,
+										modelAccent,
+										modelGlyph,
+										markdownTheme: this.getMarkdownThemeWithSettings(),
+									},
+									theme,
+								);
+								if (component) this.chatContainer.addChild(component);
+							} else {
+								const userComponent = new UserMessageComponent(
+									skillBlock.userMessage,
+									this.getMarkdownThemeWithSettings(),
+									modelAccent,
+									modelGlyph,
+								);
+								this.chatContainer.addChild(userComponent);
+							}
+						}
+					} else {
+						const roleRenderer = this.session.extensionRunner.getRoleMessageRenderer("user");
+						if (roleRenderer) {
+							const component = roleRenderer(
+								{
+									message,
+									expanded: this.toolOutputExpanded,
+									modelAccent,
+									modelGlyph,
+									markdownTheme: this.getMarkdownThemeWithSettings(),
+								},
+								theme,
+							);
+							if (component) this.chatContainer.addChild(component);
+						} else {
 							const userComponent = new UserMessageComponent(
-								skillBlock.userMessage,
+								textContent,
 								this.getMarkdownThemeWithSettings(),
 								modelAccent,
 								modelGlyph,
 							);
 							this.chatContainer.addChild(userComponent);
 						}
-					} else {
-						const userComponent = new UserMessageComponent(
-							textContent,
-							this.getMarkdownThemeWithSettings(),
-							modelAccent,
-							modelGlyph,
-						);
-						this.chatContainer.addChild(userComponent);
 					}
 					if (options?.populateHistory) {
 						this.editor.addToHistory?.(textContent);
@@ -3353,15 +3413,32 @@ export class InteractiveMode {
 				break;
 			}
 			case "assistant": {
-				const assistantComponent = new AssistantMessageComponent(
-					message,
-					this.hideThinkingBlock,
-					this.getMarkdownThemeWithSettings(),
-					this.hiddenThinkingLabel,
-					modelAccent,
-					modelGlyph,
-				);
-				this.chatContainer.addChild(assistantComponent);
+				const roleRenderer = this.session.extensionRunner.getRoleMessageRenderer("assistant");
+				if (roleRenderer) {
+					const component = roleRenderer(
+						{
+							message,
+							expanded: this.toolOutputExpanded,
+							modelAccent,
+							modelGlyph,
+							markdownTheme: this.getMarkdownThemeWithSettings(),
+							hideThinkingBlock: this.hideThinkingBlock,
+							hiddenThinkingLabel: this.hiddenThinkingLabel,
+						},
+						theme,
+					);
+					if (component) this.chatContainer.addChild(component);
+				} else {
+					const assistantComponent = new AssistantMessageComponent(
+						message,
+						this.hideThinkingBlock,
+						this.getMarkdownThemeWithSettings(),
+						this.hiddenThinkingLabel,
+						modelAccent,
+						modelGlyph,
+					);
+					this.chatContainer.addChild(assistantComponent);
+				}
 				break;
 			}
 			case "toolResult": {
@@ -4277,8 +4354,11 @@ export class InteractiveMode {
 						this.hideThinkingBlock = hidden;
 						this.settingsManager.setHideThinkingBlock(hidden);
 						for (const child of this.chatContainer.children) {
-							if (child instanceof AssistantMessageComponent) {
-								child.setHideThinkingBlock(hidden);
+							if (
+								"setHideThinkingBlock" in child &&
+								typeof (child as Record<string, unknown>).setHideThinkingBlock === "function"
+							) {
+								(child as unknown as AssistantMessageComponent).setHideThinkingBlock(hidden);
 							}
 						}
 						this.chatContainer.clear();

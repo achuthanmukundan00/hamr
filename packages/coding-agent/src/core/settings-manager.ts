@@ -192,8 +192,9 @@ export class FileSettingsStorage implements SettingsStorage {
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
-		const maxAttempts = 10;
-		const delayMs = 20;
+		const maxAttempts = 25;
+		const baseDelayMs = 20;
+		const maxDelayMs = 2000;
 		let lastError: unknown;
 
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -208,6 +209,7 @@ export class FileSettingsStorage implements SettingsStorage {
 					throw error;
 				}
 				lastError = error;
+				const delayMs = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);
 				const start = Date.now();
 				while (Date.now() - start < delayMs) {
 					// Sleep synchronously to avoid changing callers to async.
@@ -309,6 +311,11 @@ export class SettingsManager {
 		agentDir: string = getAgentDir(),
 		options: SettingsManagerCreateOptions = {},
 	): SettingsManager {
+		// Defense-in-depth: when running as a child process with parent config
+		// injected, use in-memory storage so no lock is ever acquired.
+		if (process.env.HAMR_CHILD_CONFIG) {
+			return SettingsManager.inMemory();
+		}
 		const storage = new FileSettingsStorage(cwd, agentDir);
 		return SettingsManager.fromStorage(storage, options);
 	}
@@ -805,7 +812,7 @@ export class SettingsManager {
 	getRetrySettings(): { enabled: boolean; maxRetries: number; baseDelayMs: number } {
 		return {
 			enabled: this.getRetryEnabled(),
-			maxRetries: this.settings.retry?.maxRetries ?? 3,
+			maxRetries: this.settings.retry?.maxRetries ?? 10,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
 		};
 	}

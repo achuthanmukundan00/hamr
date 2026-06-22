@@ -715,7 +715,7 @@ export class AgentSession {
 			this.abortCompaction();
 			this.abortBranchSummary();
 			this.abortBash();
-			this.agent.abort();
+			this.agent.userAbort();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
 		}
@@ -1403,10 +1403,14 @@ export class AgentSession {
 
 	/**
 	 * Abort current operation and wait for agent to become idle.
+	 *
+	 * This is the user-initiated abort path (Escape key). It aborts both the
+	 * lifecycle signal (stopping the LLM stream) and the tool signal (killing
+	 * running subagents, bash commands, etc.).
 	 */
 	async abort(): Promise<void> {
 		this.abortRetry();
-		this.agent.abort();
+		this.agent.userAbort();
 		await this.agent.waitForIdle();
 	}
 
@@ -1634,7 +1638,11 @@ export class AgentSession {
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
 		this._disconnectFromAgent();
-		await this.abort();
+		// Abort only the lifecycle signal (LLM streaming). Running tools
+		// (e.g. subagents) continue uninterrupted through compaction.
+		this.abortRetry();
+		this.agent.abort();
+		await this.agent.waitForIdle();
 		this._compactionAbortController = new AbortController();
 		this._emit({ type: "compaction_start", reason: "manual" });
 

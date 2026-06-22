@@ -1,0 +1,1 @@
+{"version":3,"file":"fts-marks.js","sourceRoot":"","sources":["../../../src/hamr/memory/fts-marks.ts"],"names":[],"mappings":"AAAA,MAAM,UAAU,aAAa,CAAC,CAAS;IACtC,OAAO,CAAC,CAAC,OAAO,CAAC,YAAY,EAAE,EAAE,CAAC,CAAC;AACpC,CAAC","sourcesContent":["export function stripFtsMarks(s: string): string {\n\treturn s.replace(/<\\/?mark>/g, \"\");\n}\n"]}

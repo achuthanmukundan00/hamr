@@ -136,8 +136,9 @@ function writeTrustFile(path: string, data: TrustFile): void {
 function acquireTrustLockSync(path: string): () => void {
 	const trustDir = dirname(path);
 	mkdirSync(trustDir, { recursive: true });
-	const maxAttempts = 10;
-	const delayMs = 20;
+	const maxAttempts = 25;
+	const baseDelayMs = 20;
+	const maxDelayMs = 2000;
 	let lastError: unknown;
 
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -152,6 +153,7 @@ function acquireTrustLockSync(path: string): () => void {
 				throw error;
 			}
 			lastError = error;
+			const delayMs = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);
 			const start = Date.now();
 			while (Date.now() - start < delayMs) {
 				// Sleep synchronously to avoid changing trust store callers to async.

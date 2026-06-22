@@ -154,7 +154,10 @@ class PendingMessageQueue {
 type ActiveRun = {
 	promise: Promise<void>;
 	resolve: () => void;
+	/** Lifecycle signal: aborted on compaction, auto-retry, user escape, and dispose. */
 	abortController: AbortController;
+	/** Tool signal: aborted only on user escape and dispose. NOT aborted on compaction or auto-retry. */
+	toolAbortController: AbortController;
 };
 
 /**
@@ -291,14 +294,43 @@ export class Agent {
 		return this.steeringQueue.hasItems() || this.followUpQueue.hasItems();
 	}
 
-	/** Active abort signal for the current run, if any. */
+	/** Active lifecycle abort signal for the current run, if any. */
 	get signal(): AbortSignal | undefined {
 		return this.activeRun?.abortController.signal;
 	}
 
-	/** Abort the current run, if one is active. */
+	/**
+	 * Active tool abort signal for the current run, if any.
+	 *
+	 * Aborted only on user escape and session dispose.
+	 * NOT aborted on compaction, auto-retry, or other internal lifecycle events.
+	 * This is the signal passed to tool executions so long-running tools
+	 * (e.g. subagents) are not spuriously killed by lifecycle management.
+	 */
+	get toolSignal(): AbortSignal | undefined {
+		return this.activeRun?.toolAbortController.signal;
+	}
+
+	/**
+	 * Abort the current run's lifecycle signal.
+	 *
+	 * Used for internal lifecycle events (compaction, auto-retry).
+	 * Does NOT abort running tools.
+	 */
 	abort(): void {
 		this.activeRun?.abortController.abort();
+	}
+
+	/**
+	 * Abort the current run including running tools.
+	 *
+	 * Used for user escape and session dispose. Aborts both the lifecycle
+	 * signal (stopping LLM streaming) and the tool signal (killing subagents,
+	 * bash commands, etc.).
+	 */
+	userAbort(): void {
+		this.activeRun?.abortController.abort();
+		this.activeRun?.toolAbortController.abort();
 	}
 
 	/**
@@ -384,25 +416,27 @@ export class Agent {
 		messages: AgentMessage[],
 		options: { skipInitialSteeringPoll?: boolean } = {},
 	): Promise<void> {
-		await this.runWithLifecycle(async (signal) => {
+		await this.runWithLifecycle(async (lifecycleSignal, toolSignal) => {
 			await runAgentLoop(
 				messages,
 				this.createContextSnapshot(),
 				this.createLoopConfig(options),
 				(event) => this.processEvents(event),
-				signal,
+				lifecycleSignal,
+				toolSignal,
 				this.streamFn,
 			);
 		});
 	}
 
 	private async runContinuation(): Promise<void> {
-		await this.runWithLifecycle(async (signal) => {
+		await this.runWithLifecycle(async (lifecycleSignal, toolSignal) => {
 			await runAgentLoopContinue(
 				this.createContextSnapshot(),
 				this.createLoopConfig(),
 				(event) => this.processEvents(event),
-				signal,
+				lifecycleSignal,
+				toolSignal,
 				this.streamFn,
 			);
 		});
@@ -445,24 +479,27 @@ export class Agent {
 		};
 	}
 
-	private async runWithLifecycle(executor: (signal: AbortSignal) => Promise<void>): Promise<void> {
+	private async runWithLifecycle(
+		executor: (lifecycleSignal: AbortSignal, toolSignal: AbortSignal) => Promise<void>,
+	): Promise<void> {
 		if (this.activeRun) {
 			throw new Error("Agent is already processing.");
 		}
 
 		const abortController = new AbortController();
+		const toolAbortController = new AbortController();
 		let resolvePromise = () => {};
 		const promise = new Promise<void>((resolve) => {
 			resolvePromise = resolve;
 		});
-		this.activeRun = { promise, resolve: resolvePromise, abortController };
+		this.activeRun = { promise, resolve: resolvePromise, abortController, toolAbortController };
 
 		this._state.isStreaming = true;
 		this._state.streamingMessage = undefined;
 		this._state.errorMessage = undefined;
 
 		try {
-			await executor(abortController.signal);
+			await executor(abortController.signal, toolAbortController.signal);
 		} catch (error) {
 			await this.handleRunFailure(error, abortController.signal.aborted);
 		} finally {

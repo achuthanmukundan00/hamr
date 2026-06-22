@@ -45,6 +45,8 @@ export type {
 	// Event Results
 	ContextEventResult,
 	ContextUsage,
+	// Message Rendering
+	CoreMessageRole,
 	CustomToolCallEvent,
 	CustomToolResultEvent,
 	EditorFactory,
@@ -91,7 +93,6 @@ export type {
 	LsToolResultEvent,
 	// Events - Message
 	MessageEndEvent,
-	// Message Rendering
 	MessageRenderer,
 	MessageRenderOptions,
 	MessageStartEvent,
@@ -116,6 +117,8 @@ export type {
 	// Events - Resources
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
+	RoleMessageRenderContext,
+	RoleMessageRenderer,
 	SendMessageHandler,
 	SendUserMessageHandler,
 	SessionBeforeCompactEvent,

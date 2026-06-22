@@ -105,7 +105,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const events: AgentEvent[] = [];
-		const stream = agentLoop([userPrompt], context, config, undefined, streamFn);
+		const stream = agentLoop([userPrompt], context, config, undefined, undefined, streamFn);
 
 		for await (const event of stream) {
 			events.push(event);
@@ -172,7 +172,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const events: AgentEvent[] = [];
-		const stream = agentLoop([userPrompt], context, config, undefined, streamFn);
+		const stream = agentLoop([userPrompt], context, config, undefined, undefined, streamFn);
 
 		for await (const event of stream) {
 			events.push(event);
@@ -224,7 +224,7 @@ describe("agentLoop with AgentMessage", () => {
 			return stream;
 		};
 
-		const stream = agentLoop([userPrompt], context, config, undefined, streamFn);
+		const stream = agentLoop([userPrompt], context, config, undefined, undefined, streamFn);
 
 		for await (const _ of stream) {
 			// consume
@@ -288,7 +288,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const events: AgentEvent[] = [];
-		const stream = agentLoop([userPrompt], context, config, undefined, streamFn);
+		const stream = agentLoop([userPrompt], context, config, undefined, undefined, streamFn);
 
 		for await (const event of stream) {
 			events.push(event);
@@ -361,7 +361,7 @@ describe("agentLoop with AgentMessage", () => {
 			return stream;
 		};
 
-		const stream = agentLoop([userPrompt], context, config, undefined, streamFn);
+		const stream = agentLoop([userPrompt], context, config, undefined, undefined, streamFn);
 		for await (const _event of stream) {
 			// consume
 		}
@@ -441,7 +441,7 @@ describe("agentLoop with AgentMessage", () => {
 			return stream;
 		};
 
-		const stream = agentLoop([userPrompt], context, config, undefined, streamFn);
+		const stream = agentLoop([userPrompt], context, config, undefined, undefined, streamFn);
 		for await (const _event of stream) {
 			// consume
 		}
@@ -492,7 +492,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		let callIndex = 0;
-		const stream = agentLoop([userPrompt], context, config, undefined, () => {
+		const stream = agentLoop([userPrompt], context, config, undefined, undefined, () => {
 			const mockStream = new MockAssistantStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
@@ -589,7 +589,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const events: AgentEvent[] = [];
-		const stream = agentLoop([userPrompt], context, config, undefined, (_model, ctx, _options) => {
+		const stream = agentLoop([userPrompt], context, config, undefined, undefined, (_model, ctx, _options) => {
 			// Check if interrupt message is in context on second call
 			if (callIndex === 1) {
 				sawInterruptInContext = ctx.messages.some(
@@ -694,7 +694,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		let callIndex = 0;
-		const stream = agentLoop([userPrompt], context, config, undefined, () => {
+		const stream = agentLoop([userPrompt], context, config, undefined, undefined, () => {
 			const mockStream = new MockAssistantStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
@@ -788,7 +788,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		let callIndex = 0;
-		const stream = agentLoop([userPrompt], context, config, undefined, () => {
+		const stream = agentLoop([userPrompt], context, config, undefined, undefined, () => {
 			const mockStream = new MockAssistantStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
@@ -863,7 +863,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		let callIndex = 0;
-		const stream = agentLoop([userPrompt], context, config, undefined, () => {
+		const stream = agentLoop([userPrompt], context, config, undefined, undefined, () => {
 			const mockStream = new MockAssistantStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
@@ -932,32 +932,39 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		let llmCalls = 0;
-		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, (_model, ctx) => {
-			llmCalls++;
-			if (llmCalls === 2) {
-				convertedSecondTurnSystemPrompt = ctx.systemPrompt ?? "";
-			}
-			const mockStream = new MockAssistantStream();
-			queueMicrotask(() => {
-				if (llmCalls === 1) {
-					mockStream.push({
-						type: "done",
-						reason: "toolUse",
-						message: createAssistantMessage(
-							[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
-							"toolUse",
-						),
-					});
-				} else {
-					mockStream.push({
-						type: "done",
-						reason: "stop",
-						message: createAssistantMessage([{ type: "text", text: "done" }]),
-					});
+		const stream = agentLoop(
+			[createUserMessage("echo something")],
+			context,
+			config,
+			undefined,
+			undefined,
+			(_model, ctx) => {
+				llmCalls++;
+				if (llmCalls === 2) {
+					convertedSecondTurnSystemPrompt = ctx.systemPrompt ?? "";
 				}
-			});
-			return mockStream;
-		});
+				const mockStream = new MockAssistantStream();
+				queueMicrotask(() => {
+					if (llmCalls === 1) {
+						mockStream.push({
+							type: "done",
+							reason: "toolUse",
+							message: createAssistantMessage(
+								[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+								"toolUse",
+							),
+						});
+					} else {
+						mockStream.push({
+							type: "done",
+							reason: "stop",
+							message: createAssistantMessage([{ type: "text", text: "done" }]),
+						});
+					}
+				});
+				return mockStream;
+			},
+		);
 
 		for await (const _event of stream) {
 			// consume
@@ -1014,7 +1021,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		let llmCalls = 0;
-		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
+		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, undefined, () => {
 			llmCalls++;
 			const mockStream = new MockAssistantStream();
 			queueMicrotask(() => {
@@ -1092,7 +1099,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		let llmCalls = 0;
-		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
+		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, undefined, () => {
 			llmCalls++;
 			const mockStream = new MockAssistantStream();
 			queueMicrotask(() => {
@@ -1145,7 +1152,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		let callIndex = 0;
-		const stream = agentLoop([createUserMessage("echo both")], context, config, undefined, () => {
+		const stream = agentLoop([createUserMessage("echo both")], context, config, undefined, undefined, () => {
 			const mockStream = new MockAssistantStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
@@ -1209,7 +1216,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		let llmCalls = 0;
-		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
+		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, undefined, () => {
 			llmCalls++;
 			const mockStream = new MockAssistantStream();
 			queueMicrotask(() => {
@@ -1270,7 +1277,7 @@ describe("agentLoopContinue with AgentMessage", () => {
 		};
 
 		const events: AgentEvent[] = [];
-		const stream = agentLoopContinue(context, config, undefined, streamFn);
+		const stream = agentLoopContinue(context, config, undefined, undefined, streamFn);
 
 		for await (const event of stream) {
 			events.push(event);
@@ -1337,7 +1344,7 @@ describe("agentLoopContinue with AgentMessage", () => {
 		};
 
 		// Should not throw - the custom message will be converted to user message
-		const stream = agentLoopContinue(context, config, undefined, streamFn);
+		const stream = agentLoopContinue(context, config, undefined, undefined, streamFn);
 
 		const events: AgentEvent[] = [];
 		for await (const event of stream) {

@@ -127,6 +127,7 @@ const ThemeJsonSchema = Type.Object({
 		Type.Object({
 			showHeadings: Type.Optional(Type.Boolean()),
 			headingGlyph: Type.Optional(Type.String()),
+			promptHeadingGlyph: Type.Optional(Type.String()),
 			promptLabel: Type.Optional(Type.String()),
 			responseLabel: Type.Optional(Type.String()),
 			thoughtLabel: Type.Optional(Type.String()),
@@ -156,6 +157,9 @@ export interface CardConfig {
 	showHeadings: boolean;
 	/** "model" → active model glyph; "" → no glyph; any other string → literal glyph. */
 	headingGlyph: string;
+	/** Glyph used for prompt (user message) card headings. "model" → active model
+	 *  glyph; "" → no glyph; any other string → literal glyph. Default: "⚒". */
+	promptHeadingGlyph: string;
 	promptLabel: string;
 	responseLabel: string;
 	thoughtLabel: string;
@@ -183,6 +187,7 @@ export interface CardConfig {
 export const DEFAULT_CARD_CONFIG: CardConfig = {
 	showHeadings: true,
 	headingGlyph: "model",
+	promptHeadingGlyph: "⚒",
 	promptLabel: "PROMPT",
 	responseLabel: "RESPONSE",
 	thoughtLabel: "THOUGHT",
@@ -680,6 +685,7 @@ export class Theme {
 	readonly cards: CardConfig;
 	private fgColors: Map<ThemeColor, string>;
 	private bgColors: Map<ThemeBg, string>;
+	private bgHex: Map<ThemeBg, string>;
 	private mode: ColorMode;
 
 	constructor(
@@ -705,8 +711,15 @@ export class Theme {
 			this.fgColors.set(key, fgAnsi(value, mode));
 		}
 		this.bgColors = new Map();
+		this.bgHex = new Map();
 		for (const [key, value] of Object.entries(bgColors) as [ThemeBg, string | number][]) {
 			this.bgColors.set(key, bgAnsi(value, mode));
+			// Store raw hex for color blending (modelAdaptiveBg, etc.)
+			if (typeof value === "string" && value.startsWith("#")) {
+				this.bgHex.set(key, value);
+			} else if (typeof value === "number") {
+				this.bgHex.set(key, ansi256ToHex(value));
+			}
 		}
 	}
 
@@ -752,6 +765,11 @@ export class Theme {
 		const ansi = this.bgColors.get(color);
 		if (!ansi) throw new Error(`Unknown theme background color: ${color}`);
 		return ansi;
+	}
+
+	/** Raw hex for a background color key (for color blending). */
+	getBgHex(color: ThemeBg): string | undefined {
+		return this.bgHex.get(color);
 	}
 
 	getColorMode(): ColorMode {
@@ -1003,6 +1021,41 @@ export class Theme {
 
 		return "#61afef";
 	}
+
+	/**
+	 * Blend a model accent hex into a theme background to tint card surfaces
+	 * with the model's brand color. Used for prompt/response card backgrounds
+	 * when shadedSurfaces and modelAdaptive are both enabled — makes it easy
+	 * to pick out prompts and responses visually while scrolling.
+	 *
+	 * The blend is ~12% model color into the base background so the tint is
+	 * subtle and stays readable on both dark and light terminals.
+	 */
+	modelAdaptiveBg(accentHex: string, bgHex: string): string {
+		const accent = hexToRgb(accentHex);
+		const bg = hexToRgb(bgHex);
+		const ratio = 0.12;
+		const r = Math.round(bg.r * (1 - ratio) + accent.r * ratio);
+		const g = Math.round(bg.g * (1 - ratio) + accent.g * ratio);
+		const b = Math.round(bg.b * (1 - ratio) + accent.b * ratio);
+		return rgbToHex({ r, g, b });
+	}
+
+	/**
+	 * Returns a background function that tints the card surface with the
+	 * model's brand accent color. Falls back to the plain bg when
+	 * modelAdaptive is off or no accent is provided.
+	 */
+	modelAdaptiveBgFn(accentHex: string | undefined, bgKey: ThemeBg): (s: string) => string {
+		if (!this.modelAdaptive || !accentHex) {
+			return (s: string) => this.bg(bgKey, s);
+		}
+		const baseHex = this.getBgHex(bgKey);
+		if (!baseHex) return (s: string) => this.bg(bgKey, s);
+		const blended = this.modelAdaptiveBg(accentHex, baseHex);
+		const ansi = bgAnsi(blended, this.mode);
+		return (s: string) => `${ansi}${s}\x1b[49m`;
+	}
 }
 
 // ============================================================================
@@ -1174,59 +1227,68 @@ function computeTerminalAdaptiveColors(
 	baseColors: Record<string, string | number>,
 ): Record<string, string> {
 	const termHsl = rgbToHsl(terminalRgb);
+	const isDark = termHsl.l < 0.5;
 
-	// Blend terminal hue into each theme background color while keeping the
-	// theme's designed lightness (card elevation). On a black/white terminal
-	// (saturation ≈ 0) this is a near no-op — cards look exactly as the
-	// theme author intended. On a coloured terminal (solarized, pink, etc.)
-	// cards inherit a subtle hue tint at ~20% blend.
-	const adaptColor = (key: string): string | undefined => {
-		const raw = baseColors[key];
-		if (raw === undefined || raw === "") return undefined;
-		const baseHex = typeof raw === "number" ? ansi256ToHex(raw) : raw;
-		if (!baseHex.startsWith("#")) return undefined;
+	// Derive a neutral surface color from the terminal background by
+	// shifting lightness a tiny amount. Cards on dark terminals are
+	// barely lighter than the terminal itself — they blend in.
+	// Floor: if the terminal base is effectively black (e.g. fallback), start
+	// from a visible dark gray so cards are always distinguishable.
+	const baseL = termHsl.l <= 0.005 ? 0.08 : termHsl.l;
+	const elevation = (offset: number): string => {
+		const l = isDark ? clamp(baseL + offset, 0.002, 0.8) : clamp(baseL - offset, 0.02, 0.97);
+		return rgbToHex(hslToRgb({ h: termHsl.h, s: termHsl.s * 0.08, l }));
+	};
 
-		const baseRgb = hexToRgb(baseHex);
-		const baseHsl = rgbToHsl(baseRgb);
+	// Blend a theme-designed tint (success green, error red, etc.) into
+	// a terminal-derived base lightness so colored surfaces feel native.
+	const tinted = (tintKey: string, baseElevation: number): string | undefined => {
+		const tintHex =
+			typeof baseColors[tintKey] === "number"
+				? ansi256ToHex(baseColors[tintKey] as number)
+				: (baseColors[tintKey] as string | undefined);
+		if (!tintHex?.startsWith("#")) return undefined;
 
-		// Both terminal and base are effectively greyscale — nothing to blend
-		if (baseHsl.s < 0.02 && termHsl.s < 0.02) return baseHex;
+		const tintHsl = rgbToHsl(hexToRgb(tintHex));
+		// Only apply the tint if the theme designed a meaningful hue for it
+		if (tintHsl.s < 0.05) return elevation(baseElevation);
 
-		// Blend 20% terminal hue into the base, keeping the base's designed
-		// lightness and most of its saturation.
-		const hueBlend = 0.2;
-		const satBlend = 0.1;
-		const lumBlend = 0.03;
-
-		const h = baseHsl.h * (1 - hueBlend) + termHsl.h * hueBlend;
-		const s = baseHsl.s * (1 - satBlend) + termHsl.s * satBlend;
-		const l = baseHsl.l * (1 - lumBlend) + termHsl.l * lumBlend;
-
-		return rgbToHex(hslToRgb({ h, s: clamp(s, 0, 1), l: clamp(l, 0.02, 0.97) }));
+		const baseL = isDark ? clamp(termHsl.l + baseElevation, 0.004, 0.8) : clamp(termHsl.l - baseElevation, 0.02, 0.97);
+		return rgbToHex(hslToRgb({ h: tintHsl.h, s: clamp(tintHsl.s * 0.7, 0, 1), l: baseL }));
 	};
 
 	const result: Record<string, string> = {};
-	const adaptiveKeys = [
-		"cardBg",
-		"surfaceBg",
-		"thinkingBg",
-		"statusBarBg",
-		"editorBg",
-		"userMessageBg",
-		"customMessageBg",
-		"toolPendingBg",
-		"toolSuccessBg",
-		"toolErrorBg",
-		"toolWarningBg",
-		"selectedBg",
-		"editorSelection",
-		"toolDiffAddedBg",
-		"toolDiffRemovedBg",
-	];
-	for (const key of adaptiveKeys) {
-		const adapted = adaptColor(key);
-		if (adapted !== undefined) result[key] = adapted;
-	}
+
+	// Core surfaces — barely perceptible lift from terminal background.
+	// These should feel like they belong to the terminal, not float above it.
+	result.cardBg = elevation(0.004);
+	result.surfaceBg = elevation(0.004);
+	result.thinkingBg = elevation(0.0);
+	result.statusBarBg = elevation(0.002);
+	result.editorBg = elevation(0.0);
+
+	// Message surfaces — subtle lift for visual separation
+	result.userMessageBg = elevation(0.008);
+	result.customMessageBg = elevation(0.008);
+
+	// Tool surfaces — minimal elevation
+	result.toolPendingBg = elevation(0.006);
+	result.toolWarningBg = elevation(0.006);
+
+	// Selection highlight — needs enough contrast to be visible
+	const selL = isDark ? clamp(termHsl.l + 0.06, 0.02, 0.8) : clamp(termHsl.l - 0.06, 0.02, 0.97);
+	result.selectedBg = rgbToHex(hslToRgb({ h: termHsl.h, s: termHsl.s * 0.08, l: selL }));
+	result.editorSelection = result.selectedBg;
+
+	// Colored surfaces — blend theme tint with terminal-derived lightness
+	const toolSuccess = tinted("toolSuccessBg", 0.012);
+	if (toolSuccess) result.toolSuccessBg = toolSuccess;
+	const toolError = tinted("toolErrorBg", 0.012);
+	if (toolError) result.toolErrorBg = toolError;
+	const diffAdded = tinted("toolDiffAddedBg", 0.012);
+	if (diffAdded) result.toolDiffAddedBg = diffAdded;
+	const diffRemoved = tinted("toolDiffRemovedBg", 0.012);
+	if (diffRemoved) result.toolDiffRemovedBg = diffRemoved;
 
 	return result;
 }
@@ -1244,6 +1306,12 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 			if (idx !== undefined) {
 				terminalRgb = hexToRgb(ansi256ToHex(idx));
 			}
+		}
+		// Fallback: if COLORFGBG isn't available, use a reasonable anchor —
+		// #1a1a1a for dark, #f0f0f0 for light. Pure black (#000) would cause
+		// adaptive cards to also render black, making them invisible.
+		if (!terminalRgb) {
+			terminalRgb = envDetection.theme === "light" ? { r: 0xf0, g: 0xf0, b: 0xf0 } : { r: 0x1a, g: 0x1a, b: 0x1a };
 		}
 	}
 
@@ -1865,12 +1933,13 @@ export function getMarkdownTheme(): MarkdownTheme {
 			// marked usually strips the trailing newline, but guard against an
 			// empty final line so the gutter count stays accurate.
 			while (rawLines.length > 1 && rawLines[rawLines.length - 1] === "") rawLines.pop();
-			const gutterWidth = String(rawLines.length).length;
-			const gutter = (n: number) => theme.fg("mdCodeBlockBorder", String(n).padStart(gutterWidth));
 
-			// Diff/patch blocks: shade +/- lines red/green (with a line-number
-			// gutter) instead of running them through the syntax highlighter.
+			// Diff/patch blocks: shade +/- lines red/green with a line-number
+			// gutter. Line numbers are meaningful here (they reference real file
+			// positions).
 			if (lang === "diff" || lang === "patch") {
+				const gutterWidth = String(rawLines.length).length;
+				const gutter = (n: number) => theme.fg("mdCodeBlockBorder", String(n).padStart(gutterWidth));
 				return rawLines.map((line, i) => {
 					const numbered = `${gutter(i + 1)} ${line}`;
 					if (line.startsWith("+") && !line.startsWith("+++")) {
@@ -1883,8 +1952,10 @@ export function getMarkdownTheme(): MarkdownTheme {
 				});
 			}
 
-			// Validate language before highlighting to avoid stderr spam from cli-highlight
-			// and prose being misdetected as code (cli-highlight auto-detection is noisy).
+			// All other code blocks: no line numbers. Line-number gutters in
+			// general markdown output waste tokens when copied into other agents.
+			// Tool outputs (read, edit, bash) render their own line numbers
+			// where needed via their dedicated renderResult callbacks.
 			const validLang = lang && supportsLanguage(lang) ? lang : undefined;
 			let highlighted: string[];
 			if (!validLang) {
@@ -1900,8 +1971,8 @@ export function getMarkdownTheme(): MarkdownTheme {
 					highlighted = rawLines.map((line) => theme.fg("mdCodeBlock", line));
 				}
 			}
-			// Prepend a dim line-number gutter to every code line.
-			return rawLines.map((raw, i) => `${gutter(i + 1)} ${highlighted[i] ?? theme.fg("mdCodeBlock", raw)}`);
+			// Return highlighted lines without line-number gutter.
+			return highlighted.map((line) => line);
 		},
 	};
 }

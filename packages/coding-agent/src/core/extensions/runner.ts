@@ -19,6 +19,7 @@ import type {
 	ContextEvent,
 	ContextEventResult,
 	ContextUsage,
+	CoreMessageRole,
 	Extension,
 	ExtensionActions,
 	ExtensionCommandContext,
@@ -49,6 +50,7 @@ import type {
 	ResolvedCommand,
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
+	RoleMessageRenderer,
 	SessionBeforeCompactResult,
 	SessionBeforeForkResult,
 	SessionBeforeSwitchResult,
@@ -551,6 +553,16 @@ export class ExtensionRunner {
 	getMessageRenderer(customType: string): MessageRenderer | undefined {
 		for (const ext of this.extensions) {
 			const renderer = ext.messageRenderers.get(customType);
+			if (renderer) {
+				return renderer;
+			}
+		}
+		return undefined;
+	}
+
+	getRoleMessageRenderer(role: CoreMessageRole): RoleMessageRenderer | undefined {
+		for (const ext of this.extensions) {
+			const renderer = ext.roleMessageRenderers.get(role);
 			if (renderer) {
 				return renderer;
 			}

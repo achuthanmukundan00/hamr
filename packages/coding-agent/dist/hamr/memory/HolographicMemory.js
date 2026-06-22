@@ -1,0 +1,525 @@
+/**
+ * HolographicMemory — SQLite FTS5-backed semantic memory for agent context.
+ *
+ * Architecture:
+ *   Every turn → INSERT into FTS5 (fire-and-forget, non-blocking)
+ *   Agent needs history → search("error from 5 turns ago") → relevant rows
+ *   Context exhausted → handoff() → structured manifest for child agent
+ *
+ * This is the architectural differentiator from the SOTA review:
+ * zero tokens burned, zero information loss, agent queries what it needs.
+ *
+ * Shares the SQLite connection with EventStore. If SQLite is unavailable,
+ * all operations are safe no-ops.
+ */
+// ─── HolographicMemory ───────────────────────────────────────────────────────
+/**
+ * @public
+ */
+export class HolographicMemory {
+    constructor(db) {
+        this.insertStmt = null;
+        // ── Cached prepared statements (prepared once, reused every turn) ──
+        this.statsStmt = null;
+        this.recentEntriesStmt = null;
+        this.searchStmt = null;
+        this.searchSnippetStmt = null;
+        this.handoffCountsStmt = null;
+        this.latestByTagStmt = null;
+        // ── Word frequency cache (invalidated on store) ──
+        this._suggestedTermsCache = null;
+        /** Count of store errors since construction. Non-zero means FTS5 is silently failing. */
+        this.storeErrorCount = 0;
+        this._storeErrorWarned = false;
+        this.db = db;
+        if (db) {
+            try {
+                this.insertStmt = db.prepare(`
+          INSERT INTO memory_fts (turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+          VALUES (@turnId, @sessionId, @role, @toolName, @filePaths, @content, @domainTags)
+        `);
+                this.statsStmt = db.prepare(`SELECT COUNT(*) as entries, COUNT(DISTINCT turn_id) as turns FROM memory_fts`);
+                this.recentEntriesStmt = db.prepare(`SELECT turn_id, session_id, role, tool_name, file_paths, domain_tags, content
+           FROM memory_fts
+           ORDER BY rowid DESC
+           LIMIT @limit`);
+                this.searchStmt = db.prepare(`SELECT turn_id, session_id, role, tool_name, file_paths, domain_tags, content, rank
+           FROM memory_fts
+           WHERE memory_fts MATCH @query
+           ORDER BY rank
+           LIMIT @limit`);
+                this.searchSnippetStmt = db.prepare(`SELECT turn_id, session_id, role, tool_name, file_paths, domain_tags,
+                  snippet(memory_fts, 5, '<mark>', '</mark>', '...', 32) AS snippet,
+                  content, rank
+           FROM memory_fts
+           WHERE memory_fts MATCH @query
+           ORDER BY rank
+           LIMIT @limit`);
+                this.handoffCountsStmt = db.prepare(`SELECT COUNT(DISTINCT turn_id) as turns, COUNT(*) as entries
+           FROM memory_fts
+           WHERE session_id = @sessionId`);
+                // domain_tags is UNINDEXED, so it can't be reached via FTS5 MATCH —
+                // a plain LIKE over the comma-joined tags is the way to find tagged rows.
+                this.latestByTagStmt = db.prepare(`SELECT turn_id, session_id, role, tool_name, file_paths, domain_tags, content
+           FROM memory_fts
+           WHERE domain_tags LIKE '%' || @tag || '%'
+             AND session_id = @sessionId
+           ORDER BY rowid DESC
+           LIMIT 1`);
+            }
+            catch {
+                // FTS5 table may not exist yet — will be created by EventStore migration
+                this.insertStmt = null;
+            }
+        }
+    }
+    get isAvailable() {
+        return this.db !== null && this.insertStmt !== null;
+    }
+    /** Check if the given session has any stored entries. */
+    hasSessionEntries(sessionId) {
+        if (!this.handoffCountsStmt)
+            return false;
+        const counts = this.handoffCountsStmt.get({ sessionId });
+        return (counts?.entries ?? 0) > 0;
+    }
+    // ── Write ──────────────────────────────────────────────────────────────
+    /**
+     * Store a memory entry in FTS5.
+     * Fire-and-forget — errors are caught, never thrown.
+     * Target: <5ms per store.
+     */
+    store(entry) {
+        if (!this.isAvailable || !this.insertStmt)
+            return;
+        try {
+            this.insertStmt.run({
+                turnId: entry.turnId,
+                sessionId: entry.sessionId,
+                role: entry.role,
+                toolName: entry.toolName ?? null,
+                filePaths: entry.filePaths ? entry.filePaths.join(",") : null,
+                domainTags: entry.domainTags && entry.domainTags.length > 0 ? entry.domainTags.join(",") : null,
+                content: entry.content.slice(0, 8000), // cap at 8K chars per entry
+            });
+            // Invalidate caches when memory changes
+            this._suggestedTermsCache = null;
+        }
+        catch {
+            // Fire-and-forget: never crash the agent on memory failures
+            this.storeErrorCount += 1;
+            if (!this._storeErrorWarned && this.storeErrorCount >= 3) {
+                this._storeErrorWarned = true;
+                // Log to stderr as a last resort — logger may not be available
+                console.error(`[hamr] HolographicMemory: ${this.storeErrorCount} store() failures. FTS5 may be unavailable or corrupt.`);
+            }
+        }
+    }
+    // ── Search ─────────────────────────────────────────────────────────────
+    /**
+     * Full-text search over stored memory entries.
+     *
+     * Uses FTS5 with Porter stemming — "login form" matches "login forms".
+     * Results ranked by FTS5 relevance (bm25).
+     *
+     * @param query - FTS5 search query (supports AND, OR, NOT, prefix*).
+     * @param limit - Maximum results to return (default 10).
+     */
+    search(query, limit = 10) {
+        if (!this.searchStmt)
+            return [];
+        // Sanitize query for FTS5: escape special characters, only allow safe tokens
+        const safeQuery = query.replace(/[^\w\s*\-"()]/g, " ").trim();
+        if (!safeQuery)
+            return [];
+        try {
+            const rows = this.searchStmt.all({ query: safeQuery, limit });
+            return rows.map((r) => ({
+                turnId: r.turn_id,
+                sessionId: r.session_id,
+                role: r.role,
+                toolName: r.tool_name,
+                filePaths: r.file_paths,
+                domainTags: r.domain_tags,
+                content: r.content,
+                rank: r.rank,
+            }));
+        }
+        catch {
+            return [];
+        }
+    }
+    /**
+     * Search with snippet context (FTS5 snippet()).
+     * Returns matching fragments with surrounding text for readability.
+     */
+    searchWithSnippets(query, limit = 5) {
+        if (!this.searchSnippetStmt)
+            return [];
+        const safeQuery = query.replace(/[^\w\s*\-"()]/g, " ").trim();
+        if (!safeQuery)
+            return [];
+        try {
+            const rows = this.searchSnippetStmt.all({ query: safeQuery, limit });
+            return rows.map((r) => ({
+                turnId: r.turn_id,
+                sessionId: r.session_id,
+                role: r.role,
+                toolName: r.tool_name,
+                filePaths: r.file_paths,
+                domainTags: r.domain_tags,
+                content: r.content,
+                rank: r.rank,
+                snippet: r.snippet,
+            }));
+        }
+        catch {
+            return [];
+        }
+    }
+    /**
+     * Fetch the most recently stored entry carrying the given domain tag.
+     *
+     * Used to surface a survival manifest (domainTag "survival") prominently on
+     * resume. Returns null when no such entry exists or memory is unavailable.
+     */
+    getLatestByDomainTag(tag, sessionId) {
+        if (!this.latestByTagStmt)
+            return null;
+        const trimmed = tag.trim();
+        if (!trimmed)
+            return null;
+        try {
+            const row = this.latestByTagStmt.get({ tag: trimmed, sessionId });
+            if (!row)
+                return null;
+            return {
+                turnId: row.turn_id,
+                sessionId: row.session_id,
+                role: row.role,
+                toolName: row.tool_name,
+                filePaths: row.file_paths,
+                domainTags: row.domain_tags,
+                content: row.content,
+                rank: 0,
+            };
+        }
+        catch {
+            return null;
+        }
+    }
+    // ── Handoff ────────────────────────────────────────────────────────────
+    /**
+     * Generate a structured handoff manifest for context exhaustion scenarios.
+     *
+     * Contains:
+     *   - Key findings from recent turns
+     *   - Files touched (read or changed)
+     *   - Suggested search terms for the next agent
+     *   - Turn/entry counts
+     */
+    handoff() {
+        if (!this.recentEntriesStmt || !this.handoffCountsStmt) {
+            return {
+                sessionId: "",
+                keyFindings: [],
+                filesTouched: [],
+                suggestedSearchTerms: [],
+                turnCount: 0,
+                entryCount: 0,
+                domainTags: [],
+            };
+        }
+        try {
+            // Get recent entries (last 20) using cached statement
+            const recent = this.recentEntriesStmt.all({ limit: 20 });
+            // Extract key findings: error messages, tool outputs with "error", "fail", "success"
+            const keyFindings = [];
+            const filesTouched = new Set();
+            const seenFindings = new Set();
+            const domainTags = new Set();
+            for (const entry of recent) {
+                // Collect domain tags from entries
+                if (entry.domain_tags) {
+                    for (const tag of entry.domain_tags.split(",")) {
+                        const trimmed = tag.trim();
+                        if (trimmed)
+                            domainTags.add(trimmed);
+                    }
+                }
+                if (entry.file_paths) {
+                    for (const fp of entry.file_paths.split(",")) {
+                        const trimmed = fp.trim();
+                        if (trimmed)
+                            filesTouched.add(trimmed);
+                    }
+                }
+                // Extract meaningful lines: decisions, errors, files.
+                // Priority order ensures resumed agents get actionable context, not just error dumps.
+                const intentMarkers = [
+                    "i'll",
+                    "i will",
+                    "let me",
+                    "let's",
+                    "plan to",
+                    "going to",
+                    "approach",
+                    "decided",
+                    "my plan",
+                    "the fix",
+                    "fix is",
+                    "solution is",
+                    "next step",
+                    "will need to",
+                ];
+                const lines = entry.content.split("\n");
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (trimmed.length < 20 || trimmed.length > 500 || seenFindings.has(trimmed))
+                        continue;
+                    const lower = trimmed.toLowerCase();
+                    // Priority 1: decisions and plans (what the model intends to do)
+                    if (intentMarkers.some((m) => lower.includes(m))) {
+                        seenFindings.add(trimmed);
+                        keyFindings.push(trimmed);
+                    }
+                    // Priority 2: errors, warnings, failures, successes (with structural context)
+                    else if ((lower.includes("error") || lower.includes("fail") || lower.includes("success")) &&
+                        (lower.includes(":") || lower.includes("at ") || lower.includes("in "))) {
+                        seenFindings.add(trimmed);
+                        keyFindings.push(trimmed);
+                    }
+                    // Priority 3: file paths mentioned in content
+                    else if (/[/\w]+\.[a-z]{2,6}\b/.test(trimmed) && trimmed.includes("/")) {
+                        seenFindings.add(trimmed);
+                        keyFindings.push(trimmed);
+                    }
+                    if (keyFindings.length >= 15)
+                        break;
+                }
+                if (keyFindings.length >= 15)
+                    break;
+            }
+            // Get counts — single combined query instead of two separate ones
+            const sessionId = recent.length > 0 ? recent[0].session_id : "";
+            const counts = this.handoffCountsStmt.get({ sessionId });
+            return {
+                sessionId,
+                keyFindings,
+                filesTouched: Array.from(filesTouched).sort(),
+                domainTags: Array.from(domainTags).sort(),
+                suggestedSearchTerms: this._computeSuggestedTerms(recent),
+                turnCount: counts?.turns ?? 0,
+                entryCount: counts?.entries ?? 0,
+            };
+        }
+        catch {
+            return {
+                sessionId: "",
+                keyFindings: [],
+                filesTouched: [],
+                domainTags: [],
+                suggestedSearchTerms: [],
+                turnCount: 0,
+                entryCount: 0,
+            };
+        }
+    }
+    /**
+     * Generate suggested FTS5 search terms from recent memory.
+     *
+     * Extracts:
+     *   - File paths mentioned in content
+     *   - Error/diagnostic keywords
+     *   - Tool names from recent tool calls
+     */
+    getSuggestedSearchTerms() {
+        if (!this.recentEntriesStmt)
+            return [];
+        // Return cached result if memory hasn't changed
+        if (this._suggestedTermsCache)
+            return this._suggestedTermsCache;
+        try {
+            // Single query: fetch last 30 entries, derive tools/domains/words in JS
+            const recent = this.recentEntriesStmt.all({ limit: 30 });
+            const terms = this._computeSuggestedTerms(recent);
+            this._suggestedTermsCache = terms;
+            return terms;
+        }
+        catch {
+            return [];
+        }
+    }
+    /**
+     * Compute suggested search terms from already-fetched entries.
+     * Extracted so buildMemoryIndex() and handoff() can reuse their
+     * single recent-entries fetch without issuing duplicate queries.
+     */
+    _computeSuggestedTerms(entries) {
+        const toolNames = new Set();
+        const domainTagSet = new Set();
+        const wordFreq = new Map();
+        const stopWords = new Set([
+            "the",
+            "is",
+            "at",
+            "which",
+            "on",
+            "a",
+            "an",
+            "and",
+            "or",
+            "but",
+            "in",
+            "with",
+            "to",
+            "for",
+            "of",
+            "this",
+            "that",
+            "it",
+            "be",
+            "was",
+            "are",
+        ]);
+        for (const entry of entries) {
+            // Collect tool names
+            if (entry.tool_name)
+                toolNames.add(entry.tool_name);
+            // Collect domain tags
+            if (entry.domain_tags) {
+                for (const tag of entry.domain_tags.split(",")) {
+                    const trimmed = tag.trim();
+                    if (trimmed)
+                        domainTagSet.add(trimmed);
+                }
+            }
+            // Word frequency from non-user content
+            if (entry.role !== "user" && entry.content) {
+                const words = entry.content.toLowerCase().split(/\W+/);
+                for (const word of words) {
+                    if (word.length > 3 && !stopWords.has(word)) {
+                        wordFreq.set(word, (wordFreq.get(word) ?? 0) + 1);
+                    }
+                }
+            }
+        }
+        // Top frequent words
+        const topWords = Array.from(wordFreq.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 15)
+            .map(([word]) => word);
+        // Combine: tool names + domain tags + frequent words (deduped)
+        const terms = new Set();
+        for (const t of toolNames)
+            terms.add(t);
+        for (const d of domainTagSet)
+            terms.add(d);
+        for (const w of topWords)
+            terms.add(w);
+        return Array.from(terms).slice(0, 20);
+    }
+    // ── Memory index (for context injection) ──────────────────────────────
+    /**
+     * Build a compact, token-efficient index of what's in memory.
+     *
+     * Injected into every model request so the agent knows what's searchable
+     * without burning context on the full content. Target: ~30-50 tokens.
+     *
+     * Returns null if memory is empty or unavailable.
+     */
+    buildMemoryIndex() {
+        if (!this.statsStmt || !this.recentEntriesStmt)
+            return null;
+        try {
+            // Query 1: stats — count entries and turns
+            const stats = this.statsStmt.get();
+            if (!stats || stats.entries === 0)
+                return null;
+            // Query 2: fetch last 30 entries — derive files, tools, domain tags,
+            //          error snippets, and suggested search terms all in JS.
+            //          This replaces 6 separate SQL queries + getSuggestedSearchTerms()'s 3 queries.
+            const recent = this.recentEntriesStmt.all({ limit: 30 });
+            const allFiles = new Set();
+            const toolNames = new Set();
+            const allDomainTags = new Set();
+            const errorLines = [];
+            for (const entry of recent) {
+                // File paths
+                if (entry.file_paths) {
+                    for (const fp of entry.file_paths.split(",")) {
+                        const trimmed = fp.trim();
+                        if (trimmed)
+                            allFiles.add(trimmed);
+                    }
+                }
+                // Tool names
+                if (entry.tool_name)
+                    toolNames.add(entry.tool_name);
+                // Domain tags
+                if (entry.domain_tags) {
+                    for (const tag of entry.domain_tags.split(",")) {
+                        const trimmed = tag.trim();
+                        if (trimmed)
+                            allDomainTags.add(trimmed);
+                    }
+                }
+                // Error snippets from non-user entries
+                if (entry.role !== "user" && errorLines.length < 3) {
+                    const lower = entry.content.toLowerCase();
+                    if (lower.includes("error") || lower.includes("fail")) {
+                        const lines = entry.content.split("\n");
+                        for (const line of lines) {
+                            const lineLower = line.toLowerCase();
+                            if ((lineLower.includes("error") || lineLower.includes("fail")) &&
+                                line.length > 15 &&
+                                line.length < 200) {
+                                errorLines.push(line.trim());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            // Build the index
+            const lines = [];
+            lines.push(`[Memory: ${stats.entries} entries across ${stats.turns} turns`);
+            if (allDomainTags.size > 0) {
+                const tagList = Array.from(allDomainTags).slice(0, 5);
+                lines.push(`Domain: ${tagList.join(", ")}`);
+            }
+            if (allFiles.size > 0) {
+                const fileList = Array.from(allFiles).slice(0, 5);
+                lines.push(`Files: ${fileList.join(", ")}`);
+            }
+            if (toolNames.size > 0) {
+                const toolList = Array.from(toolNames).slice(0, 5);
+                lines.push(`Tools: ${toolList.join(", ")}`);
+            }
+            if (errorLines.length > 0) {
+                // Very compact error hints
+                const hints = errorLines.map((e) => {
+                    // Truncate long error lines to ~60 chars
+                    return e.length > 60 ? `${e.slice(0, 57)}...` : e;
+                });
+                lines.push(`Recent: ${hints.join(" | ")}`);
+            }
+            // Suggested search terms (compact) — reuse already-fetched entries
+            const fullTerms = this._computeSuggestedTerms(recent);
+            if (!this._suggestedTermsCache) {
+                // Cache even empty arrays to avoid re-running the query
+                this._suggestedTermsCache = fullTerms;
+            }
+            const searchTerms = fullTerms.slice(0, 5);
+            if (searchTerms.length > 0) {
+                lines.push(`Search: ${searchTerms.join(" ")}`);
+            }
+            lines.push("]");
+            return lines.join("\n");
+        }
+        catch {
+            return null;
+        }
+    }
+}
+//# sourceMappingURL=HolographicMemory.js.map

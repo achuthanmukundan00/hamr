@@ -7,6 +7,8 @@ import { Type } from "typebox";
 import type { ExtensionContext, ExtensionFactory } from "../core/extensions/types.ts";
 import { defineTool } from "../core/extensions/types.ts";
 import { contentText, fileHints, getAssistantText } from "./helpers.ts";
+import type { FactWithScore } from "./memory/FactStore.ts";
+import { FactStore } from "./memory/FactStore.ts";
 import { stripFtsMarks } from "./memory/fts-marks.ts";
 import { HolographicMemory } from "./memory/HolographicMemory.ts";
 import { loadBetterSqlite3 } from "./store/sqlite-loader.ts";
@@ -14,6 +16,7 @@ import { loadBetterSqlite3 } from "./store/sqlite-loader.ts";
 export type MemoryHandle = {
 	path: string;
 	memory: HolographicMemory;
+	factStore: FactStore;
 };
 
 let memoryHandle: MemoryHandle | undefined;
@@ -32,28 +35,55 @@ function memoryPath(cwd: string): string {
 }
 
 export function getMemory(ctx: ExtensionContext): HolographicMemory | undefined {
-	const path = memoryPath(ctx.cwd);
-	if (memoryHandle?.path === path) return memoryHandle.memory;
+	const handle = getMemoryHandle(ctx.cwd);
+	return handle?.memory;
+}
+
+function getMemoryHandle(cwd: string): MemoryHandle | undefined {
+	const path = memoryPath(cwd);
+	if (memoryHandle?.path === path) return memoryHandle;
 
 	const Database = loadBetterSqlite3();
 	if (!Database) return undefined;
 
-	mkdirSync(dirname(path), { recursive: true });
-	const db = new Database(path);
-	db.pragma("journal_mode = WAL");
-	db.exec(`
-		CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-			turn_id UNINDEXED,
-			session_id UNINDEXED,
-			role UNINDEXED,
-			tool_name UNINDEXED,
-			file_paths UNINDEXED,
-			content,
-			domain_tags UNINDEXED
-		);
-	`);
-	memoryHandle = { path, memory: new HolographicMemory(db) };
-	return memoryHandle.memory;
+	// Close old connection before opening new one
+	if (memoryHandle) {
+		try {
+			(memoryHandle.memory as any).db?.close();
+		} catch {
+			// ignore close errors
+		}
+	}
+
+	try {
+		mkdirSync(dirname(path), { recursive: true });
+		const db = new Database(path);
+		db.pragma("journal_mode = WAL");
+		db.exec(`
+			CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+				turn_id UNINDEXED,
+				session_id UNINDEXED,
+				role UNINDEXED,
+				tool_name UNINDEXED,
+				file_paths UNINDEXED,
+				content,
+				domain_tags UNINDEXED
+			);
+		`);
+		const holographic = new HolographicMemory(db);
+		const factStore = new FactStore(db);
+		memoryHandle = { path, memory: holographic, factStore };
+		return memoryHandle;
+	} catch (err) {
+		console.error(`[hamr] Failed to initialize SQLite memory at ${path}:`, err);
+		return undefined;
+	}
+}
+
+/** Get the cross-session structured FactStore (entity resolution, trust scoring, HRR). */
+export function getFactStore(ctx: ExtensionContext): FactStore | undefined {
+	const handle = getMemoryHandle(ctx.cwd);
+	return handle?.factStore;
 }
 
 export function buildAssistantMemoryContent(message: AssistantMessage): string {
@@ -184,6 +214,7 @@ export function registerMemoryTools(pi: Parameters<ExtensionFactory>[0]): void {
 			execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
 				const memory = getMemory(ctx);
 				if (!memory) return { content: [{ type: "text", text: "FTS5 memory is unavailable." }], details: {} };
+				const errCountBefore = memory.storeErrorCount;
 				memory.store({
 					sessionId: ctx.sessionManager.getSessionId(),
 					turnId: currentTurnId,
@@ -196,13 +227,39 @@ export function registerMemoryTools(pi: Parameters<ExtensionFactory>[0]): void {
 				const tags = params.tags ?? [];
 				const tagLine = tags.length > 0 ? `\nTags: ${tags.join(", ")}` : "";
 				const preview = params.content.length > 300 ? `${params.content.slice(0, 300)}…` : params.content;
+
+				if (memory.storeErrorCount > errCountBefore) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `⚠️ Failed to save to Hamr memory. Store error count: ${memory.storeErrorCount}. Check ~/.hamr/memory.sqlite and better-sqlite3 native addon.`,
+							},
+						],
+						details: { tags, storedLength: params.content.length, failed: true },
+					};
+				}
+
+				// Mirror to cross-session FactStore when content is statement-like
+				// (only after transcript store succeeded)
+				const factStore = getFactStore(ctx);
+				let factResult = "";
+				if (factStore?.isAvailable && params.content.length > 30) {
+					const factId = factStore.addFact(params.content, (params.tags ?? []).join(","));
+					if (factId !== null && factId > 0) {
+						factResult = ` (also stored as durable fact #${factId})`;
+					}
+				}
+
 				return {
-					content: [{ type: "text", text: `📝 Saved to Hamr memory:\n${preview}${tagLine}` }],
+					content: [{ type: "text", text: `📝 Saved to Hamr memory:\n${preview}${tagLine}${factResult}` }],
 					details: { tags, storedLength: params.content.length },
 				};
 			},
 		}),
 	);
+
+	registerFactStoreTools(pi);
 
 	pi.registerTool(
 		defineTool({
@@ -240,6 +297,201 @@ export function registerMemoryTools(pi: Parameters<ExtensionFactory>[0]): void {
 					lines.push(`Key findings:\n${handoff.keyFindings.map((f) => `  - ${f}`).join("\n")}`);
 				}
 				return { content: [{ type: "text", text: lines.join("\n") }], details: handoff };
+			},
+		}),
+	);
+}
+
+/**
+ * Register structured fact store tools (fact_store and fact_feedback).
+ * The fact store provides cross-session durable knowledge with entity
+ * resolution, trust scoring, and HRR-based compositional queries.
+ */
+export function registerFactStoreTools(pi: Parameters<ExtensionFactory>[0]): void {
+	// Helper: produce a consistent error result with required `details`.
+	const toolError = (text: string) => ({
+		content: [{ type: "text" as const, text }],
+		isError: true as const,
+		details: {},
+	});
+
+	pi.registerTool(
+		defineTool({
+			name: "fact_store",
+			label: "Fact store",
+			description:
+				"Structured cross-session fact store. Store durable facts with entity resolution and trust scoring. " +
+				"Use fact_store for deep recall and compositional queries. " +
+				"ACTIONS: add, search, probe, related, reason. " +
+				"ALWAYS probe or reason before answering questions from memory.",
+			promptSnippet:
+				"Use fact_store to store and query durable structured knowledge across sessions. Entities are auto-extracted.",
+			parameters: Type.Object({
+				action: Type.Union([
+					Type.Literal("add"),
+					Type.Literal("search"),
+					Type.Literal("probe"),
+					Type.Literal("related"),
+					Type.Literal("reason"),
+				]),
+				content: Type.Optional(Type.String({ description: "Fact content (required for 'add')." })),
+				query: Type.Optional(Type.String({ description: "Search query (required for 'search')." })),
+				entity: Type.Optional(Type.String({ description: "Entity name for 'probe'/'related'." })),
+				entities: Type.Optional(
+					Type.Array(Type.String(), { description: "Entity names for 'reason' (AND semantics)." }),
+				),
+				tags: Type.Optional(Type.String({ description: "Comma-separated tags." })),
+				limit: Type.Optional(Type.Number({ description: "Max results (default: 10)." })),
+			}),
+			renderResult: (result, _options, theme) => {
+				const output = contentText(result.content);
+				return new Text(theme.fg("toolOutput", output), 0, 0);
+			},
+			execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+				const factStore = getFactStore(ctx);
+				if (!factStore?.isAvailable) {
+					return toolError("Fact store is unavailable.");
+				}
+
+				const action = params.action;
+				const limit = Math.min(params.limit ?? 10, 20);
+
+				try {
+					switch (action) {
+						case "add": {
+							if (!params.content) return toolError("Missing 'content' for add.");
+							const factId = factStore.addFact(params.content, params.tags ?? "");
+							if (factId === null || factId <= 0) return toolError("Failed to add fact.");
+							const fact = factStore.getFact(factId);
+							const entityLine = fact?.entities?.length ? ` | entities: ${fact.entities.join(", ")}` : "";
+							return {
+								content: [{ type: "text", text: `📌 Fact #${factId} stored${entityLine}` }],
+								details: { factId, entities: fact?.entities ?? [] },
+							};
+						}
+						case "search": {
+							if (!params.query) return toolError("Missing 'query' for search.");
+							const results = factStore.searchFacts(params.query, limit);
+							if (results.length === 0)
+								return { content: [{ type: "text", text: "No facts found." }], details: { count: 0 } };
+							const lines = results.map(
+								(r) => `  [#${r.factId}] trust=${r.trustScore.toFixed(2)} ${r.content.slice(0, 180)}`,
+							);
+							return {
+								content: [{ type: "text", text: `${results.length} facts:\n${lines.join("\n")}` }],
+								details: { count: results.length },
+							};
+						}
+						case "probe": {
+							if (!params.entity) return toolError("Missing 'entity' for probe.");
+							const results = factStore.probe(params.entity, limit);
+							if (results.length === 0)
+								return {
+									content: [{ type: "text", text: `No facts found for entity "${params.entity}".` }],
+									details: { count: 0 },
+								};
+							const lines = results.map(
+								(r) =>
+									`  [#${r.factId}] score=${(r.score ?? 0).toFixed(2)} trust=${r.trustScore.toFixed(2)} ${r.content.slice(0, 180)}`,
+							);
+							return {
+								content: [
+									{ type: "text", text: `${results.length} facts about "${params.entity}":\n${lines.join("\n")}` },
+								],
+								details: { count: results.length },
+							};
+						}
+						case "related": {
+							if (!params.entity) return toolError("Missing 'entity' for related.");
+							const results = factStore.related(params.entity, limit);
+							if (results.length === 0)
+								return {
+									content: [{ type: "text", text: `No facts related to "${params.entity}".` }],
+									details: { count: 0 },
+								};
+							const lines = results.map(
+								(r) =>
+									`  [#${r.factId}] score=${(r.score ?? 0).toFixed(2)} trust=${r.trustScore.toFixed(2)} ${r.content.slice(0, 180)}`,
+							);
+							return {
+								content: [
+									{ type: "text", text: `${results.length} facts related to "${params.entity}":\n${lines.join("\n")}` },
+								],
+								details: { count: results.length },
+							};
+						}
+						case "reason": {
+							const entities = params.entities ?? [];
+							if (entities.length === 0) return toolError("Missing 'entities' list for reason.");
+							const results = factStore.reason(entities, limit);
+							if (results.length === 0)
+								return {
+									content: [{ type: "text", text: `No facts found connecting all: ${entities.join(", ")}.` }],
+									details: { count: 0 },
+								};
+							const lines = results.map(
+								(r: FactWithScore) =>
+									`  [#${r.factId}] score=${(r.score ?? 0).toFixed(2)} trust=${r.trustScore.toFixed(2)} ${r.content.slice(0, 180)}`,
+							);
+							return {
+								content: [
+									{
+										type: "text",
+										text: `${results.length} facts connecting ${entities.join(" & ")}:\n${lines.join("\n")}`,
+									},
+								],
+								details: { count: results.length },
+							};
+						}
+						default:
+							return toolError(`Unknown action: ${action}`);
+					}
+				} catch (err) {
+					return toolError(`Fact store error: ${err instanceof Error ? err.message : String(err)}`);
+				}
+			},
+		}),
+	);
+
+	pi.registerTool(
+		defineTool({
+			name: "fact_feedback",
+			label: "Fact feedback",
+			description:
+				"Rate a fact after using it. Mark 'helpful' if accurate, 'unhelpful' if outdated. Good facts rise (trust +0.05), bad facts sink (trust −0.10).",
+			parameters: Type.Object({
+				action: Type.Union([Type.Literal("helpful"), Type.Literal("unhelpful")]),
+				fact_id: Type.Number({ description: "The fact ID to rate." }),
+			}),
+			renderResult: (result, _options, theme) => {
+				const output = contentText(result.content);
+				return new Text(theme.fg("toolOutput", output), 0, 0);
+			},
+			execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+				const factStore = getFactStore(ctx);
+				if (!factStore?.isAvailable) {
+					return toolError("Fact store is unavailable.");
+				}
+
+				try {
+					const helpful = params.action === "helpful";
+					const result = factStore.recordFeedback(params.fact_id, helpful);
+					if (!result) {
+						return toolError(`Fact #${params.fact_id} not found.`);
+					}
+					const direction = helpful ? "↑" : "↓";
+					return {
+						content: [
+							{
+								type: "text",
+								text: `📊 Fact #${params.fact_id}: trust ${result.oldTrust.toFixed(2)} → ${result.newTrust.toFixed(2)} ${direction}`,
+							},
+						],
+						details: result,
+					};
+				} catch (err) {
+					return toolError(`Fact feedback error: ${err instanceof Error ? err.message : String(err)}`);
+				}
 			},
 		}),
 	);

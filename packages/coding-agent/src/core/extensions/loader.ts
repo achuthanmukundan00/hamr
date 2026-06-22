@@ -29,6 +29,7 @@ import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import type {
+	CoreMessageRole,
 	Extension,
 	ExtensionAPI,
 	ExtensionFactory,
@@ -37,6 +38,7 @@ import type {
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
+	RoleMessageRenderer,
 	ToolDefinition,
 } from "./types.ts";
 
@@ -234,6 +236,11 @@ function createExtensionAPI(
 			extension.messageRenderers.set(customType, renderer as MessageRenderer);
 		},
 
+		registerRoleMessageRenderer(role: CoreMessageRole, renderer: RoleMessageRenderer): void {
+			runtime.assertActive();
+			extension.roleMessageRenderers.set(role, renderer);
+		},
+
 		// Flag access - checks extension registered it, reads from runtime
 		getFlag(name: string): boolean | string | undefined {
 			runtime.assertActive();
@@ -359,6 +366,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		handlers: new Map(),
 		tools: new Map(),
 		messageRenderers: new Map(),
+		roleMessageRenderers: new Map(),
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),

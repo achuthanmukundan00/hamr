@@ -12,6 +12,7 @@ import { formatDimensionNote, resizeImage } from "../../utils/image-resize.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { PathGuard, type PathGuardOptions } from "./path-guard.ts";
 import { resolveReadPathAsync, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -60,6 +61,8 @@ export interface ReadToolOptions {
 	autoResizeImages?: boolean;
 	/** Custom operations for file reading. Default: local filesystem */
 	operations?: ReadOperations;
+	/** Path confinement (denylist of credential locations). Default: enabled. */
+	pathGuard?: PathGuardOptions;
 }
 
 type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
@@ -202,6 +205,7 @@ export function createReadToolDefinition(
 	options?: ReadToolOptions,
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
+	const guard = new PathGuard(options?.pathGuard);
 	const ops = options?.operations ?? defaultReadOperations;
 	return {
 		name: "read",
@@ -233,6 +237,7 @@ export function createReadToolDefinition(
 					(async () => {
 						try {
 							const absolutePath = await resolveReadPathAsync(path, cwd);
+							guard.assertReadable(absolutePath);
 							if (aborted) return;
 							// Check if file exists and is readable.
 							await ops.access(absolutePath);
