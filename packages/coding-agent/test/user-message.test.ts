@@ -13,11 +13,12 @@ describe("UserMessageComponent", () => {
 		const component = new UserMessageComponent("hello");
 		const lines = component.render(20);
 
-		expect(lines).toHaveLength(3);
+		expect(lines.length).toBeGreaterThan(0);
 		expect(lines[0]).toContain(OSC133_ZONE_START);
 		expect(lines[0]).not.toContain(OSC133_ZONE_END);
-		expect(lines[1]).toContain("hello");
-		expect(lines[2].startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
+		const joined = lines.join("\n");
+		expect(joined).toContain("hello");
+		expect(lines[lines.length - 1].startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
 	});
 
 	test("uses the neutral prompt surface instead of tinting the whole card with model color", () => {

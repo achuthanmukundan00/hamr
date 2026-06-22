@@ -35,6 +35,7 @@ import type {
 	EditorComponent,
 	EditorTheme,
 	KeyId,
+	MarkdownTheme,
 	OverlayHandle,
 	OverlayOptions,
 	TUI,
@@ -460,7 +461,18 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 */
 	executionMode?: ToolExecutionMode;
 
-	/** Execute the tool. */
+	/**
+	 * Execute the tool.
+	 *
+	 * @param toolCallId Unique identifier for this tool call.
+	 * @param params Validated tool parameters.
+	 * @param signal Tool abort signal. Aborted only on user escape and session
+	 *   dispose. NOT aborted on internal lifecycle events (compaction, auto-retry).
+	 *   Long-running tools (e.g. subagents) should use this signal to detect user
+	 *   cancellation without being spuriously killed by lifecycle management.
+	 * @param onUpdate Callback for streaming partial results.
+	 * @param ctx Extension context for UI interaction and agent lifecycle.
+	 */
 	execute(
 		toolCallId: string,
 		params: Static<TParams>,
@@ -1090,6 +1102,33 @@ export type MessageRenderer<T = unknown> = (
 	theme: Theme,
 ) => Component | undefined;
 
+/** Core message roles that can have registered renderers. */
+export type CoreMessageRole = "user" | "assistant" | "tool" | "bashExecution";
+
+/** Context passed to role message renderers. */
+export interface RoleMessageRenderContext {
+	/** The core agent message to render. */
+	message: AgentMessage;
+	/** Whether the result view is expanded. */
+	expanded: boolean;
+	/** Model accent hex color for heading branding (e.g. "#875fff"). */
+	modelAccent?: string;
+	/** Model glyph for heading branding. */
+	modelGlyph?: string;
+	/** Markdown theme for rendering message content. */
+	markdownTheme: MarkdownTheme;
+	/** Whether thinking blocks are hidden. */
+	hideThinkingBlock?: boolean;
+	/** Label shown for hidden thinking blocks. */
+	hiddenThinkingLabel?: string;
+}
+
+/**
+ * Renderer for core message roles.
+ * Return undefined to fall back to the built-in plain component.
+ */
+export type RoleMessageRenderer = (ctx: RoleMessageRenderContext, theme: Theme) => Component | undefined;
+
 // ============================================================================
 // Command Registration
 // ============================================================================
@@ -1206,6 +1245,9 @@ export interface ExtensionAPI {
 
 	/** Register a custom renderer for CustomMessageEntry. */
 	registerMessageRenderer<T = unknown>(customType: string, renderer: MessageRenderer<T>): void;
+
+	/** Register a renderer for a core message role (user, assistant, tool, bashExecution). Return undefined to fall back to the built-in plain component. */
+	registerRoleMessageRenderer(role: CoreMessageRole, renderer: RoleMessageRenderer): void;
 
 	// =========================================================================
 	// Actions
@@ -1581,6 +1623,7 @@ export interface Extension {
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
 	messageRenderers: Map<string, MessageRenderer>;
+	roleMessageRenderers: Map<string, RoleMessageRenderer>;
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;

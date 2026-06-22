@@ -14,24 +14,58 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { Usage } from "@hamr/ai";
-import { type Component, Container, Spacer, Text, type TUI } from "@hamr/tui";
+import { type Component, Container, Markdown, Spacer, Text, type TUI } from "@hamr/tui";
 import { Type } from "typebox";
 import type { ExtensionContext, ExtensionFactory } from "../../core/extensions/types.ts";
 import { defineTool } from "../../core/extensions/types.ts";
+import type { HamrChildConfig } from "../../core/sdk.ts";
+import type { SpawnPolicy } from "../../core/session-manager.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import { getMarkdownTheme } from "../../modes/interactive/theme/theme.ts";
+import {
+	killProcessTree,
+	killTrackedDetachedChildren,
+	trackDetachedChildPid,
+	untrackDetachedChildPid,
+} from "../../utils/shell.ts";
+import { isCloudProvider, loadHamrStartupConfig } from "../startup-config.ts";
 
 // ─── Environment configuration ───────────────────────────────────────────────
 
 const ENV_MAX_TASKS = Number.parseInt(process.env.HAMR_SUBAGENT_MAX_TASKS ?? "64", 10) || 64;
 const ENV_HARD_MAX_TASKS = Number.parseInt(process.env.HAMR_SUBAGENT_HARD_MAX_TASKS ?? "256", 10) || 256;
-const ENV_MAX_CONCURRENCY = Number.parseInt(process.env.HAMR_SUBAGENT_MAX_CONCURRENCY ?? "4", 10) || 4;
+const ENV_MAX_CONCURRENCY = Number.parseInt(process.env.HAMR_SUBAGENT_MAX_CONCURRENCY ?? "64", 10) || 64;
 const ENV_MAX_LOCAL_CONCURRENCY = Number.parseInt(process.env.HAMR_SUBAGENT_MAX_LOCAL_CONCURRENCY ?? "1", 10) || 1;
+/** Global budget cap across the entire recursive subagent tree. */
+const ENV_TOTAL_BUDGET = Number.parseInt(process.env.HAMR_SUBAGENT_BUDGET ?? "1024", 10) || 1024;
+/** Env var passed to child processes with the remaining budget for their subtree. */
+const ENV_TREE_REMAINING = "HAMR_SUBAGENT_TREE_REMAINING";
+
+/** Env var passed to child processes pointing to the serialized parent config. */
+const ENV_CHILD_CONFIG = "HAMR_CHILD_CONFIG";
+
+/** Per-worker step timeout in ms (default: 5 min). */
+const ENV_STEP_TIMEOUT_MS = Number.parseInt(process.env.HAMR_SUBAGENT_STEP_TIMEOUT_MS ?? "300000", 10) || 300000;
+/** Per-run total timeout in ms (default: 30 min). */
+const ENV_TOTAL_TIMEOUT_MS = Number.parseInt(process.env.HAMR_SUBAGENT_TOTAL_TIMEOUT_MS ?? "1800000", 10) || 1800000;
+
+/**
+ * In-memory budget tracking.
+ * Root process reads from HAMR_SUBAGENT_BUDGET env; children read from
+ * HAMR_SUBAGENT_TREE_REMAINING env (set by their parent).
+ */
+let treeBudgetRemaining: number = Number.parseInt(process.env[ENV_TREE_REMAINING] ?? "", 10) || ENV_TOTAL_BUDGET;
 
 const OUTPUT_TAIL_BYTES = Number.parseInt(process.env.HAMR_SUBAGENT_OUTPUT_TAIL_BYTES ?? "32768", 10) || 32768;
 const EVENTS_IN_MEMORY = Number.parseInt(process.env.HAMR_SUBAGENT_EVENTS_IN_MEMORY ?? "40", 10) || 40;
+/** Flush events to disk every N events or every this many ms, whichever comes first. */
+const FLUSH_BATCH_SIZE = 10;
+const FLUSH_INTERVAL_MS = 500;
 const LOG_DIR_BASE = process.env.HAMR_SUBAGENT_LOG_DIR ?? ".hamr/subagents";
 /** Max completed runs to retain in memory for the status widget. */
 const MAX_ACTIVE_RUNS = 50;
@@ -41,6 +75,45 @@ export const HAMR_SUBAGENTS_FACTORY = Symbol.for("hamr.subagents.factory");
 
 /** Recursion bound. Root = 0; at this depth the worker gets no delegate tool. */
 const MAX_DEPTH = 3;
+
+// ─── Orphaned child-config cleanup ───────────────────────────────────────────
+// Child config temp files carry the provider API key and CF-Access credentials.
+// Track them so a parent crash (SIGKILL/OOM/segfault) can't leave secrets in /tmp.
+// `killTrackedDetachedChildren` (registered as a process-exit hook below) also
+// unlinks any still-registered config paths.
+const orphanedConfigPaths = new Set<string>();
+let parentExitHookInstalled = false;
+
+function registerOrphanedConfigForCleanup(configPath: string): void {
+	orphanedConfigPaths.add(configPath);
+	if (!parentExitHookInstalled) {
+		parentExitHookInstalled = true;
+		const cleanup = () => {
+			for (const p of orphanedConfigPaths) {
+				try {
+					fs.unlinkSync(p);
+				} catch {
+					/* best-effort */
+				}
+			}
+			orphanedConfigPaths.clear();
+			killTrackedDetachedChildren();
+		};
+		process.once("exit", cleanup);
+		process.once("SIGINT", () => {
+			cleanup();
+			process.exit(130);
+		});
+		process.once("SIGTERM", () => {
+			cleanup();
+			process.exit(143);
+		});
+	}
+}
+
+function unregisterOrphanedConfigForCleanup(configPath: string): void {
+	orphanedConfigPaths.delete(configPath);
+}
 
 const EMPTY_USAGE: Usage = {
 	input: 0,
@@ -75,6 +148,8 @@ interface WorkerState {
 	lastActivity?: string;
 	lastTool?: string;
 	recentEvents: ActivityEvent[]; // ring buffer, max EVENTS_IN_MEMORY entries
+	pendingFlush: ActivityEvent[]; // events not yet written to disk
+	flushTimer?: ReturnType<typeof setInterval>;
 	outputTail: string; // capped to OUTPUT_TAIL_BYTES bytes
 	finalOutput?: string; // capped
 	logPath: string;
@@ -95,6 +170,8 @@ interface RunState {
 	usage: Usage;
 	logDir: string;
 	workers: Map<string, WorkerState>;
+	/** O(1) counters — the above fields are kept as views for consumers. */
+	_cnt: { queued: number; running: number; done: number; failed: number; aborted: number; tok: number };
 }
 
 // ─── Global state ────────────────────────────────────────────────────────────
@@ -124,6 +201,70 @@ function padWorkerId(idx: number, total: number): string {
 	return String(idx).padStart(width, "0");
 }
 
+// ─── Tool call formatting (mirrors built-in tool renderers) ──────────────────
+
+function shortenHome(p: string): string {
+	const home = os.homedir();
+	return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
+}
+
+function formatToolCall(
+	toolName: string,
+	args: Record<string, unknown>,
+	fg: (color: string, text: string) => string,
+): string {
+	switch (toolName) {
+		case "bash": {
+			const cmd = (args.command as string) || "...";
+			const preview = cmd.length > 60 ? `${cmd.slice(0, 60)}…` : cmd;
+			return fg("muted", "$ ") + fg("toolOutput", preview);
+		}
+		case "read": {
+			const rawPath = (args.file_path || args.path || "...") as string;
+			const filePath = shortenHome(rawPath);
+			const offset = args.offset as number | undefined;
+			const limit = args.limit as number | undefined;
+			let text = fg("accent", filePath);
+			if (offset !== undefined || limit !== undefined) {
+				const start = offset ?? 1;
+				const end = limit !== undefined ? start + limit - 1 : "";
+				text += fg("warning", `:${start}${end ? `-${end}` : ""}`);
+			}
+			return fg("muted", "read ") + text;
+		}
+		case "write": {
+			const rawPath = (args.file_path || args.path || "...") as string;
+			const lines = ((args.content as string) || "").split("\n").length;
+			let text = fg("muted", "write ") + fg("accent", shortenHome(rawPath));
+			if (lines > 1) text += fg("dim", ` (${lines} lines)`);
+			return text;
+		}
+		case "edit": {
+			const rawPath = (args.file_path || args.path || "...") as string;
+			return fg("muted", "edit ") + fg("accent", shortenHome(rawPath));
+		}
+		case "ls": {
+			const rawPath = (args.path || ".") as string;
+			return fg("muted", "ls ") + fg("accent", shortenHome(rawPath));
+		}
+		case "find": {
+			const pattern = (args.pattern || "*") as string;
+			const rawPath = (args.path || ".") as string;
+			return fg("muted", "find ") + fg("accent", pattern) + fg("dim", ` in ${shortenHome(rawPath)}`);
+		}
+		case "grep": {
+			const pattern = (args.pattern || "") as string;
+			const rawPath = (args.path || ".") as string;
+			return fg("muted", "grep ") + fg("accent", `/${pattern}/`) + fg("dim", ` in ${shortenHome(rawPath)}`);
+		}
+		default: {
+			const argsStr = JSON.stringify(args);
+			const preview = argsStr.length > 50 ? `${argsStr.slice(0, 50)}…` : argsStr;
+			return fg("accent", toolName) + fg("dim", ` ${preview}`);
+		}
+	}
+}
+
 // ─── UI: Live status widget ──────────────────────────────────────────────────
 
 interface AggregatedStats {
@@ -134,10 +275,20 @@ interface AggregatedStats {
 	failed: number;
 	aborted: number;
 	totalTokens: number;
+	totalCost: number;
 }
 
 function aggregateAllRuns(): AggregatedStats {
-	const stats: AggregatedStats = { total: 0, queued: 0, running: 0, done: 0, failed: 0, aborted: 0, totalTokens: 0 };
+	const stats: AggregatedStats = {
+		total: 0,
+		queued: 0,
+		running: 0,
+		done: 0,
+		failed: 0,
+		aborted: 0,
+		totalTokens: 0,
+		totalCost: 0,
+	};
 	for (const run of activeRuns.values()) {
 		stats.total += run.total;
 		stats.queued += run.queued;
@@ -146,6 +297,7 @@ function aggregateAllRuns(): AggregatedStats {
 		stats.failed += run.failed;
 		stats.aborted += run.aborted;
 		stats.totalTokens += run.usage.totalTokens ?? 0;
+		stats.totalCost += run.usage.cost?.total ?? 0;
 	}
 	return stats;
 }
@@ -163,7 +315,9 @@ function renderStatusLine(): string | undefined {
 	if (stats.queued > 0) parts.push(`${stats.queued} queued`);
 	if (stats.done > 0) parts.push(`✓ ${stats.done} done`);
 	if (stats.failed > 0) parts.push(`✕ ${stats.failed} failed`);
+	if (stats.aborted > 0) parts.push(`⊘ ${stats.aborted} aborted`);
 	if (stats.totalTokens > 0) parts.push(`↓${formatTokens(stats.totalTokens)} tok`);
+	if (stats.totalCost > 0) parts.push(`$${stats.totalCost.toFixed(4)}`);
 	return `subagents ${parts.join(" · ")}`;
 }
 
@@ -220,29 +374,279 @@ function updateStatusWidget(ctx: ExtensionContext): void {
 
 function ensureLogDir(runId: string, cwd: string): string {
 	const base = path.resolve(cwd, LOG_DIR_BASE, "runs", runId);
-	fs.mkdirSync(path.join(base, "workers"), { recursive: true });
+	fs.mkdirSync(path.join(base, "workers"), { recursive: true, mode: 0o700 });
+	try {
+		fs.chmodSync(base, 0o700);
+	} catch {
+		/* best-effort */
+	}
 	return base;
 }
 
-function appendNDJSON(filePath: string, event: Record<string, unknown>): void {
+function appendNDJSON(filePath: string, events: ActivityEvent[]): void {
 	try {
-		fs.appendFileSync(filePath, `${JSON.stringify(event)}\n`, "utf-8");
+		const lines = events.map((e) => `${JSON.stringify({ ts: e.ts, type: e.type, data: e.data })}\n`).join("");
+		fs.appendFileSync(filePath, lines, "utf-8");
 	} catch {
 		// best-effort
 	}
 }
 
+/** Flush pending events that haven't been written to disk yet. */
+function flushPendingEvents(ws: WorkerState): void {
+	if (ws.pendingFlush.length === 0) return;
+	appendNDJSON(ws.logPath, ws.pendingFlush);
+	ws.pendingFlush = [];
+}
+
+/** Flush any remaining pending events at worker completion / abort / crash. */
+function flushWorkerLog(ws: WorkerState): void {
+	flushPendingEvents(ws);
+}
+
+/** Reload completed runs from disk on session resume so the status bar repopulates. */
+function restoreRunsFromDisk(cwd: string, sessionId: string): void {
+	const base = path.resolve(cwd, LOG_DIR_BASE, "runs");
+	if (!fs.existsSync(base)) return;
+	try {
+		for (const runDir of fs.readdirSync(base, { withFileTypes: true })) {
+			if (!runDir.isDirectory()) continue;
+			const runJsonPath = path.join(base, runDir.name, "run.json");
+			if (!fs.existsSync(runJsonPath)) continue;
+			try {
+				const data = JSON.parse(fs.readFileSync(runJsonPath, "utf-8"));
+				if (!data.endedAt || activeRuns.has(data.runId)) continue;
+				if (data.parentSessionId !== sessionId) continue;
+				const run: RunState = {
+					runId: data.runId,
+					mode: data.mode ?? "single",
+					total: data.total ?? 0,
+					queued: 0,
+					running: 0,
+					done: data.done ?? 0,
+					failed: data.failed ?? 0,
+					aborted: data.aborted ?? 0,
+					startedAt: new Date(data.startedAt).getTime(),
+					endedAt: new Date(data.endedAt).getTime(),
+					usage: data.usage ?? { ...EMPTY_USAGE },
+					logDir: path.dirname(runJsonPath),
+					workers: new Map(),
+					_cnt: {
+						queued: 0,
+						running: 0,
+						done: data.done ?? 0,
+						failed: data.failed ?? 0,
+						aborted: data.aborted ?? 0,
+						tok: data.usage?.totalTokens ?? 0,
+					},
+				};
+				activeRuns.set(data.runId, run);
+			} catch {
+				// corrupted run.json — skip
+			}
+		}
+	} catch {
+		// best-effort
+	}
+}
+
+// ─── Bash-only fast path helper ──────────────────────────────────────────────
+
+/** Returns true if the tools list qualifies for the bash-only fast path. */
+function isBashFastPathTools(tools: string[] | undefined): boolean {
+	return (
+		tools !== undefined &&
+		tools.length > 0 &&
+		tools.length <= 2 &&
+		tools.every((t) => t === "bash" || t === "read") &&
+		tools.includes("bash")
+	);
+}
+
 // ─── Worker execution (child hamr process) ───────────────────────────────────
 
-interface TaskResult {
-	workerId: string;
-	task: string;
-	text: string;
-	error?: string;
-	usage?: Usage;
-	model?: string;
-	estimatedUsage?: boolean;
-	stopReason?: string;
+// ─── Output validation ───────────────────────────────────────────────────────
+
+interface ValidationWarning {
+	type: "missing_file" | "empty_output" | "truncated_output" | "self_contradiction" | "suspicious_pattern";
+	message: string;
+	severity: "low" | "medium" | "high";
+}
+
+interface ValidationResult {
+	passed: boolean;
+	warnings: ValidationWarning[];
+	/** 0.0–1.0 heuristic confidence score */
+	confidence: number;
+}
+
+type WorkerOutcome =
+	| {
+			status: "done";
+			workerId: string;
+			task: string;
+			text: string;
+			usage: Usage;
+			model?: string;
+			estimatedUsage?: boolean;
+			stopReason?: string;
+			validation?: ValidationResult;
+	  }
+	| { status: "failed"; workerId: string; task: string; error: string; text: string; validation?: ValidationResult }
+	| { status: "aborted"; workerId: string; task: string; reason: "user" | "parent" | "timeout" }
+	| { status: "timeout"; workerId: string; task: string; partialText: string; validation?: ValidationResult };
+
+/** Heuristic: does a string look like a file-system path (not a URL, version, etc.)? */
+function looksLikeFilePath(s: string): boolean {
+	if (/^https?:\/\//i.test(s)) return false;
+	if (/^@?[a-z0-9-]+\/[@a-z0-9-]+@[\d.]+/.test(s)) return false;
+	if (/^v?\d+\.\d+\.\d+/.test(s)) return false;
+	if (!/\.[a-zA-Z0-9]{1,10}$/.test(s)) return false;
+	if (/^\d+\.\d+\.\d+$/.test(s)) return false;
+	return true;
+}
+
+/** Extract plausible file-system paths from arbitrary assistant text. */
+function extractFileReferences(text: string): string[] {
+	const refs = new Set<string>();
+
+	// Backtick-wrapped candidates: `src/foo.ts`
+	const backtickRe = /`([^`\n]{1,200})`/g;
+	let match: RegExpExecArray | null;
+	while ((match = backtickRe.exec(text)) !== null) {
+		const candidate = match[1]!.trim();
+		if (looksLikeFilePath(candidate)) refs.add(candidate);
+	}
+
+	// Path-like tokens in running text:  ./a/b.ts  ../c/d.ts  /abs/e/f.ts  a/b/c.ts
+	const pathRe = /(?:^|\s|[`"'(\s])((?:\.{0,2}\/)?[\w.@-]+(?:\/[\w.@-]+)*\.[a-zA-Z0-9]{1,10})/g;
+	while ((match = pathRe.exec(text)) !== null) {
+		const candidate = match[1]!.trim();
+		if (looksLikeFilePath(candidate)) refs.add(candidate);
+	}
+
+	return [...refs];
+}
+
+/** Check output for self-contradictory patterns (heuristic, low-confidence). */
+function checkSelfContradiction(text: string): ValidationWarning[] {
+	const warnings: ValidationWarning[] = [];
+	const lower = text.toLowerCase();
+
+	// Output mentions both no-errors and failures nearby
+	if (/\b(?:no\s+)?error(?:s)?\b/.test(lower) && /\bfail(?:ed|ure)?\b/.test(lower)) {
+		warnings.push({
+			type: "self_contradiction",
+			message: "Output mentions both error(s) and failure(s) – review for consistency.",
+			severity: "low",
+		});
+	}
+
+	// Output claims creation but also mentions missing items
+	if (
+		/\b(?:created?|wrote?|generated?|built?)\b/.test(lower) &&
+		/\b(?:does\s+not\s+exist|not\s+found|cannot\s+find|no\s+such)\b/.test(lower)
+	) {
+		warnings.push({
+			type: "self_contradiction",
+			message: "Output claims creation but also mentions missing/non-existent items.",
+			severity: "medium",
+		});
+	}
+
+	return warnings;
+}
+
+function fileExistsRelative(cwd: string, fileRef: string): boolean {
+	try {
+		const resolved = path.resolve(cwd, fileRef);
+		return fs.existsSync(resolved);
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Validate subagent output before it is merged into the parent session.
+ *
+ * Checks:
+ * 1. Non-empty, non-truncated output
+ * 2. File references against the actual file-system under the worker's cwd
+ * 3. Self-contradiction heuristics
+ *
+ * Returns a confidence score (0.0–1.0) and a list of warnings.
+ */
+function validateWorkerOutput(outcome: WorkerOutcome, cwd: string): ValidationResult {
+	const warnings: ValidationWarning[] = [];
+
+	// Determine output text based on outcome status
+	let text = "";
+	if (outcome.status === "done" || outcome.status === "failed") {
+		text = outcome.text;
+	} else if (outcome.status === "timeout") {
+		text = outcome.partialText;
+	}
+
+	// 1. Empty / missing output
+	if (!text || text.trim().length === 0) {
+		warnings.push({
+			type: "empty_output",
+			message: "Worker produced no output text.",
+			severity: "high",
+		});
+		return { passed: false, warnings, confidence: 0.0 };
+	}
+
+	// 2. Truncated output
+	if (text.length >= OUTPUT_TAIL_BYTES) {
+		warnings.push({
+			type: "truncated_output",
+			message: `Output may be truncated (${text.length} ≥ ${OUTPUT_TAIL_BYTES} byte limit).`,
+			severity: "medium",
+		});
+	}
+
+	// 3. File-reference validation
+	const fileRefs = extractFileReferences(text);
+	const missingFiles: string[] = [];
+	for (const ref of fileRefs) {
+		if (!fileExistsRelative(cwd, ref)) {
+			missingFiles.push(ref);
+		}
+	}
+	// Cap to avoid flooding the UI
+	const MAX_MISSING_SHOWN = 5;
+	const shown = missingFiles.slice(0, MAX_MISSING_SHOWN);
+	if (shown.length > 0) {
+		const suffix = missingFiles.length > MAX_MISSING_SHOWN ? ` (+${missingFiles.length - MAX_MISSING_SHOWN} more)` : "";
+		warnings.push({
+			type: "missing_file",
+			message: `References ${shown.length} non-existent file${shown.length > 1 ? "s" : ""}: ${shown.map((f) => path.basename(f)).join(", ")}${suffix}`,
+			severity: "medium",
+		});
+	}
+
+	// 4. Self-contradiction heuristics
+	warnings.push(...checkSelfContradiction(text));
+
+	// Compute confidence score
+	let confidence = 1.0;
+	for (const w of warnings) {
+		switch (w.severity) {
+			case "high":
+				confidence -= 0.3;
+				break;
+			case "medium":
+				confidence -= 0.15;
+				break;
+			case "low":
+				confidence -= 0.05;
+				break;
+		}
+	}
+	confidence = Math.max(0, Math.min(1, Math.round(confidence * 100) / 100));
+
+	return { passed: warnings.length === 0, warnings, confidence };
 }
 
 function getPiInvocation(args: string[]): { command: string; args: string[] } {
@@ -271,33 +675,165 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "hamr", args };
 }
 
+/**
+ * Bash-only fast path: spawn /bin/bash -c <task> directly.
+ * No agent loop, no locks, no model calls. ~50ms startup.
+ */
+async function runBashFastPath(
+	workerId: string,
+	task: string,
+	cwd: string,
+	signal: AbortSignal | undefined,
+	onEvent: (event: Record<string, unknown>) => void,
+): Promise<WorkerOutcome> {
+	onEvent({ type: "bash_fast_path_start", task });
+
+	let wasAborted = false;
+	let stdout = "";
+	let stderr = "";
+
+	const exitCode = await new Promise<number>((resolve) => {
+		const proc = spawn("/bin/bash", ["-c", task], {
+			cwd,
+			shell: false,
+			stdio: ["ignore", "pipe", "pipe"],
+			env: { ...process.env },
+			detached: process.platform !== "win32",
+		});
+		if (proc.pid) trackDetachedChildPid(proc.pid);
+
+		proc.stdout!.on("data", (data: Buffer) => {
+			stdout += data.toString();
+		});
+
+		proc.stderr!.on("data", (data: Buffer) => {
+			stderr += data.toString();
+		});
+
+		proc.on("close", (code) => {
+			if (proc.pid) untrackDetachedChildPid(proc.pid);
+			resolve(code ?? 0);
+		});
+
+		proc.on("error", () => resolve(1));
+
+		if (signal) {
+			const killProc = () => {
+				wasAborted = true;
+				if (proc.pid) killProcessTree(proc.pid);
+				setTimeout(() => {
+					if (!proc.killed) proc.kill("SIGKILL");
+				}, 5000);
+			};
+			if (signal.aborted) {
+				killProc();
+			} else {
+				signal.addEventListener("abort", killProc, { once: true });
+				proc.on("close", () => {
+					if (proc.pid) untrackDetachedChildPid(proc.pid);
+					signal.removeEventListener("abort", killProc);
+				});
+			}
+		}
+	});
+
+	if (wasAborted) {
+		return { status: "aborted", workerId, task, reason: "user" };
+	}
+
+	onEvent({ type: "bash_fast_path_end", exitCode, stdoutPreview: stdout.slice(0, 1024) });
+
+	if (exitCode !== 0) {
+		const outcome: WorkerOutcome = {
+			status: "failed",
+			workerId,
+			task,
+			error: stderr || `exit code ${exitCode}`,
+			text: stdout,
+		};
+		const validation = validateWorkerOutput(outcome, cwd);
+		return { ...outcome, validation };
+	}
+
+	const validation = validateWorkerOutput(
+		{ status: "done", workerId, task, text: stdout, usage: { ...EMPTY_USAGE } },
+		cwd,
+	);
+	return {
+		status: "done",
+		workerId,
+		task,
+		text: stdout,
+		usage: { ...EMPTY_USAGE },
+		estimatedUsage: true,
+		validation,
+	};
+}
+
 async function runWorkerChildProcess(
 	workerId: string,
 	task: string,
 	cwd: string,
 	signal: AbortSignal | undefined,
 	onEvent: (event: Record<string, unknown>) => void,
-): Promise<TaskResult> {
-	const args: string[] = ["--mode", "json", "-p", "--no-session", task];
+	workerModel?: string,
+	workerTools?: string[],
+	parentConfig?: HamrChildConfig,
+): Promise<WorkerOutcome> {
+	// ─── Bash-only fast path ───────────────────────────────────────────────
+	if (isBashFastPathTools(workerTools)) {
+		return runBashFastPath(workerId, task, cwd, signal, onEvent);
+	}
+
+	const args: string[] = ["--mode", "json", "-p", "--no-session"];
+	if (workerModel) args.push("--model", workerModel);
+	if (workerTools && workerTools.length > 0) args.push("--tools", workerTools.join(","));
+	args.push(task);
+
+	// ─── Serialize parent config for child process ────────────────────────
+	// Written with 0o600 (then chmod'd, since `mode` is masked by umask) because it
+	// carries the provider API key and CF-Access credentials. Registered for
+	// cleanup on parent exit so a crash can't orphan the secret in /tmp.
+	let childConfigPath: string | undefined;
+	if (parentConfig) {
+		childConfigPath = path.join(os.tmpdir(), `hamr-config-${randomUUID()}.json`);
+		try {
+			fs.writeFileSync(childConfigPath, JSON.stringify(parentConfig), { encoding: "utf-8", mode: 0o600 });
+			fs.chmodSync(childConfigPath, 0o600);
+			registerOrphanedConfigForCleanup(childConfigPath);
+		} catch {
+			// If we can't write the config, the child falls back to normal startup.
+			childConfigPath = undefined;
+		}
+	}
 
 	let wasAborted = false;
 	let stderr = "";
-
-	const result: TaskResult = {
-		workerId,
-		task,
-		text: "",
-		usage: { ...EMPTY_USAGE },
-	};
+	let outputText = "";
+	let usage: Usage = { ...EMPTY_USAGE };
+	let model: string | undefined;
+	let estimatedUsage = true;
+	let stopReason: string | undefined;
 
 	const exitCode = await new Promise<number>((resolve) => {
 		const invocation = getPiInvocation(args);
+		const childEnv: Record<string, string> = {
+			...Object.fromEntries(
+				Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+			),
+			[ENV_TREE_REMAINING]: String(treeBudgetRemaining),
+		};
+		if (childConfigPath) {
+			childEnv[ENV_CHILD_CONFIG] = childConfigPath;
+		}
 		const proc = spawn(invocation.command, invocation.args, {
 			cwd,
 			shell: false,
 			stdio: ["ignore", "pipe", "pipe"],
-			env: { ...process.env },
+			env: childEnv,
+			detached: process.platform !== "win32",
 		});
+		if (proc.pid) trackDetachedChildPid(proc.pid);
 
 		let buffer = "";
 
@@ -314,19 +850,19 @@ async function runWorkerChildProcess(
 			if (event.type === "message_end" && event.message) {
 				const msg = event.message as Record<string, unknown>;
 				if (msg.role === "assistant") {
-					const usage = msg.usage as Usage | undefined;
-					if (usage) {
-						result.usage = { ...EMPTY_USAGE, ...usage };
-						result.estimatedUsage = false;
+					const msgUsage = msg.usage as Usage | undefined;
+					if (msgUsage) {
+						usage = { ...EMPTY_USAGE, ...msgUsage };
+						estimatedUsage = false;
 					}
-					if (msg.model && typeof msg.model === "string") result.model = msg.model;
-					if (msg.stopReason && typeof msg.stopReason === "string") result.stopReason = msg.stopReason;
+					if (msg.model && typeof msg.model === "string") model = msg.model;
+					if (msg.stopReason && typeof msg.stopReason === "string") stopReason = msg.stopReason;
 
 					// Extract text
 					const content = (msg as { content?: Array<{ type: string; text?: string }> }).content;
 					if (content) {
 						for (const part of content) {
-							if (part.type === "text" && part.text) result.text += part.text;
+							if (part.type === "text" && part.text) outputText += part.text;
 						}
 					}
 				}
@@ -350,32 +886,84 @@ async function runWorkerChildProcess(
 
 		proc.on("close", (code) => {
 			if (buffer.trim()) processLine(buffer);
+			// Clean up the temp config file after the child exits.
+			if (childConfigPath) {
+				unregisterOrphanedConfigForCleanup(childConfigPath);
+				try {
+					fs.unlinkSync(childConfigPath);
+				} catch {
+					/* best-effort */
+				}
+			}
 			resolve(code ?? 0);
 		});
 
-		proc.on("error", () => resolve(1));
+		proc.on("error", () => {
+			if (childConfigPath) {
+				unregisterOrphanedConfigForCleanup(childConfigPath);
+				try {
+					fs.unlinkSync(childConfigPath);
+				} catch {
+					/* best-effort */
+				}
+			}
+			resolve(1);
+		});
 
 		if (signal) {
 			const killProc = () => {
 				wasAborted = true;
-				proc.kill("SIGTERM");
+				if (proc.pid) killProcessTree(proc.pid);
 				setTimeout(() => {
 					if (!proc.killed) proc.kill("SIGKILL");
 				}, 5000);
 			};
-			if (signal.aborted) killProc();
-			else signal.addEventListener("abort", killProc, { once: true });
+			if (signal.aborted) {
+				killProc();
+			} else {
+				signal.addEventListener("abort", killProc, { once: true });
+				// Clean up the abort listener when the process exits normally,
+				// preventing stale `killProc` closures from accumulating on the
+				// abort signal across many swarm calls (memory leak).
+				proc.on("close", () => {
+					if (proc.pid) untrackDetachedChildPid(proc.pid);
+					signal.removeEventListener("abort", killProc);
+				});
+			}
 		}
 	});
 
 	if (wasAborted) {
-		result.error = "aborted";
-		result.text = result.text || `[aborted] ${task}`;
-	} else if (exitCode !== 0 || stderr) {
-		if (!result.error) result.error = stderr || `exit code ${exitCode}`;
+		return {
+			status: "aborted",
+			workerId,
+			task,
+			reason: "user",
+		};
 	}
 
-	return result;
+	if (exitCode !== 0 || stderr) {
+		return {
+			status: "failed",
+			workerId,
+			task,
+			error: stderr || `exit code ${exitCode}`,
+			text: outputText,
+		};
+	}
+
+	// Success — build the done outcome
+	const outcome: WorkerOutcome = {
+		status: "done",
+		workerId,
+		task,
+		text: outputText,
+		usage,
+	};
+	if (model) outcome.model = model;
+	if (estimatedUsage !== undefined) outcome.estimatedUsage = estimatedUsage;
+	if (stopReason) outcome.stopReason = stopReason;
+	return outcome;
 }
 
 // ─── Concurrency limiter ─────────────────────────────────────────────────────
@@ -417,6 +1005,7 @@ function createWorkerState(workerId: string, task: string, cwd: string, logPath:
 		status: "queued",
 		usage: { ...EMPTY_USAGE },
 		recentEvents: [],
+		pendingFlush: [],
 		outputTail: "",
 		logPath,
 	};
@@ -440,7 +1029,7 @@ function pushEvent(ws: WorkerState, event: Record<string, unknown>): void {
 		ws.lastTool = (event as { toolName?: string }).toolName ?? type;
 	}
 
-	// Update output tail from streamed text
+	// Update output tail from streamed text (avoid O(n²) concat: build then slice).
 	if (type === "message_update" || type === "message_end") {
 		const msg = event.message as { content?: Array<{ type: string; text?: string }> } | undefined;
 		if (msg?.content) {
@@ -449,50 +1038,99 @@ function pushEvent(ws: WorkerState, event: Record<string, unknown>): void {
 				if (part.type === "text" && part.text) text += part.text;
 			}
 			if (text) {
-				ws.outputTail = (ws.outputTail + text).slice(-OUTPUT_TAIL_BYTES);
+				ws.outputTail =
+					ws.outputTail.length + text.length > OUTPUT_TAIL_BYTES
+						? (ws.outputTail + text).slice(-OUTPUT_TAIL_BYTES)
+						: ws.outputTail + text;
 			}
 		}
 	}
 
-	appendNDJSON(ws.logPath, event);
+	// Incremental disk flush: buffer events and write every N events or on interval.
+	ws.pendingFlush.push(entry);
+	if (ws.pendingFlush.length >= FLUSH_BATCH_SIZE) {
+		flushPendingEvents(ws);
+	}
 }
 
-function updateRunCounts(run: RunState): void {
-	let queued = 0;
-	let running = 0;
-	let done = 0;
-	let failed = 0;
-	let aborted = 0;
-	let totalTokens = 0;
+// ─── O(1) status transitions ─────────────────────────────────────────────────
 
-	for (const ws of run.workers.values()) {
-		switch (ws.status) {
-			case "queued":
-				queued++;
-				break;
-			case "running":
-				running++;
-				break;
-			case "done":
-				done++;
-				totalTokens += ws.usage.totalTokens ?? 0;
-				break;
-			case "failed":
-				failed++;
-				totalTokens += ws.usage.totalTokens ?? 0;
-				break;
-			case "aborted":
-				aborted++;
-				break;
-		}
+function countInit(run: RunState): void {
+	run._cnt = { queued: 0, running: 0, done: 0, failed: 0, aborted: 0, tok: 0 };
+}
+
+function countIncr(run: RunState, status: WorkerState["status"], tokens?: number): void {
+	switch (status) {
+		case "queued":
+			run._cnt.queued++;
+			break;
+		case "running":
+			run._cnt.running++;
+			break;
+		case "done":
+			run._cnt.done++;
+			run._cnt.tok += tokens ?? 0;
+			break;
+		case "failed":
+			run._cnt.failed++;
+			run._cnt.tok += tokens ?? 0;
+			break;
+		case "aborted":
+			run._cnt.aborted++;
+			break;
 	}
+}
 
-	run.queued = queued;
-	run.running = running;
-	run.done = done;
-	run.failed = failed;
-	run.aborted = aborted;
-	run.usage = { ...run.usage, totalTokens };
+function countDecr(run: RunState, status: WorkerState["status"], tokens?: number): void {
+	switch (status) {
+		case "queued":
+			run._cnt.queued--;
+			break;
+		case "running":
+			run._cnt.running--;
+			break;
+		case "done":
+			run._cnt.done--;
+			run._cnt.tok -= tokens ?? 0;
+			break;
+		case "failed":
+			run._cnt.failed--;
+			run._cnt.tok -= tokens ?? 0;
+			break;
+		case "aborted":
+			run._cnt.aborted--;
+			break;
+	}
+}
+
+/** Transition a worker to a new status. O(1). */
+function transition(run: RunState, ws: WorkerState, to: WorkerState["status"], tokens?: number): void {
+	countDecr(run, ws.status, ws.usage.totalTokens);
+	ws.status = to;
+	countIncr(run, to, tokens);
+	run.queued = run._cnt.queued;
+	run.running = run._cnt.running;
+	run.done = run._cnt.done;
+	run.failed = run._cnt.failed;
+	run.aborted = run._cnt.aborted;
+	run.usage = { ...run.usage, totalTokens: run._cnt.tok };
+}
+
+/** Accumulate a worker's cost into the run total. Call after transition to done/failed. */
+function accumulateCost(run: RunState, usage: Usage): void {
+	const c = usage.cost;
+	if (!c?.total) return;
+	const prev = run.usage.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+	run.usage = {
+		...run.usage,
+		cost: {
+			input: (prev.input ?? 0) + (c.input ?? 0),
+			output: (prev.output ?? 0) + (c.output ?? 0),
+			cacheRead: (prev.cacheRead ?? 0) + (c.cacheRead ?? 0),
+			cacheWrite: (prev.cacheWrite ?? 0) + (c.cacheWrite ?? 0),
+			total: prev.total + c.total,
+		},
+	};
 }
 
 // ─── Core execution ──────────────────────────────────────────────────────────
@@ -505,88 +1143,200 @@ async function executeSingleWorker(
 	signal: AbortSignal | undefined,
 	_onUpdate: ((update: { text: string; details: Record<string, unknown> }) => void) | undefined,
 	ctx: ExtensionContext,
-): Promise<TaskResult> {
+	workerModel?: string,
+	workerTools?: string[],
+	stepTimeoutMs?: number,
+): Promise<WorkerOutcome> {
 	const logPath = path.join(run.logDir, "workers", `${workerId}.events.ndjson`);
 	const resultPath = path.join(run.logDir, "workers", `${workerId}.final.md`);
 
 	let ws = run.workers.get(workerId) ?? createWorkerState(workerId, task, cwd, logPath);
-	ws.status = "running";
+	if (workerModel) ws.model = workerModel;
+	transition(run, ws, "running");
 	ws.startedAt = Date.now();
 	run.workers.set(workerId, ws);
-	updateRunCounts(run);
 	updateStatusWidget(ctx);
 
+	// --- Incremental disk flush: flush pending events every FLUSH_INTERVAL_MS ---
+	ws.flushTimer = setInterval(() => {
+		const current = run.workers.get(workerId);
+		if (current) flushPendingEvents(current);
+	}, FLUSH_INTERVAL_MS);
+
+	// --- Step timeout: per-worker AbortController that kills on expiry ---
+	const effectiveStepTimeout = stepTimeoutMs ?? ENV_STEP_TIMEOUT_MS;
+	const stepAbortController = new AbortController();
+	const stepTimer = setTimeout(() => stepAbortController.abort(), effectiveStepTimeout);
+
+	// Forward tool signal to step abort so user escape / session disposal also kills the worker.
+	const toolSignalHandler = () => stepAbortController.abort();
+	if (signal) {
+		if (signal.aborted) {
+			stepAbortController.abort();
+		} else {
+			signal.addEventListener("abort", toolSignalHandler, { once: true });
+		}
+	}
+
+	// ─── Build parent config for child process fast-start path ──────────
+	let parentConfig: HamrChildConfig | undefined;
+	if (ctx.model) {
+		try {
+			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
+			parentConfig = {
+				apiKey: auth.ok ? auth.apiKey : undefined,
+				apiHeaders: auth.ok ? auth.headers : undefined,
+				apiEnv: auth.ok ? auth.env : undefined,
+				provider: ctx.model.provider,
+				modelId: ctx.model.id,
+				modelName: ctx.model.name,
+				modelApi: ctx.model.api,
+				modelBaseUrl: ctx.model.baseUrl,
+				modelContextWindow: ctx.model.contextWindow,
+				modelMaxTokens: ctx.model.maxTokens,
+				modelReasoning: ctx.model.reasoning,
+				modelInput: [...(ctx.model.input ?? [])],
+				modelCost: ctx.model.cost ? { ...ctx.model.cost } : undefined,
+				modelHeaders: ctx.model.headers ? { ...ctx.model.headers } : undefined,
+				modelThinkingLevelMap: ctx.model.thinkingLevelMap ? { ...ctx.model.thinkingLevelMap } : undefined,
+				modelCompat: ctx.model.compat ? JSON.parse(JSON.stringify(ctx.model.compat)) : undefined,
+				toolNames: workerTools ?? [],
+				systemPrompt: ctx.getSystemPrompt(),
+				cwd: ctx.cwd,
+				treeBudgetRemaining,
+			};
+		} catch {
+			// Auth resolution failed — child will fall back to normal startup.
+		}
+	}
+
 	try {
-		const result = await runWorkerChildProcess(workerId, task, cwd, signal, (event) => {
-			ws = run.workers.get(workerId) ?? ws;
-			pushEvent(ws, event);
-		});
+		const result = await runWorkerChildProcess(
+			workerId,
+			task,
+			cwd,
+			stepAbortController.signal,
+			(event) => {
+				ws = run.workers.get(workerId) ?? ws;
+				pushEvent(ws, event);
+			},
+			workerModel,
+			workerTools,
+			parentConfig,
+		);
 
 		ws = run.workers.get(workerId) ?? ws;
 		ws.endedAt = Date.now();
-		ws.model = result.model ?? ws.model;
-		ws.stopReason = result.stopReason;
+		if (result.status === "done") {
+			ws.model = result.model ?? ws.model;
+			ws.stopReason = result.stopReason;
+		}
 
-		if (result.error === "aborted") {
-			ws.status = "aborted";
+		// If the step timer (not the tool signal) fired, remap aborted → timeout.
+		if (result.status === "aborted" && stepAbortController.signal.aborted && !signal?.aborted) {
+			flushWorkerLog(ws);
 			run.workers.set(workerId, ws);
-			updateRunCounts(run);
+			transition(run, ws, "aborted");
+			updateStatusWidget(ctx);
+			return {
+				status: "timeout",
+				workerId,
+				task,
+				partialText: ws.outputTail.slice(-OUTPUT_TAIL_BYTES),
+			};
+		}
+
+		if (result.status === "aborted") {
+			flushWorkerLog(ws);
+			run.workers.set(workerId, ws);
+			transition(run, ws, "aborted");
 			updateStatusWidget(ctx);
 			return result;
 		}
 
-		if (result.error) {
-			ws.status = "failed";
+		if (result.status === "failed") {
 			ws.errorMessage = result.error;
 			ws.finalOutput = result.text.slice(0, OUTPUT_TAIL_BYTES);
 			ws.resultPath = resultPath;
 			try {
-				fs.writeFileSync(resultPath, result.text.slice(0, OUTPUT_TAIL_BYTES), "utf-8");
+				fs.writeFileSync(resultPath, result.text.slice(0, OUTPUT_TAIL_BYTES), { encoding: "utf-8", mode: 0o600 });
 			} catch {
 				/* best-effort */
 			}
+			flushWorkerLog(ws);
 			run.workers.set(workerId, ws);
-			updateRunCounts(run);
+			transition(run, ws, "failed", ws.usage.totalTokens);
+			accumulateCost(run, ws.usage);
+			updateStatusWidget(ctx);
+			const validation = validateWorkerOutput(result, cwd);
+			return { ...result, validation };
+		}
+
+		// Success (or empty output — still counts as done)
+		if (result.status === "timeout") {
+			flushWorkerLog(ws);
+			run.workers.set(workerId, ws);
+			transition(run, ws, "aborted");
+			updateStatusWidget(ctx);
+			const validation = validateWorkerOutput(result, cwd);
+			return { ...result, validation };
+		}
+
+		// At this point result.status has been narrowed to "done" since
+		// "aborted", "failed", and "timeout" returned early above.
+		if (result.status !== "done") {
+			flushWorkerLog(ws);
+			run.workers.set(workerId, ws);
+			transition(run, ws, "aborted");
 			updateStatusWidget(ctx);
 			return result;
 		}
 
-		// Success
-		ws.status = "done";
-		if (result.usage) {
-			ws.usage = result.usage;
-			ws.estimatedUsage = false;
-		} else {
-			// Estimate tokens from output length
-			ws.usage = {
-				...ws.usage,
-				output: Math.ceil(result.text.length / 3),
-				totalTokens: (ws.usage.input ?? 0) + Math.ceil(result.text.length / 3),
-			};
-			ws.estimatedUsage = true;
-		}
+		ws.usage = result.usage;
+		ws.estimatedUsage = result.estimatedUsage ?? false;
 		ws.finalOutput = result.text.slice(0, OUTPUT_TAIL_BYTES);
 		ws.resultPath = resultPath;
 		try {
-			fs.writeFileSync(resultPath, result.text.slice(0, OUTPUT_TAIL_BYTES), "utf-8");
+			fs.writeFileSync(resultPath, result.text.slice(0, OUTPUT_TAIL_BYTES), { encoding: "utf-8", mode: 0o600 });
 		} catch {
 			/* best-effort */
 		}
+		flushWorkerLog(ws);
 
 		run.workers.set(workerId, ws);
-		updateRunCounts(run);
+		transition(run, ws, "done", ws.usage.totalTokens);
+		accumulateCost(run, ws.usage);
 		updateStatusWidget(ctx);
 
-		return { ...result, usage: ws.usage, model: ws.model };
+		const validation = validateWorkerOutput(result, cwd);
+		return {
+			status: "done",
+			workerId,
+			task,
+			text: result.text,
+			usage: ws.usage,
+			model: ws.model ?? result.model,
+			estimatedUsage: ws.estimatedUsage,
+			stopReason: result.stopReason,
+			validation,
+		};
 	} catch (error) {
 		ws = run.workers.get(workerId) ?? ws;
-		ws.status = "failed";
 		ws.errorMessage = error instanceof Error ? error.message : String(error);
 		ws.endedAt = Date.now();
+		flushWorkerLog(ws);
 		run.workers.set(workerId, ws);
-		updateRunCounts(run);
+		transition(run, ws, "failed", ws.usage.totalTokens);
+		accumulateCost(run, ws.usage);
 		updateStatusWidget(ctx);
-		return { workerId, task, text: "", error: ws.errorMessage };
+		return { status: "failed", workerId, task, text: "", error: ws.errorMessage };
+	} finally {
+		clearTimeout(stepTimer);
+		if (signal) signal.removeEventListener("abort", toolSignalHandler);
+		if (ws.flushTimer) {
+			clearInterval(ws.flushTimer);
+			ws.flushTimer = undefined;
+		}
 	}
 }
 
@@ -600,68 +1350,72 @@ async function executeTasks(
 	signal: AbortSignal | undefined,
 	onUpdate: ((update: { text: string; details: Record<string, unknown> }) => void) | undefined,
 	ctx: ExtensionContext,
-): Promise<TaskResult[]> {
-	// Initialize all workers as queued
-	for (let i = 0; i < taskItems.length; i++) {
+	stepTimeoutMs?: number,
+): Promise<WorkerOutcome[]> {
+	// Initialize all workers as queued — O(1) counter init
+	const N = taskItems.length;
+	for (let i = 0; i < N; i++) {
 		const item = taskItems[i]!;
-		const workerId = padWorkerId(i, taskItems.length);
-		const ws = createWorkerState(
-			workerId,
-			item.task,
-			item.cwd ?? ctx.cwd,
-			path.join(run.logDir, "workers", `${workerId}.events.ndjson`),
+		run.workers.set(
+			padWorkerId(i, N),
+			createWorkerState(
+				padWorkerId(i, N),
+				item.task,
+				item.cwd ?? ctx.cwd,
+				path.join(run.logDir, "workers", `${padWorkerId(i, N)}.events.ndjson`),
+			),
 		);
-		run.workers.set(workerId, ws);
 	}
-	run.total = taskItems.length;
-	updateRunCounts(run);
+	run._cnt.queued = N;
+	run.queued = N;
+	run.total = N;
 	updateStatusWidget(ctx);
 
-	const results: TaskResult[] = await mapWithConcurrencyLimit(
+	const results: WorkerOutcome[] = await mapWithConcurrencyLimit(
 		taskItems,
 		concurrency,
 		async (item, idx) => {
 			if (signal?.aborted) {
-				return { workerId: padWorkerId(idx, taskItems.length), task: item.task, text: "", error: "aborted" };
+				const wid = padWorkerId(idx, N);
+				const w = run.workers.get(wid);
+				if (w) transition(run, w, "aborted");
+				return { status: "aborted", workerId: wid, task: item.task, reason: "parent" } as WorkerOutcome;
 			}
 			return executeSingleWorker(
 				run,
-				padWorkerId(idx, taskItems.length),
+				padWorkerId(idx, N),
 				item.task,
 				item.cwd ?? ctx.cwd,
 				signal,
 				onUpdate,
 				ctx,
+				(item as any).model,
+				(item as any).tools,
+				stepTimeoutMs,
 			);
 		},
 		(done) => {
 			if (onUpdate) {
-				onUpdate({
-					text: `${done}/${taskItems.length} tasks complete`,
-					details: { mode: "tasks", runId: run.runId, done, total: taskItems.length },
-				});
+				onUpdate({ text: `${done}/${N} tasks complete`, details: { mode: "tasks", runId: run.runId, done, total: N } });
 			}
 		},
 	);
 
-	// If failFast, check for failures
+	// failFast: abort remaining queued/running
 	if (failFast) {
-		const firstFailure = results.find((r) => r.error && r.error !== "aborted");
+		const firstFailure = results.find((r) => r.status === "failed");
 		if (firstFailure) {
-			// Mark remaining queued/running workers as aborted
 			for (const ws of run.workers.values()) {
 				if (ws.status === "queued" || ws.status === "running") {
-					ws.status = "aborted";
+					transition(run, ws, "aborted");
 					ws.endedAt = Date.now();
 				}
 			}
-			updateRunCounts(run);
 			updateStatusWidget(ctx);
 		}
 	}
 
 	run.endedAt = Date.now();
-	updateRunCounts(run);
 	updateStatusWidget(ctx);
 	return results;
 }
@@ -675,95 +1429,125 @@ async function executeChain(
 	signal: AbortSignal | undefined,
 	onUpdate: ((update: { text: string; details: Record<string, unknown> }) => void) | undefined,
 	ctx: ExtensionContext,
-): Promise<TaskResult[]> {
-	// Initialize all workers as queued
-	for (let i = 0; i < chainItems.length; i++) {
+	stepTimeoutMs?: number,
+): Promise<WorkerOutcome[]> {
+	const N = chainItems.length;
+	for (let i = 0; i < N; i++) {
 		const item = chainItems[i]!;
-		const workerId = padWorkerId(i, chainItems.length);
-		const ws = createWorkerState(
-			workerId,
-			item.task,
-			item.cwd ?? ctx.cwd,
-			path.join(run.logDir, "workers", `${workerId}.events.ndjson`),
+		run.workers.set(
+			padWorkerId(i, N),
+			createWorkerState(
+				padWorkerId(i, N),
+				item.task,
+				item.cwd ?? ctx.cwd,
+				path.join(run.logDir, "workers", `${padWorkerId(i, N)}.events.ndjson`),
+			),
 		);
-		run.workers.set(workerId, ws);
 	}
-	run.total = chainItems.length;
-	updateRunCounts(run);
+	run._cnt.queued = N;
+	run.queued = N;
+	run.total = N;
 	updateStatusWidget(ctx);
 
-	const results: TaskResult[] = [];
+	const results: WorkerOutcome[] = [];
 	let previousOutput = "";
 
-	for (let i = 0; i < chainItems.length; i++) {
+	for (let i = 0; i < N; i++) {
 		if (signal?.aborted) {
-			const ws = run.workers.get(padWorkerId(i, chainItems.length));
-			if (ws) {
-				ws.status = "aborted";
-				ws.endedAt = Date.now();
-			}
-			// Mark remaining as aborted
-			for (let j = i + 1; j < chainItems.length; j++) {
-				const w = run.workers.get(padWorkerId(j, chainItems.length));
-				if (w) {
-					w.status = "aborted";
-					w.endedAt = Date.now();
-				}
-			}
-			updateRunCounts(run);
+			abortRemaining(run, i, N);
 			updateStatusWidget(ctx);
-			results.push({
-				workerId: padWorkerId(i, chainItems.length),
-				task: chainItems[i]!.task,
-				text: "",
-				error: "aborted",
-			});
+			results.push({ status: "aborted", workerId: padWorkerId(i, N), task: chainItems[i]!.task, reason: "parent" });
 			break;
 		}
 
 		const item = chainItems[i]!;
-		const workerId = padWorkerId(i, chainItems.length);
+		const workerId = padWorkerId(i, N);
 		const taskWithContext = item.task.replace(/\{previous\}/g, previousOutput);
 
-		const result = await executeSingleWorker(
-			run,
-			workerId,
-			taskWithContext,
-			item.cwd ?? ctx.cwd,
-			signal,
-			onUpdate,
-			ctx,
-		);
+		// Create a per-step AbortController so that the abort listener attached
+		// inside runWorkerChildProcess is scoped to this step only. The tool
+		// signal (user escape / dispose only) is forwarded: if the user escapes,
+		// the step is killed. The listener is cleaned up after each step,
+		// preventing stale closures from accumulating on the tool signal
+		// across long chain runs.
+		const stepController = new AbortController();
+		let toolSignalListener: (() => void) | undefined;
+		if (signal) {
+			if (signal.aborted) {
+				stepController.abort();
+			} else {
+				toolSignalListener = () => stepController.abort();
+				signal.addEventListener("abort", toolSignalListener, { once: true });
+			}
+		}
+
+		let result: WorkerOutcome;
+		try {
+			result = await executeSingleWorker(
+				run,
+				workerId,
+				taskWithContext,
+				item.cwd ?? ctx.cwd,
+				stepController.signal,
+				onUpdate,
+				ctx,
+				(item as any).model,
+				(item as any).tools,
+				stepTimeoutMs,
+			);
+		} finally {
+			// Always clean up the tool signal listener for this step.
+			if (toolSignalListener && signal) {
+				signal.removeEventListener("abort", toolSignalListener);
+			}
+		}
 		results.push(result);
 
 		if (onUpdate) {
 			onUpdate({
-				text: `${i + 1}/${chainItems.length} chain steps complete`,
-				details: { mode: "chain", runId: run.runId, step: i + 1, total: chainItems.length },
+				text: `${i + 1}/${N} chain steps complete`,
+				details: { mode: "chain", runId: run.runId, step: i + 1, total: N },
 			});
 		}
 
-		if (failFast && result.error && result.error !== "aborted") {
-			// Mark remaining as aborted
-			for (let j = i + 1; j < chainItems.length; j++) {
-				const w = run.workers.get(padWorkerId(j, chainItems.length));
-				if (w) {
-					w.status = "aborted";
-					w.endedAt = Date.now();
-				}
-			}
-			updateRunCounts(run);
+		if (failFast && result.status === "failed") {
+			abortRemaining(run, i + 1, N);
 			updateStatusWidget(ctx);
 			break;
 		}
 
-		previousOutput = result.text;
+		// If the tool signal fired during this step (step was aborted), stop
+		// the chain — the user (or session) requested cancellation.
+		if (signal?.aborted) {
+			abortRemaining(run, i + 1, N);
+			updateStatusWidget(ctx);
+			break;
+		}
+
+		// Extract output text for {previous} placeholder in the next step.
+		// Only done/failed outcomes carry meaningful text; aborted/timeout are
+		// stopped by the checks above before reaching here.
+		if (result.status === "done" || result.status === "failed") {
+			previousOutput = result.text;
+		} else if (result.status === "timeout") {
+			previousOutput = result.partialText;
+		}
 	}
 
 	run.endedAt = Date.now();
-	updateRunCounts(run);
 	updateStatusWidget(ctx);
 	return results;
+}
+
+/** Transition all workers from idx to N to "aborted". */
+function abortRemaining(run: RunState, fromIdx: number, total: number): void {
+	for (let j = fromIdx; j < total; j++) {
+		const w = run.workers.get(padWorkerId(j, total));
+		if (w && (w.status === "queued" || w.status === "running")) {
+			transition(run, w, "aborted");
+			w.endedAt = Date.now();
+		}
+	}
 }
 
 // ─── Mode: Stages (mixed parallel/chain) ─────────────────────────────────────
@@ -781,29 +1565,32 @@ async function executeStages(
 	signal: AbortSignal | undefined,
 	onUpdate: ((update: { text: string; details: Record<string, unknown> }) => void) | undefined,
 	ctx: ExtensionContext,
-): Promise<TaskResult[]> {
-	// Initialize all workers from all stages
+	stepTimeoutMs?: number,
+): Promise<WorkerOutcome[]> {
+	// O(1) counter init: all workers start queued
 	let globalIdx = 0;
 	const totalTasks = stages.reduce((sum, s) => sum + s.tasks.length, 0);
 	for (const stage of stages) {
 		for (const item of stage.tasks) {
-			const workerId = padWorkerId(globalIdx, totalTasks);
-			const ws = createWorkerState(
-				workerId,
-				item.task,
-				item.cwd ?? ctx.cwd,
-				path.join(run.logDir, "workers", `${workerId}.events.ndjson`),
+			run.workers.set(
+				padWorkerId(globalIdx, totalTasks),
+				createWorkerState(
+					padWorkerId(globalIdx, totalTasks),
+					item.task,
+					item.cwd ?? ctx.cwd,
+					path.join(run.logDir, "workers", `${padWorkerId(globalIdx, totalTasks)}.events.ndjson`),
+				),
 			);
-			run.workers.set(workerId, ws);
 			globalIdx++;
 		}
 	}
+	run._cnt.queued = totalTasks;
+	run.queued = totalTasks;
 	run.total = totalTasks;
 	run.mode = "stages";
-	updateRunCounts(run);
 	updateStatusWidget(ctx);
 
-	const allResults: TaskResult[] = [];
+	const allResults: WorkerOutcome[] = [];
 	let stageOffset = 0;
 	let previousOutput = "";
 
@@ -813,25 +1600,37 @@ async function executeStages(
 		const stage = stages[si]!;
 
 		if (stage.mode === "parallel") {
-			const stageResults = await executeTasks(run, stage.tasks, concurrency, failFast, signal, undefined, ctx);
+			const stageResults = await executeTasks(
+				run,
+				stage.tasks,
+				concurrency,
+				failFast,
+				signal,
+				undefined,
+				ctx,
+				stepTimeoutMs,
+			);
 			allResults.push(...stageResults);
 
-			if (failFast && stageResults.some((r) => r.error && r.error !== "aborted")) {
-				// Abort any queued workers in remaining stages
+			if (failFast && stageResults.some((r) => r.status === "failed")) {
 				for (const ws of run.workers.values()) {
 					if (ws.status === "queued") {
-						ws.status = "aborted";
+						transition(run, ws, "aborted");
 						ws.endedAt = Date.now();
 					}
 				}
-				updateRunCounts(run);
 				updateStatusWidget(ctx);
 				break;
 			}
 
-			// Use last result's text as previousOutput for next stage
 			const lastResult = stageResults[stageResults.length - 1];
-			if (lastResult) previousOutput = lastResult.text;
+			if (lastResult) {
+				if (lastResult.status === "done" || lastResult.status === "failed") {
+					previousOutput = lastResult.text;
+				} else if (lastResult.status === "timeout") {
+					previousOutput = lastResult.partialText;
+				}
+			}
 		} else {
 			// chain within stage
 			for (let i = 0; i < stage.tasks.length; i++) {
@@ -848,21 +1647,27 @@ async function executeStages(
 					signal,
 					undefined,
 					ctx,
+					(item as any).model,
+					(item as any).tools,
+					stepTimeoutMs,
 				);
 				allResults.push(result);
 
-				if (failFast && result.error && result.error !== "aborted") {
-					// Abort any queued workers in remaining stages
+				if (failFast && result.status === "failed") {
 					for (const ws of run.workers.values()) {
 						if (ws.status === "queued") {
-							ws.status = "aborted";
+							transition(run, ws, "aborted");
 							ws.endedAt = Date.now();
 						}
 					}
 					break;
 				}
 
-				previousOutput = result.text;
+				if (result.status === "done" || result.status === "failed") {
+					previousOutput = result.text;
+				} else if (result.status === "timeout") {
+					previousOutput = result.partialText;
+				}
 			}
 		}
 
@@ -877,7 +1682,6 @@ async function executeStages(
 	}
 
 	run.endedAt = Date.now();
-	updateRunCounts(run);
 	updateStatusWidget(ctx);
 	return allResults;
 }
@@ -887,6 +1691,10 @@ async function executeStages(
 const TaskItem = Type.Object({
 	task: Type.String({ description: "Focused, self-contained task for one worker subagent." }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this worker." })),
+	model: Type.Optional(Type.String({ description: "Model override for this worker (e.g. claude-haiku-4-5)." })),
+	tools: Type.Optional(
+		Type.Array(Type.String(), { description: 'Restrict tools for this worker (e.g. ["read", "grep"]).' }),
+	),
 });
 
 const SubagentParams = Type.Object({
@@ -945,6 +1753,16 @@ const SubagentParams = Type.Object({
 			default: "compact",
 		}),
 	),
+	stepTimeoutMs: Type.Optional(
+		Type.Number({
+			description: `Per-worker timeout in ms (default: ${ENV_STEP_TIMEOUT_MS} = ${ENV_STEP_TIMEOUT_MS / 60000}min). Set HAMR_SUBAGENT_STEP_TIMEOUT_MS env var to change default.`,
+		}),
+	),
+	totalTimeoutMs: Type.Optional(
+		Type.Number({
+			description: `Per-run total timeout in ms (default: ${ENV_TOTAL_TIMEOUT_MS} = ${ENV_TOTAL_TIMEOUT_MS / 60000}min). Set HAMR_SUBAGENT_TOTAL_TIMEOUT_MS env var to change default.`,
+		}),
+	),
 });
 
 function modeDescription(): string {
@@ -960,6 +1778,11 @@ function modeDescription(): string {
 		"",
 		"Concurrency is capped for memory/GPU safety. Thousands of planned workers are allowed;",
 		"hundreds of simultaneous model calls are not. Default concurrency is conservative.",
+		"",
+		`A global budget (default ${ENV_TOTAL_BUDGET}) caps total subagents across recursive calls. Set HAMR_SUBAGENT_BUDGET env var to adjust.`,
+		"",
+		`Each worker has a step timeout (default ${ENV_STEP_TIMEOUT_MS / 60000}min) and a per-run total timeout (default ${ENV_TOTAL_TIMEOUT_MS / 60000}min).`,
+		"Set HAMR_SUBAGENT_STEP_TIMEOUT_MS and HAMR_SUBAGENT_TOTAL_TIMEOUT_MS env vars to change defaults.",
 		"",
 		"Workers that fail do not kill the swarm unless failFast=true.",
 		"Full logs persisted to disk: .hamr/subagents/runs/<runId>/",
@@ -981,7 +1804,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 				"Delegate only as many tasks as the work genuinely warrants.",
 			],
 			parameters: SubagentParams,
-			renderCall: (args, theme) => {
+			renderCall: (args, theme, context) => {
 				const hasSubtasks = (args.subtasks?.length ?? 0) > 0;
 				const hasTasks = (args.tasks?.length ?? 0) > 0;
 				const hasChain = (args.chain?.length ?? 0) > 0;
@@ -1010,12 +1833,24 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 					count = items.length;
 				}
 
+				const displayCount = context.expanded ? items.length : Math.min(items.length, 3);
 				let text = theme.fg("toolTitle", theme.bold("delegate_subagents ")) + theme.fg("accent", modeLabel);
-				for (let i = 0; i < Math.min(items.length, 3); i++) {
+				for (let i = 0; i < displayCount; i++) {
+					const itemTools = (items[i] as Record<string, unknown>)?.tools as string[] | undefined;
+					const isFastPath = isBashFastPathTools(itemTools);
+					const modeIndicator =
+						itemTools !== undefined
+							? isFastPath
+								? theme.fg("success", " ⚡bash")
+								: theme.fg("muted", " 🤖agent")
+							: "";
 					const preview = items[i]!.task.length > 50 ? `${items[i]!.task.slice(0, 50)}…` : items[i]!.task;
-					text += `\n  ${theme.fg("muted", `${i + 1}.`)} ${theme.fg("dim", preview)}`;
+					text += `\n  ${theme.fg("muted", `${i + 1}.`)} ${theme.fg("dim", preview)}${modeIndicator}`;
 				}
-				if (items.length > 3) text += `\n  ${theme.fg("muted", `… +${items.length - 3} more`)}`;
+				if (!context.expanded && items.length > 3) text += `\n  ${theme.fg("muted", `… +${items.length - 3} more`)}`;
+				const stepMs = (args.stepTimeoutMs as number | undefined) ?? ENV_STEP_TIMEOUT_MS;
+				const totalMs = (args.totalTimeoutMs as number | undefined) ?? ENV_TOTAL_TIMEOUT_MS;
+				text += `\n  ${theme.fg("muted", `timeouts: step ${Math.round(stepMs / 1000)}s / total ${Math.round(totalMs / 60000)}min`)}`;
 				return new Text(text, 0, 0);
 			},
 			renderResult: (result, options, theme) => {
@@ -1027,8 +1862,9 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 							done: number;
 							failed: number;
 							aborted: number;
+							timedOut?: number;
 							logDir: string;
-							results?: TaskResult[];
+							results?: WorkerOutcome[];
 					  }
 					| undefined;
 
@@ -1037,10 +1873,22 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 					return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
 				}
 
-				const { results, mode: dMode, runId, logDir, done, failed, aborted } = details;
-				const successCount = results.filter((r) => !r.error || r.error === "").length;
-				const failCount = results.filter((r) => r.error && r.error !== "aborted").length;
-				const abortedCount = aborted ?? results.filter((r) => r.error === "aborted").length;
+				const { results, mode: dMode, runId, logDir, done, failed, aborted, timedOut: timedOutCount } = details;
+				const successCount = results.filter((r) => r.status === "done").length;
+				const failCount = results.filter((r) => r.status === "failed").length;
+				const abortedCount = aborted ?? results.filter((r) => r.status === "aborted").length;
+				const timeoutCount = timedOutCount ?? results.filter((r) => r.status === "timeout").length;
+
+				// Aggregate usage across all workers for display
+				const agg = { tok: 0, cost: 0 };
+				for (const r of results) {
+					if (r.status === "done") {
+						agg.tok += r.usage.totalTokens ?? 0;
+						agg.cost += r.usage.cost?.total ?? 0;
+					}
+				}
+				const aggLine =
+					agg.tok > 0 ? `Total: ↓${formatTokens(agg.tok)} tok${agg.cost > 0 ? ` · $${agg.cost.toFixed(4)}` : ""}` : "";
 
 				if (!options.expanded) {
 					// Collapsed: summary line + log path
@@ -1048,16 +1896,35 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 					if (done) statusParts.push(`${done ?? results.length} done`);
 					if (failCount > 0) statusParts.push(`${failCount} failed`);
 					if (abortedCount > 0) statusParts.push(`${abortedCount} aborted`);
+					if (timeoutCount > 0) statusParts.push(`${timeoutCount} timed out`);
+
+					// Count validation warnings across all outcomes
+					let validationWarningsTotal = 0;
+					let validationHighCount = 0;
+					for (const r of results) {
+						const v = (r as { validation?: ValidationResult }).validation;
+						if (v) {
+							validationWarningsTotal += v.warnings.length;
+							validationHighCount += v.warnings.filter((w) => w.severity === "high").length;
+						}
+					}
 
 					let text = theme.fg("toolTitle", `${dMode} `) + theme.fg("accent", statusParts.join(", "));
+					if (aggLine) text += `\n${theme.fg("dim", aggLine)}`;
+					if (validationWarningsTotal > 0) {
+						const icon = validationHighCount > 0 ? "⚠" : "⚡";
+						text += `\n${theme.fg(validationHighCount > 0 ? "warning" : "muted", `${icon} ${validationWarningsTotal} output warning${validationWarningsTotal > 1 ? "s" : ""} (expand to review)`)}`;
+					}
 					text += `\n${theme.fg("muted", `logs: ${logDir}`)}`;
-					text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+					text += `\n${theme.fg("toolTitle", "▸ Press Ctrl+O to expand per-worker details")}`;
 					return new Text(text, 0, 0);
 				}
 
-				// Expanded: per-worker details (bounded)
+				// Expanded: per-worker details with Markdown + formatted tool calls
+				const mdTheme = getMarkdownTheme();
+				const fg = theme.fg.bind(theme);
 				const container = new Container();
-				const headerIcon = failCount > 0 ? theme.fg("warning", "◐") : theme.fg("success", "✓");
+				const headerIcon = failCount > 0 ? fg("warning", "◐") : fg("success", "✓");
 				container.addChild(
 					new Text(
 						`${headerIcon} ${theme.fg("toolTitle", theme.bold(dMode))} ${theme.fg("accent", `${successCount}/${results.length} succeeded`)}`,
@@ -1069,55 +1936,89 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 				// Show top failures first (max 5)
 				const failures = results
 					.map((r, i) => ({ result: r, idx: i }))
-					.filter(({ result }) => result.error && result.error !== "aborted")
+					.filter(({ result }) => result.status === "failed")
 					.slice(0, 5);
 				if (failures.length > 0) {
 					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("error", "Failures:"), 0, 0));
+					container.addChild(new Text(fg("error", "Failures:"), 0, 0));
 					for (const { result: r, idx } of failures) {
+						const f = r as Extract<WorkerOutcome, { status: "failed" }>;
 						container.addChild(
 							new Text(
-								`  ${theme.fg("error", "✕")} [${padWorkerId(idx, results.length)}] ${theme.fg("dim", r.task.slice(0, 60))}`,
+								`  ${fg("error", "✕")} [${padWorkerId(idx, results.length)}] ${fg("dim", f.task.slice(0, 60))}`,
 								0,
 								0,
 							),
 						);
-						if (r.error) container.addChild(new Text(`    ${theme.fg("error", r.error.slice(0, 120))}`, 0, 0));
+						container.addChild(new Text(`    ${fg("error", f.error.slice(0, 120))}`, 0, 0));
 					}
 				}
 
 				// Show recent successful workers (max 10)
 				const successWorkers = results
 					.map((r, i) => ({ result: r, idx: i }))
-					.filter(({ result }) => !result.error || result.error === "")
+					.filter(({ result }) => result.status === "done")
 					.slice(-10);
 
 				if (successWorkers.length > 0) {
 					container.addChild(new Spacer(1));
-					for (const { result: r, idx } of successWorkers) {
-						const usageStr = r.usage?.totalTokens ? ` ↓${formatTokens(r.usage.totalTokens)} tok` : "";
+					for (const [si, { result: r, idx }] of successWorkers.entries()) {
+						// TypeScript narrows: only done outcomes pass the filter
+						const done = r as Extract<WorkerOutcome, { status: "done" }>;
+						const usageStr = done.usage.totalTokens ? ` ↓${formatTokens(done.usage.totalTokens)} tok` : "";
+						const modelStr = done.model ? ` ${fg("muted", done.model)}` : "";
 						container.addChild(
 							new Text(
-								`  ${theme.fg("success", "✓")} [${padWorkerId(idx, results.length)}] ${theme.fg("dim", r.task.slice(0, 50))}${theme.fg("muted", usageStr)}`,
+								`  ${fg("success", "✓")} [${padWorkerId(idx, results.length)}] ${fg("dim", done.task.slice(0, 50))}${modelStr}${fg("muted", usageStr)}`,
 								0,
 								0,
 							),
 						);
-						if (r.text) {
-							const preview = r.text.slice(0, 120).replace(/\n/g, " ");
-							container.addChild(new Text(`    ${theme.fg("toolOutput", preview)}`, 0, 0));
+						if (done.validation && done.validation.warnings.length > 0) {
+							for (const w of done.validation.warnings) {
+								const icon = w.severity === "high" ? "⚠" : w.severity === "medium" ? "⚡" : "·";
+								const color = w.severity === "high" ? "warning" : w.severity === "medium" ? "warning" : "muted";
+								container.addChild(new Text(`    ${fg(color, `${icon} ${w.message}`)}`, 0, 0));
+							}
 						}
+						if (done.text) {
+							container.addChild(new Spacer(1));
+							container.addChild(new Markdown(done.text.slice(0, 4096), 3, 0, mdTheme));
+						}
+						if (si < successWorkers.length - 1) container.addChild(new Spacer(1));
+					}
+				}
+
+				// Timed-out workers
+				if (timeoutCount > 0) {
+					container.addChild(new Spacer(1));
+					container.addChild(new Text(fg("warning", `${timeoutCount} timed out`), 0, 0));
+					for (const { result: r, idx } of results
+						.map((r, i) => ({ result: r, idx: i }))
+						.filter(({ result }) => result.status === "timeout")) {
+						const t = r as Extract<WorkerOutcome, { status: "timeout" }>;
+						container.addChild(
+							new Text(
+								`  ${fg("warning", "⏱")} [${padWorkerId(idx, results.length)}] ${fg("dim", t.task.slice(0, 60))}`,
+								0,
+								0,
+							),
+						);
 					}
 				}
 
 				// Aborted workers
 				if (abortedCount > 0) {
 					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("muted", `${abortedCount} aborted`), 0, 0));
+					container.addChild(new Text(fg("muted", `${abortedCount} aborted`), 0, 0));
 				}
 
+				if (aggLine) {
+					container.addChild(new Spacer(1));
+					container.addChild(new Text(fg("dim", aggLine), 0, 0));
+				}
 				container.addChild(new Spacer(1));
-				container.addChild(new Text(theme.fg("muted", `Full logs: ${logDir}`), 0, 0));
+				container.addChild(new Text(fg("muted", `Full logs: ${logDir}`), 0, 0));
 
 				return container;
 			},
@@ -1152,12 +2053,11 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 					};
 				}
 
-				// Determine concurrency
-				const concurrency = clamp(
-					params.concurrency ?? ENV_MAX_CONCURRENCY,
-					1,
-					ENV_MAX_LOCAL_CONCURRENCY > 0 ? ENV_MAX_LOCAL_CONCURRENCY : ENV_MAX_CONCURRENCY,
-				);
+				// Determine concurrency: cloud providers get ENV_MAX_CONCURRENCY (64), local/relay capped at 1
+				const config = loadHamrStartupConfig(ctx.cwd);
+				const isCloud = ctx.model?.provider ? isCloudProvider(config, ctx.model.provider) : true;
+				const maxConcurrency = isCloud ? ENV_MAX_CONCURRENCY : ENV_MAX_LOCAL_CONCURRENCY;
+				const concurrency = clamp(params.concurrency ?? ENV_MAX_CONCURRENCY, 1, maxConcurrency);
 				const failFast = params.failFast ?? false;
 				const observe = (params.observe as string | undefined) ?? "compact";
 
@@ -1180,6 +2080,54 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 						details: {},
 					};
 				}
+				if (taskCount > ENV_HARD_MAX_TASKS) {
+					return {
+						content: [{ type: "text", text: `Too many tasks (${taskCount}). Hard limit is ${ENV_HARD_MAX_TASKS}.` }],
+						details: {},
+					};
+				}
+
+				// In-memory budget check for this process's subtree.
+				// Each process tracks its own remaining budget independently;
+				// children inherit their slice via HAMR_SUBAGENT_TREE_REMAINING env.
+				if (taskCount > 0) {
+					if (treeBudgetRemaining < taskCount) {
+						return {
+							content: [
+								{
+									type: "text",
+									text: `Subagent budget exhausted. Only ${treeBudgetRemaining} slots remain, ${taskCount} requested. Total tree budget: ${ENV_TOTAL_BUDGET}. Wait for active subagents to complete, or set HAMR_SUBAGENT_BUDGET to increase.`,
+								},
+							],
+							details: { budgetExhausted: true, treeBudget: ENV_TOTAL_BUDGET, remaining: treeBudgetRemaining },
+							isError: true,
+						};
+					}
+					treeBudgetRemaining -= taskCount;
+				}
+
+				// ─── Record spawn point in the parent session tree ──────────
+				// This creates a real child node in the session tree so subagent
+				// runs are walkable/inspectable, not orphan in-memory sessions.
+				const spawnPolicy: SpawnPolicy = {
+					contextInheritance: "scoped",
+					executionMode: "background",
+					mergePolicy: "handoff-only",
+				};
+				const childSessionId = `subagent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+				let spawnPointEntryId: string | undefined;
+				try {
+					spawnPointEntryId = ctx.sessionManager.appendSpawnPoint(
+						childSessionId,
+						spawnPolicy,
+						undefined, // childSessionPath — child processes run detached for now
+						undefined, // runId — will be set below
+						"subagent swarm",
+					);
+				} catch {
+					// Best-effort: if the session manager doesn't persist (--no-session),
+					// appendSpawnPoint still works on the in-memory tree.
+				}
 
 				// Create run state
 				const runId = nextRunId();
@@ -1197,6 +2145,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 					usage: { ...EMPTY_USAGE },
 					logDir,
 					workers: new Map(),
+					_cnt: { queued: 0, running: 0, done: 0, failed: 0, aborted: 0, tok: 0 },
 				};
 				activeRuns.set(runId, run);
 
@@ -1210,11 +2159,12 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 								mode: run.mode,
 								startedAt: new Date(run.startedAt).toISOString(),
 								cwd: ctx.cwd,
+								parentSessionId: ctx.sessionManager.getSessionId(),
 							},
 							null,
 							2,
 						),
-						"utf-8",
+						{ encoding: "utf-8", mode: 0o600 },
 					);
 				} catch {
 					/* best-effort */
@@ -1230,7 +2180,26 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 							}
 						: undefined;
 
-				let results: TaskResult[];
+				const stepTimeoutMs = (params.stepTimeoutMs as number | undefined) ?? ENV_STEP_TIMEOUT_MS;
+				const totalTimeoutMs = (params.totalTimeoutMs as number | undefined) ?? ENV_TOTAL_TIMEOUT_MS;
+
+				// Total-timeout controller: when it fires, all workers are killed.
+				const totalAbortController = new AbortController();
+				const totalTimer = setTimeout(() => totalAbortController.abort(), totalTimeoutMs);
+
+				// Forward the tool signal (user escape / session dispose) so either
+				// source aborts the run. Internal lifecycle events (compaction, auto-retry)
+				// do NOT fire this signal, so subagents continue through those.
+				const forwardToolSignal = () => totalAbortController.abort();
+				if (signal) {
+					if (signal.aborted) {
+						totalAbortController.abort();
+					} else {
+						signal.addEventListener("abort", forwardToolSignal, { once: true });
+					}
+				}
+
+				let results: WorkerOutcome[];
 
 				try {
 					if (hasStages) {
@@ -1240,26 +2209,60 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 							mode: s.mode as "parallel" | "chain",
 							tasks: s.tasks,
 						}));
-						results = await executeStages(run, stageSpecs, concurrency, failFast, signal, onUpdateWrapper, ctx);
+						results = await executeStages(
+							run,
+							stageSpecs,
+							concurrency,
+							failFast,
+							totalAbortController.signal,
+							onUpdateWrapper,
+							ctx,
+							stepTimeoutMs,
+						);
 					} else if (hasTasks) {
 						const tasks = params.tasks as Array<{ task: string; cwd?: string }>;
-						if (tasks.length > ENV_HARD_MAX_TASKS) {
-							return {
-								content: [
-									{ type: "text", text: `Too many tasks (${tasks.length}). Hard limit is ${ENV_HARD_MAX_TASKS}.` },
-								],
-								details: { logDir },
-							};
-						}
-						results = await executeTasks(run, tasks, concurrency, failFast, signal, onUpdateWrapper, ctx);
+						results = await executeTasks(
+							run,
+							tasks,
+							concurrency,
+							failFast,
+							totalAbortController.signal,
+							onUpdateWrapper,
+							ctx,
+							stepTimeoutMs,
+						);
 					} else if (hasChain) {
 						const chain = params.chain as Array<{ task: string; cwd?: string }>;
-						results = await executeChain(run, chain, failFast, signal, onUpdateWrapper, ctx);
+						results = await executeChain(
+							run,
+							chain,
+							failFast,
+							totalAbortController.signal,
+							onUpdateWrapper,
+							ctx,
+							stepTimeoutMs,
+						);
 					} else {
 						// Legacy subtasks — run as chain
 						const subtasks = params.subtasks as Array<{ task: string; cwd?: string }>;
-						results = await executeChain(run, subtasks, failFast, signal, onUpdateWrapper, ctx);
+						results = await executeChain(
+							run,
+							subtasks,
+							failFast,
+							totalAbortController.signal,
+							onUpdateWrapper,
+							ctx,
+							stepTimeoutMs,
+						);
 					}
+				} catch (err) {
+					// Refund budget slots for workers that never spawned, so a run that
+					// aborts before/early during spawning doesn't permanently leak the
+					// tree budget. Workers that did start consumed their slots via the
+					// HAMR_SUBAGENT_TREE_REMAINING env passed at spawn time.
+					const spawned = run.workers.size;
+					if (taskCount > spawned) treeBudgetRemaining += taskCount - spawned;
+					throw err;
 				} finally {
 					// Save final run state
 					try {
@@ -1277,31 +2280,75 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 									endedAt: new Date().toISOString(),
 									usage: run.usage,
 									cwd: ctx.cwd,
+									parentSessionId: ctx.sessionManager.getSessionId(),
 								},
 								null,
 								2,
 							),
-							"utf-8",
+							{ encoding: "utf-8", mode: 0o600 },
 						);
 					} catch {
 						/* best-effort */
 					}
 					evictOldRuns();
+					clearTimeout(totalTimer);
+					if (signal) signal.removeEventListener("abort", forwardToolSignal);
 				}
 
-				const errors = results.filter((r) => r.error && r.error !== "aborted");
-				const successCount = results.length - errors.length;
+				const errors = results.filter((r) => r.status === "failed");
+				const aborted = results.filter((r) => r.status === "aborted");
+				const timedOut = results.filter((r) => r.status === "timeout");
+				const successCount = results.filter((r) => r.status === "done").length;
+
+				// ─── Merge handoff into the parent session tree ────────────
+				// This creates a custom_message entry as a child of the spawn
+				// point, injecting subagent output into LLM context when the
+				// parent continues.
+				if (spawnPointEntryId) {
+					try {
+						const mergeParts: string[] = [];
+						mergeParts.push(`## Subagent swarm ${runId} results`);
+						mergeParts.push(`Mode: ${run.mode}, ${successCount}/${results.length} succeeded`);
+						for (const r of results) {
+							if (r.status === "done") {
+								const done = r as Extract<WorkerOutcome, { status: "done" }>;
+								mergeParts.push(`### [${r.workerId}] ✓ ${done.task.slice(0, 80)}`);
+								if (done.text) mergeParts.push(done.text.slice(0, 4096));
+								if (done.usage.totalTokens) {
+									mergeParts.push(`_(tokens: ${done.usage.totalTokens}, model: ${done.model ?? "unknown"})_`);
+								}
+							} else if (r.status === "failed") {
+								const failed = r as Extract<WorkerOutcome, { status: "failed" }>;
+								mergeParts.push(`### [${r.workerId}] ✕ ${failed.task.slice(0, 80)}`);
+								mergeParts.push(`Error: ${failed.error.slice(0, 500)}`);
+							}
+						}
+						ctx.sessionManager.mergeHandoff(spawnPointEntryId, "subagent_handoff", mergeParts.join("\n\n"), {
+							runId,
+							mode: run.mode,
+							total: run.total,
+							done: run.done,
+							failed: run.failed,
+						});
+					} catch {
+						// Best-effort: if merge fails, the tool result still contains
+						// the summary text for the LLM.
+					}
+				}
 
 				// Build summary
 				const summaryParts: string[] = [];
-				summaryParts.push(
-					`Swarm ${runId} complete: ${successCount}/${results.length} succeeded${errors.length > 0 ? `, ${errors.length} failed` : ""}.`,
-				);
+				const parts = [`${successCount}/${results.length} succeeded`];
+				if (errors.length > 0) parts.push(`${errors.length} failed`);
+				if (aborted.length > 0) parts.push(`${aborted.length} aborted`);
+				if (timedOut.length > 0) parts.push(`${timedOut.length} timed out`);
+				summaryParts.push(`Swarm ${runId} complete: ${parts.join(", ")}.`);
 
 				if (errors.length > 0) {
 					summaryParts.push("Top failures:");
 					for (const r of errors.slice(0, 5)) {
-						summaryParts.push(`- [${r.workerId}] ${r.task.slice(0, 60)}: ${(r.error ?? "unknown").slice(0, 100)}`);
+						const e = r as Extract<WorkerOutcome, { status: "failed" }>;
+						summaryParts.push(`- [${e.workerId}] ${e.task.slice(0, 60)}: ${e.error.slice(0, 100)}`);
 					}
 				}
 
@@ -1317,6 +2364,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 						done: run.done,
 						failed: run.failed,
 						aborted: run.aborted,
+						timedOut: timedOut.length,
 						logDir,
 						results,
 					},
@@ -1336,6 +2384,26 @@ export function createHamrSubagentsExtension(
 	const factory: ExtensionFactory = async (pi) => {
 		// Leaf: no delegate tool, so recursion stops here.
 		if (depth >= MAX_DEPTH) return;
+
+		// Restore completed runs on session resume; clear on new/switch/fork.
+		// session_before_switch fires on the OLD session's runtime (which is then
+		// disposed), so session_tree can never fire post-switch. The resume restore
+		// happens in session_start on the NEW session's runtime instead.
+		pi.on("session_start", (event, ctx) => {
+			activeRuns.clear();
+			if (event.reason === "resume") {
+				restoreRunsFromDisk(ctx.cwd, ctx.sessionManager.getSessionId());
+			}
+			updateStatusWidget(ctx);
+		});
+		pi.on("session_before_switch", (_, ctx) => {
+			activeRuns.clear();
+			updateStatusWidget(ctx);
+		});
+		pi.on("session_before_fork", (_, ctx) => {
+			activeRuns.clear();
+			updateStatusWidget(ctx);
+		});
 		registerSubagentTool(pi);
 	};
 	(factory as { [HAMR_SUBAGENTS_FACTORY]?: boolean })[HAMR_SUBAGENTS_FACTORY] = true;

@@ -12,7 +12,7 @@ import {
 } from "../modes/interactive/components/first-time-setup.ts";
 import { detectTerminalBackgroundTheme, initTheme, setTheme } from "../modes/interactive/theme/theme.ts";
 
-const OFFICIAL_PACKAGE_NAME = "@hamr/coding-agent";
+const OFFICIAL_PACKAGE_NAMES = new Set(["@skaft/hamr", "@hamr/coding-agent"]);
 const OFFICIAL_APP_NAMES = new Set(["hamr"]);
 const OFFICIAL_CONFIG_DIR_NAME = ".hamr";
 
@@ -24,7 +24,7 @@ interface DistributionMetadata {
 
 function isOfficialDistribution({ packageName, appName, configDirName }: DistributionMetadata): boolean {
 	return (
-		packageName === OFFICIAL_PACKAGE_NAME &&
+		OFFICIAL_PACKAGE_NAMES.has(packageName) &&
 		OFFICIAL_APP_NAMES.has(appName) &&
 		configDirName === OFFICIAL_CONFIG_DIR_NAME
 	);

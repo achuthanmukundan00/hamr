@@ -583,6 +583,7 @@ export class AgentHarness<
 					this.createLoopConfig(getTurnState, setTurnState),
 					(event) => this.handleAgentEvent(event, abortController.signal),
 					abortController.signal,
+					abortController.signal,
 					this.createStreamFn(getTurnState),
 				);
 			} catch (error) {

@@ -1,6 +1,6 @@
 {
 	"name": "@hamr/coding-agent",
-	"version": "0.4.2",
+	"version": "0.5.0",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"homepage": "https://hamr-6j6.pages.dev",
 	"type": "module",
@@ -27,12 +27,22 @@
 		"CHANGELOG.md"
 	],
 	"hamr": {
-		"extensions": ["./examples/extensions/hamr-browser/index.ts"],
-		"skills": ["./dist/askr/skills", "./examples/extensions/hamr-browser/skills"]
+		"extensions": [
+			"./examples/extensions/hamr-browser/index.ts"
+		],
+		"skills": [
+			"./dist/askr/skills",
+			"./examples/extensions/hamr-browser/skills"
+		]
 	},
 	"pi": {
-		"extensions": ["./examples/extensions/hamr-browser/index.ts"],
-		"skills": ["./dist/askr/skills", "./examples/extensions/hamr-browser/skills"]
+		"extensions": [
+			"./examples/extensions/hamr-browser/index.ts"
+		],
+		"skills": [
+			"./dist/askr/skills",
+			"./examples/extensions/hamr-browser/skills"
+		]
 	},
 	"scripts": {
 		"clean": "shx rm -rf dist",
@@ -48,6 +58,7 @@
 		"@hamr/ai": "*",
 		"@hamr/tui": "*",
 		"@silvia-odwyer/photon-node": "0.3.4",
+		"better-sqlite3": "^12.11.1",
 		"chalk": "5.6.2",
 		"cross-spawn": "7.0.6",
 		"diff": "8.0.4",
@@ -71,8 +82,7 @@
 		}
 	},
 	"optionalDependencies": {
-		"@mariozechner/clipboard": "0.3.9",
-		"better-sqlite3": "12.9.0"
+		"@mariozechner/clipboard": "0.3.9"
 	},
 	"devDependencies": {
 		"@types/better-sqlite3": "7.6.13",

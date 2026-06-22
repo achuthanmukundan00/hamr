@@ -309,7 +309,6 @@ function modelToProviderModel(
 	provider: HamrProviderConfig,
 	providerId: string,
 ): NonNullable<ProviderConfig["models"]>[number] {
-	const thinking = model.supports_thinking ?? model.supportsThinking ?? false;
 	const supportsVision = model.supports_vision ?? model.supportsVision ?? true;
 	// When this configured entry shadows a known built-in model (same provider + id),
 	// inherit pricing and context limits from the built-in unless the config sets them
@@ -317,6 +316,15 @@ function modelToProviderModel(
 	// built-in model), so e.g. adding an API key for the built-in `deepseek` provider
 	// keeps its real cost data instead of zeroing it.
 	const builtin = getModel(providerId as never, model.id as never) as Model<Api> | undefined;
+	// Capability (reasoning + thinking levels) is owned by the model registry for
+	// known models. A config entry may DEFINE capability for models the registry
+	// doesn't know, and may WIDEN (enable) thinking, but `supports_thinking` leaking
+	// to `false` (e.g. a /v1/models probe that omits the field) must never silently
+	// strip thinking from a built-in that reasons. So thinking = registry truth OR an
+	// explicit config opt-in; an explicit/absent config `false` cannot override the
+	// registry. This is the wall pi keeps between preferences and capability.
+	const configThinking = model.supports_thinking ?? model.supportsThinking;
+	const thinking = (builtin?.reasoning ?? false) || (configThinking ?? false);
 	const contextWindow = modelContextWindow(model) ?? builtin?.contextWindow ?? 0;
 	const compatibility = provider.compatibility ?? "openai-compatible";
 	const thinkingFormat = detectThinkingFormat(model.id);
@@ -336,16 +344,23 @@ function modelToProviderModel(
 	for (const level of rawLevels) {
 		advertised.add(level === "on" ? "high" : level);
 	}
-	const thinkingLevelMap: Record<string, string | null> = {};
+	const derivedThinkingLevelMap: Record<string, string | null> = {};
 	for (const level of CANONICAL_LEVELS) {
 		if (!advertised.has(level)) {
-			thinkingLevelMap[level] = null; // unsupported
+			derivedThinkingLevelMap[level] = null; // unsupported
 		} else if (level === "xhigh") {
 			// xhigh is excluded unless it maps to a defined value.
-			thinkingLevelMap.xhigh = "xhigh";
+			derivedThinkingLevelMap.xhigh = "xhigh";
 		}
 		// Advertised non-xhigh levels are left missing → supported, provider default.
 	}
+	// For a built-in reasoning model the registry's thinkingLevelMap is authoritative,
+	// unless the config explicitly advertises its own level list (to widen/customize).
+	// Otherwise we'd narrow the levels (e.g. force deepseek-v4 down to off/on) instead
+	// of honoring the registry's high/xhigh → "high"/"max" mapping.
+	const hasExplicitLevels = Array.isArray(model.thinking_levels);
+	const thinkingLevelMap =
+		builtin?.reasoning && !hasExplicitLevels ? builtin.thinkingLevelMap : derivedThinkingLevelMap;
 	return {
 		id: model.id,
 		name: model.display_name ?? model.displayName ?? model.id,

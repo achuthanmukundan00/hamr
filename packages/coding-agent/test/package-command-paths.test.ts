@@ -506,10 +506,11 @@ else {
 			expect(process.exitCode).toBeUndefined();
 			expect(errorSpy).not.toHaveBeenCalled();
 			const recordedCalls = JSON.parse(readFileSync(recordPath, "utf-8")) as string[][];
-			expect(recordedCalls).toEqual([
-				expect.arrayContaining(["uninstall", "-g", PACKAGE_NAME]),
-				expect.arrayContaining(["install", "-g", "@skaft/hamr"]),
-			]);
+			// The running package is now @skaft/hamr and the update check resolves the
+			// same name, so self-update is a single in-place install with no rename
+			// migration (no uninstall of a differently-named old package).
+			expect(PACKAGE_NAME).toBe("@hamr/coding-agent");
+			expect(recordedCalls).toEqual(expect.arrayContaining([expect.arrayContaining(["install", "-g", "@skaft/hamr"])]));
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
@@ -561,10 +562,11 @@ if(args.includes("install")) process.exit(23);
 			expect(stdout).not.toContain(`Updated pi`);
 			expect(stderr).toContain("exited with code 23");
 			const recordedCalls = JSON.parse(readFileSync(recordPath, "utf-8")) as string[][];
-			expect(recordedCalls).toEqual([
-				expect.arrayContaining(["uninstall", "-g", PACKAGE_NAME]),
-				expect.arrayContaining(["install", "-g", "@skaft/hamr"]),
-			]);
+			// The running package is now @skaft/hamr and the update check resolves the
+			// same name, so self-update is a single in-place install with no rename
+			// migration (no uninstall of a differently-named old package).
+			expect(PACKAGE_NAME).toBe("@hamr/coding-agent");
+			expect(recordedCalls).toEqual(expect.arrayContaining([expect.arrayContaining(["install", "-g", "@skaft/hamr"])]));
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();

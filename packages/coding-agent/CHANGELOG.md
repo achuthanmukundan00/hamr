@@ -54,6 +54,8 @@
 - **Security: extension exec timeout.** Extension-spawned commands now have a default 10-minute timeout to prevent hung subprocesses from blocking the agent.
 - **Security: auth-storage lock busy-wait fixed.** Replaced with `Atomics.wait`-based sleep to avoid CPU spin during token-refresh contention.
 - **Hardened `.gitignore`** against accidental config credential commits.
+- **Fixed: adaptive card backgrounds rendered black when terminal bg could not be detected.** The COLORFGBG fallback for dark terminals now uses `#1a1a1a` instead of pure black, and the elevation computation applies a lightness floor so cards are always distinguishable from the terminal background.
+- **Separate lifecycle and tool abort signals.** The agent now distinguishes between lifecycle aborts (compaction, auto-retry — stop LLM streaming only) and tool aborts (user escape, session dispose — also kill running tools). Subagents and other long-running tools are no longer spuriously killed by internal lifecycle events.
 
 ## [0.4.0] - 2026-06-19
 

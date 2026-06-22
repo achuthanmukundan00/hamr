@@ -9373,23 +9373,6 @@ export const MODELS = {
 			contextWindow: 200000,
 			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
-		"anthropic/claude-3.5-haiku": {
-			id: "anthropic/claude-3.5-haiku",
-			name: "Anthropic: Claude 3.5 Haiku",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://openrouter.ai/api/v1",
-			reasoning: false,
-			input: ["text", "image"],
-			cost: {
-				input: 0.8,
-				output: 4,
-				cacheRead: 0.08,
-				cacheWrite: 1,
-			},
-			contextWindow: 200000,
-			maxTokens: 8192,
-		} satisfies Model<"openai-completions">,
 		"anthropic/claude-fable-5": {
 			id: "anthropic/claude-fable-5",
 			name: "Anthropic: Claude Fable 5",
@@ -11032,7 +11015,7 @@ export const MODELS = {
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 262142,
+			maxTokens: 65535,
 		} satisfies Model<"openai-completions">,
 		"moonshotai/kimi-k2.7-code": {
 			id: "moonshotai/kimi-k2.7-code",
@@ -11066,7 +11049,7 @@ export const MODELS = {
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 262144,
+			maxTokens: 256000,
 		} satisfies Model<"openai-completions">,
 		"nvidia/llama-3.3-nemotron-super-49b-v1.5": {
 			id: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
@@ -13520,13 +13503,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 1.2,
-				output: 4.1,
-				cacheRead: 0.2,
+				input: 1,
+				output: 4,
+				cacheRead: 0.18,
 				cacheWrite: 0,
 			},
 			contextWindow: 1048576,
-			maxTokens: 131072,
+			maxTokens: 32768,
 		} satisfies Model<"openai-completions">,
 		"~anthropic/claude-fable-latest": {
 			id: "~anthropic/claude-fable-latest",
@@ -13645,7 +13628,7 @@ export const MODELS = {
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 262142,
+			maxTokens: 65535,
 		} satisfies Model<"openai-completions">,
 		"~openai/gpt-latest": {
 			id: "~openai/gpt-latest",

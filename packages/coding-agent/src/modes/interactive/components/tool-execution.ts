@@ -70,6 +70,9 @@ export class ToolExecutionComponent extends Container {
 		this.contentText = new Text("", theme.cards.toolIndent, theme.cards.cardPadY, pendingBgFn);
 		this.selfRenderContainer = new Container();
 
+		// Consistent with BashExecutionComponent: each card owns its leading gap.
+		this.addChild(new Spacer(theme.cards.gaplessCards ? 0 : 1));
+
 		if (this.hasRendererDefinition()) {
 			this.addChild(this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox);
 		} else {

@@ -21,6 +21,27 @@ import { getAgentDir } from "../config.ts";
 import { normalizePath } from "../utils/paths.ts";
 import { resolveConfigValue } from "./resolve-config-value.ts";
 
+/**
+ * Synchronous sleep that blocks without busy-spinning the CPU.
+ * Uses Atomics.wait on a SharedArrayBuffer-backed Int32Array (a genuine
+ * blocking wait). Falls back to a coarse busy-wait only if
+ * SharedArrayBuffer/Atomics.wait are unavailable.
+ */
+function syncSleepMs(ms: number): void {
+	if (ms <= 0) return;
+	try {
+		const buf = new Int32Array(new SharedArrayBuffer(4));
+		Atomics.wait(buf, 0, 0, ms);
+		return;
+	} catch {
+		// SharedArrayBuffer unavailable (rare in Node) — fall back.
+	}
+	const start = Date.now();
+	while (Date.now() - start < ms) {
+		// Intentionally empty; only reached when Atomics.wait is unavailable.
+	}
+}
+
 export type ApiKeyCredential = {
 	type: "api_key";
 	key: string;
@@ -75,8 +96,9 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
-		const maxAttempts = 10;
-		const delayMs = 20;
+		const maxAttempts = 25;
+		const baseDelayMs = 20;
+		const maxDelayMs = 2000;
 		let lastError: unknown;
 
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -91,10 +113,8 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 					throw error;
 				}
 				lastError = error;
-				const start = Date.now();
-				while (Date.now() - start < delayMs) {
-					// Sleep synchronously to avoid changing callers to async.
-				}
+				const delayMs = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);
+				syncSleepMs(delayMs);
 			}
 		}
 
@@ -138,7 +158,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		try {
 			release = await lockfile.lock(this.authPath, {
 				retries: {
-					retries: 10,
+					retries: 25,
 					factor: 2,
 					minTimeout: 100,
 					maxTimeout: 10000,

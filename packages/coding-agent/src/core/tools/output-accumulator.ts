@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { createWriteStream, type WriteStream } from "node:fs";
+import { chmodSync, createWriteStream, openSync, type WriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.ts";
@@ -213,7 +213,15 @@ export class OutputAccumulator {
 			return;
 		}
 		this.tempFilePath = defaultTempFilePath(this.tempFilePrefix);
-		this.tempFileStream = createWriteStream(this.tempFilePath);
+		// Create with 0o600 so command output (which may contain secrets read by
+		// the model, e.g. `cat ~/.ssh/id_rsa`) is not world-readable on shared hosts.
+		const fd = openSync(this.tempFilePath, "w", 0o600);
+		this.tempFileStream = createWriteStream(this.tempFilePath, { fd });
+		try {
+			chmodSync(this.tempFilePath, 0o600);
+		} catch {
+			/* umask defense */
+		}
 		for (const chunk of this.rawChunks) {
 			this.tempFileStream.write(chunk);
 		}

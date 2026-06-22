@@ -6,7 +6,7 @@ import { registerHandoffTool } from "../handoff/HandoffManager.ts";
 import { contentText } from "../helpers.ts";
 import type { HolographicMemory } from "../memory/HolographicMemory.ts";
 import {
-	getCurrentTurnId,
+	getFactStore,
 	getMemory,
 	registerMemoryTools,
 	sanitizeMemoryTranscriptText,
@@ -15,38 +15,114 @@ import {
 } from "../memory.ts";
 import { isCloudProvider, loadHamrStartupConfig } from "../startup-config.ts";
 
-// ─── Stable context injection (preserves Anthropic prefix caching) ──────────
+// ─── Auto-inject gate ────────────────────────────────────────────────────────
 
-/** Number of turns between memory context refreshes for cloud providers. */
-const CLOUD_CONTEXT_REFRESH_INTERVAL = 5;
-/** Number of turns between memory context refreshes for local/relay providers. */
-const LOCAL_CONTEXT_REFRESH_INTERVAL = 2;
+/**
+ * Default token budget for auto-injected context (characters / 4 ≈ tokens).
+ * Controlled via HAMR_MEMORY_AUTO_INJECT_TOKEN_BUDGET. Default 400 tokens.
+ */
+const AUTO_INJECT_TOKEN_BUDGET = (() => {
+	const raw = process.env.HAMR_MEMORY_AUTO_INJECT_TOKEN_BUDGET;
+	if (raw === undefined) return 400;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isNaN(parsed) || parsed < 0 ? 400 : parsed;
+})();
+const AUTO_INJECT_CHAR_BUDGET = AUTO_INJECT_TOKEN_BUDGET * 4;
 
-/** Track the last injected context hash and turn number per session. */
-const contextInjectionState = new Map<string, { hash: string; turnIndex: number }>();
-
-function clearContextInjectionState(sessionId: string): void {
-	contextInjectionState.delete(sessionId);
+function isTruthy(value: string | undefined): boolean {
+	return value === "1" || value === "true";
 }
 
-function shouldInjectContext(sessionId: string, contextHash: string, turnIndex: number, isCloud: boolean): boolean {
-	const state = contextInjectionState.get(sessionId);
-	if (!state) {
-		contextInjectionState.set(sessionId, { hash: contextHash, turnIndex });
-		return true;
+/** Track sessions that have already received their one-shot context injection. */
+const injectedSessions = new Set<string>();
+
+function clearInjectedSession(sessionId: string): void {
+	injectedSessions.delete(sessionId);
+}
+
+/** Track the last injected context hash per session for de-duplication. */
+const contextHashState = new Map<string, string>();
+
+function clearContextHashState(sessionId: string): void {
+	contextHashState.delete(sessionId);
+}
+
+/**
+ * De-duplicate auto-results against existing context messages.
+ * Removes result lines whose core content already appears in any existing message.
+ */
+export function deduplicateResults(autoResults: string[], existingMessages: unknown[]): string[] {
+	if (autoResults.length === 0 || existingMessages.length === 0) return autoResults;
+
+	// Build a set of already-present trigrams from existing messages
+	const seen = new Set<string>();
+	for (const msg of existingMessages) {
+		if (typeof msg === "object" && msg !== null && "content" in msg) {
+			const content = (msg as { content: unknown }).content;
+			if (typeof content === "string") {
+				const words = content
+					.toLowerCase()
+					.split(/\s+/)
+					.filter((w) => w.length > 1);
+				for (let i = 0; i < words.length - 2; i++) {
+					const phrase = words.slice(i, i + 3).join(" ");
+					if (phrase.length >= 10) seen.add(phrase);
+				}
+			}
+		}
 	}
 
-	// Skip if content hasn't changed
-	if (state.hash === contextHash) return false;
+	return autoResults.filter((line) => {
+		// Always keep index/header lines
+		if (line.startsWith("// Search") || line.startsWith("[")) return true;
 
-	// Throttle refreshes: cloud providers get memory context every N turns,
-	// local providers get it more frequently (they need the help).
-	const interval = isCloud ? CLOUD_CONTEXT_REFRESH_INTERVAL : LOCAL_CONTEXT_REFRESH_INTERVAL;
-	if (turnIndex - state.turnIndex < interval) return false;
+		// Extract the meaningful content after the metadata prefix (e.g. "//   turn 2 assistant:")
+		const contentMatch = line.match(/^\/\/\s+turn\s+\d+\s+\S+:\s*(.+)/);
+		const content = contentMatch ? contentMatch[1].toLowerCase() : line.toLowerCase();
+		const words = content.split(/\s+/).filter((w) => w.length > 1);
 
-	state.hash = contextHash;
-	state.turnIndex = turnIndex;
-	return true;
+		// Generate trigrams from the result content
+		const resultTrigrams: string[] = [];
+		for (let i = 0; i < words.length - 2; i++) {
+			resultTrigrams.push(words.slice(i, i + 3).join(" "));
+		}
+
+		// If any meaningful trigram overlaps with existing context, this is a duplicate
+		for (const trigram of resultTrigrams) {
+			if (trigram.length >= 10 && seen.has(trigram)) return false;
+		}
+		return true;
+	});
+}
+
+/**
+ * Apply token budget cap to auto-results.
+ * Truncates from the end, keeping the most relevant (first) results.
+ * Preserves search header lines.
+ */
+export function applyTokenBudget(autoResults: string[], charBudget: number): string[] {
+	if (charBudget <= 0) return autoResults;
+
+	const truncated: string[] = [];
+	let charsUsed = 0;
+
+	for (const line of autoResults) {
+		const lineChars = line.length + 1; // +1 for newline
+		if (charsUsed + lineChars > charBudget) {
+			// If we can't fit this whole line, truncate it if it's a result line
+			if (!line.startsWith("// Search") && !line.startsWith("[")) {
+				const remaining = charBudget - charsUsed;
+				if (remaining > 20) {
+					truncated.push(`${line.slice(0, remaining - 1)}…`);
+				}
+			}
+			break;
+		}
+		truncated.push(line);
+		charsUsed += lineChars;
+	}
+
+	return truncated;
 }
 
 function hashContext(autoResults: string[], index: string, survivalManifest?: string | null): string {
@@ -483,30 +559,43 @@ export const hamrMemoryExtension: ExtensionFactory = async (pi) => {
 	});
 
 	// Context injection: auto-search memory and append retrieved context for
-	// resumed sessions. A survival manifest (if any) is surfaced first and
-	// prominently.
+	// resumed/handoff sessions. Gated behind HAMR_MEMORY_AUTO_INJECT.
+	//
+	// When disabled (default), the model must explicitly call search_memory.
+	// When enabled, injected ONCE per session on the first turn that has prior
+	// session entries — not every turn. Includes a token budget cap and
+	// de-duplication against existing context.
 	//
 	// Memory context is APPENDED (not prepended) to preserve Anthropic's
-	// longest-prefix prompt caching. Prepending would change the first message
-	// after the system prompt on every turn, breaking the entire conversation
-	// cache. Appending adds new content after the stable prefix, so all prior
-	// messages continue to hit the cache.
-	//
-	// For cloud providers (Anthropic, OpenAI, etc.), auto-injection is skipped
-	// unless a survival manifest exists from a prior local-model compaction.
-	// Cloud models have proper LLM compaction and don't need FTS5 context.
+	// longest-prefix prompt caching.
 	pi.on("context", (event, ctx) => {
+		// ── Opt-in gate: skip auto-injection unless HAMR_MEMORY_AUTO_INJECT is truthy ──
+		if (!isTruthy(process.env.HAMR_MEMORY_AUTO_INJECT)) return;
+
 		const memory = getMemory(ctx);
 		if (!memory) return;
-		const index = memory.buildMemoryIndex();
-		if (!index) return;
 
 		const sessionId = ctx.sessionManager.getSessionId();
 
-		// Skip auto-retrieval on the first prompt of a new session — there's
-		// nothing to retrieve yet and pulling results from prior sessions just
-		// confuses the model.
+		// ── Only inject on resumed/handoff sessions (sessions with prior entries) ──
 		if (!memory.hasSessionEntries(sessionId)) return;
+
+		// ── One-shot: inject only once per session, never on every turn ──
+		if (injectedSessions.has(sessionId)) return;
+
+		let index = memory.buildMemoryIndex();
+
+		// Append fact store status to the memory index
+		const factStore = getFactStore(ctx);
+		if (factStore?.isAvailable) {
+			const fc = factStore.getFactCount();
+			const fsLine =
+				fc > 0
+					? `\n[FactStore: ${fc} durable facts with entity resolution & trust scoring. Use fact_store to query, fact_feedback to rate.]`
+					: `\n[FactStore: active, empty. Use fact_store(action='add') to persist cross-session knowledge.]`;
+			index = index ? `${index}${fsLine}` : fsLine;
+		}
+		if (!index) return;
 
 		const survival = memory.getLatestByDomainTag("survival", sessionId);
 		const survivalManifest = survival?.content ?? null;
@@ -537,19 +626,25 @@ export const hamrMemoryExtension: ExtensionFactory = async (pi) => {
 			}
 		}
 
-		// Stable injection: only add context when it has meaningfully changed.
-		// Uses a content hash to detect real changes and a turn-interval throttle
-		// to avoid injecting on every single turn.
-		const contextHash = hashContext(autoResults, index, survivalManifest);
-		const turnId = getCurrentTurnId();
-		if (!shouldInjectContext(sessionId, contextHash, turnId, cloud)) return;
+		// ── De-duplicate against existing context messages ──
+		const deduped = deduplicateResults(autoResults, event.messages as unknown[]);
 
-		const message = buildMemoryContextMessage(autoResults, index, { survivalManifest });
+		// ── Apply token budget cap ──
+		const budgeted = applyTokenBudget(deduped, AUTO_INJECT_CHAR_BUDGET);
+
+		// ── De-duplicate by content hash (skip if same content was already injected) ──
+		const contextHash = hashContext(budgeted, index, survivalManifest);
+		const prior = contextHashState.get(sessionId);
+		if (prior === contextHash) return;
+		contextHashState.set(sessionId, contextHash);
+
+		const message = buildMemoryContextMessage(budgeted, index, { survivalManifest });
 		if (!message) return;
 
+		// Mark session as injected — one-shot only
+		injectedSessions.add(sessionId);
+
 		// APPEND memory context after existing messages to preserve prefix cache.
-		// Prepending would break Anthropic's longest-prefix cache at the first
-		// message boundary after the system prompt.
 		return { messages: [...event.messages, message] };
 	});
 
@@ -560,6 +655,8 @@ export const hamrMemoryExtension: ExtensionFactory = async (pi) => {
 
 	// Clean up context injection state when session shuts down.
 	pi.on("session_shutdown", (_, ctx) => {
-		clearContextInjectionState(ctx.sessionManager.getSessionId());
+		const sid = ctx.sessionManager.getSessionId();
+		clearInjectedSession(sid);
+		clearContextHashState(sid);
 	});
 };

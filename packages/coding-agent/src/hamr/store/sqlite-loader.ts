@@ -31,8 +31,15 @@ export function loadBetterSqlite3(): typeof Database | null {
 		const mod = require("better-sqlite3") as typeof Database;
 		_Database = mod;
 		return _Database;
-	} catch {
+	} catch (err) {
 		_Database = null;
+		console.warn(
+			`[hamr] better-sqlite3 not available. FTS5 memory persistence disabled.`,
+			`Install: cd packages/coding-agent && npm install better-sqlite3 --include=optional`,
+		);
+		if (err instanceof Error && err.stack) {
+			console.warn(`[hamr] better-sqlite3 load error: ${err.message}`);
+		}
 		return null;
 	}
 }

@@ -37,12 +37,12 @@ export class UserMessageComponent extends Container {
 		// Card presentation comes from the theme (theme.cards) rather than being
 		// hardcoded, so the "hamr look" is portable theme data.
 		const cards = theme.cards;
-		const glyph = cards.headingGlyph === "model" ? modelGlyph : cards.headingGlyph || undefined;
+		const glyph = cards.promptHeadingGlyph === "model" ? modelGlyph : cards.promptHeadingGlyph || undefined;
 		const showHeading = cards.showHeadings && !!glyph;
 
 		// Keep model color as an accent only. Using it as the card background
 		// makes orange/red models dominate the entire prompt block.
-		const promptBgFn = cards.shadedSurfaces ? (content: string) => theme.bg("userMessageBg", content) : undefined;
+		const promptBgFn = cards.shadedSurfaces ? theme.modelAdaptiveBgFn(modelAccent, "userMessageBg") : undefined;
 		this.contentBox = new Box(cards.cardPadX, cards.cardPadY, promptBgFn);
 
 		// Show the glyph + label heading when configured. Uses model brand color

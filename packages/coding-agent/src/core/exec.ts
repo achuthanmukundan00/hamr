@@ -5,6 +5,9 @@
 import { spawn } from "node:child_process";
 import { waitForChildProcess } from "../utils/child-process.ts";
 
+/** Default timeout for extension-spawned commands when none is provided (10 min). */
+export const DEFAULT_EXEC_TIMEOUT_MS = 10 * 60 * 1000;
+
 /**
  * Options for executing shell commands.
  */
@@ -71,11 +74,13 @@ export async function execCommand(
 			}
 		}
 
-		// Handle timeout
-		if (options?.timeout && options.timeout > 0) {
+		// Handle timeout — apply a default so a misbehaving extension cannot hang
+		// the agent forever. A caller may pass 0 to explicitly disable.
+		const timeoutMs = options?.timeout ?? DEFAULT_EXEC_TIMEOUT_MS;
+		if (timeoutMs && timeoutMs > 0) {
 			timeoutId = setTimeout(() => {
 				killProcess();
-			}, options.timeout);
+			}, timeoutMs);
 		}
 
 		proc.stdout?.on("data", (data) => {

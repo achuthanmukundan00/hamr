@@ -1,6 +1,7 @@
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@hamr/agent";
-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@hamr/ai";
+import { clampThinkingLevel, getModel, type Message, type Model, streamSimple } from "@hamr/ai";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -8,6 +9,7 @@ import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
+import { createExtensionRuntime } from "./extensions/loader.ts";
 import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
@@ -30,6 +32,96 @@ import {
 	type ToolName,
 	withFileMutationQueue,
 } from "./tools/index.ts";
+
+// ─── Child process config (passed via HAMR_CHILD_CONFIG env var) ──────────
+
+/**
+ * Serialized parent configuration passed to child hamr processes via
+ * `HAMR_CHILD_CONFIG` env var.  Children detect this and skip settings
+ * file read, auth storage lock, model discovery, and extension loading.
+ */
+export interface HamrChildConfig {
+	/** API key for the provider (or undefined if auth is header-based). */
+	apiKey?: string;
+	/** Additional request headers (e.g. for relay auth). */
+	apiHeaders?: Record<string, string>;
+	/** Provider-scoped environment variables (e.g. OpenRouter referer). */
+	apiEnv?: Record<string, string>;
+
+	/** Model provider name (e.g. "anthropic", "openai", "relay"). */
+	provider: string;
+	/** Model id (e.g. "claude-sonnet-4-5"). */
+	modelId: string;
+	/** Display name for the model. */
+	modelName?: string;
+	/** API type: "openai-completions" | "anthropic-messages" | etc. */
+	modelApi?: string;
+	/** Base URL for the provider endpoint. */
+	modelBaseUrl?: string;
+	/** Context window size. */
+	modelContextWindow?: number;
+	/** Max output tokens. */
+	modelMaxTokens?: number;
+	/** Whether the model supports reasoning/thinking. */
+	modelReasoning?: boolean;
+	/** Accepted input modalities. */
+	modelInput?: string[];
+	/** Per-token cost info. */
+	modelCost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	/** Per-model request headers. */
+	modelHeaders?: Record<string, string>;
+	/** Thinking level map (e.g. { medium: "medium", xhigh: null }). */
+	modelThinkingLevelMap?: Record<string, string | null>;
+	/** Provider/model compat config. */
+	modelCompat?: Record<string, unknown>;
+
+	/** Tool names the child is allowed to use. */
+	toolNames: string[];
+	/** Pre-built system prompt from the parent. */
+	systemPrompt: string;
+
+	/** Working directory. */
+	cwd: string;
+	/** Remaining subagent tree budget. */
+	treeBudgetRemaining: number;
+}
+
+/** Read HamrChildConfig from HAMR_CHILD_CONFIG env var. */
+function readChildConfigFromEnv(): HamrChildConfig | undefined {
+	const configPath = process.env.HAMR_CHILD_CONFIG;
+	if (!configPath) return undefined;
+	try {
+		if (!existsSync(configPath)) return undefined;
+		const raw = readFileSync(configPath, "utf-8");
+		return JSON.parse(raw) as HamrChildConfig;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Build a Model object from child config fields, falling back to built-in getModel(). */
+function buildModelFromChildConfig(config: HamrChildConfig): Model<any> | undefined {
+	const fromBuiltin = getModel(config.provider as never, config.modelId as never);
+	if (fromBuiltin) return fromBuiltin as Model<any>;
+
+	// Construct a minimal model for non-built-in providers (e.g. relay).
+	if (!config.modelName || !config.modelApi || !config.modelBaseUrl) return undefined;
+	return {
+		provider: config.provider,
+		id: config.modelId,
+		name: config.modelName,
+		api: config.modelApi as Model<any>["api"],
+		baseUrl: config.modelBaseUrl,
+		reasoning: config.modelReasoning ?? false,
+		thinkingLevelMap: config.modelThinkingLevelMap ?? {},
+		input: (config.modelInput as ("text" | "image")[]) ?? ["text"],
+		cost: config.modelCost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: config.modelContextWindow ?? 200000,
+		maxTokens: config.modelMaxTokens ?? 16384,
+		headers: config.modelHeaders,
+		compat: config.modelCompat as Model<any>["compat"],
+	};
+}
 
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */
@@ -128,6 +220,143 @@ function getDefaultAgentDir(): string {
 	return getAgentDir();
 }
 
+// ─── Child process session creation (fast path, no file I/O) ────────────────
+
+/**
+ * Create an AgentSession from a serialized parent config.
+ *
+ * When `HAMR_CHILD_CONFIG` is set, this function runs instead of the normal
+ * startup path.  It skips:
+ *   - Settings file read + lock
+ *   - Auth storage read + lock
+ *   - Model discovery
+ *   - Extension loading (only the tools the parent specified are loaded)
+ */
+async function createAgentSessionFromChildConfig(
+	config: HamrChildConfig,
+	options: CreateAgentSessionOptions,
+): Promise<CreateAgentSessionResult> {
+	const cwd = resolvePath(config.cwd);
+	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getDefaultAgentDir();
+
+	// ── In-memory auth storage with the parent's API key ──────────────────
+	const authStorage = AuthStorage.inMemory();
+	if (config.apiKey) {
+		authStorage.setRuntimeApiKey(config.provider, config.apiKey);
+	}
+	// Also store provider env + headers via a minimal persisted credential so
+	// getProviderEnv() returns them (used by modelRegistry.getApiKeyAndHeaders).
+	if (config.apiEnv || config.apiHeaders) {
+		authStorage.set(config.provider, {
+			type: "api_key",
+			key: config.apiKey ?? "not-needed",
+			...(config.apiEnv ? { env: config.apiEnv } : {}),
+		});
+	}
+
+	// ── In-memory settings manager (no file lock) ─────────────────────────
+	const settingsManager = options.settingsManager ?? SettingsManager.inMemory();
+
+	// ── In-memory model registry (built-in models only, no models.json) ───
+	const modelRegistry = options.modelRegistry ?? ModelRegistry.inMemory(authStorage);
+
+	// ── In-memory session manager (--no-session) ──────────────────────────
+	const sessionManager = options.sessionManager ?? SessionManager.inMemory(cwd);
+
+	// ── Build the model from the parent config ────────────────────────────
+	const model: Model<any> | undefined = options.model ?? buildModelFromChildConfig(config);
+
+	// ── Thinking level ────────────────────────────────────────────────────
+	let thinkingLevel = options.thinkingLevel ?? DEFAULT_THINKING_LEVEL;
+	if (model) {
+		thinkingLevel = clampThinkingLevel(model, thinkingLevel) as ThinkingLevel;
+	} else {
+		thinkingLevel = "off";
+	}
+
+	// ── Tool setup ────────────────────────────────────────────────────────
+	const allowedToolNames = options.tools ?? config.toolNames;
+	const excludedToolNameSet = options.excludeTools ? new Set(options.excludeTools) : undefined;
+	const initialActiveToolNames: string[] = [...allowedToolNames].filter((name) => !excludedToolNameSet?.has(name));
+
+	// ── Minimal resource loader (no extensions, no model discovery) ───────
+	const extensionsResult: LoadExtensionsResult = {
+		extensions: [],
+		errors: [],
+		runtime: createExtensionRuntime(),
+	};
+	const noopResourceLoader: ResourceLoader = {
+		getExtensions: () => extensionsResult,
+		getSkills: () => ({ skills: [], diagnostics: [] }),
+		getPrompts: () => ({ prompts: [], diagnostics: [] }),
+		getThemes: () => ({ themes: [], diagnostics: [] }),
+		getAgentsFiles: () => ({ agentsFiles: [] }),
+		getSystemPrompt: () => config.systemPrompt,
+		getAppendSystemPrompt: () => [],
+		extendResources: () => {},
+		reload: async () => {},
+	};
+
+	// ── Stream function (uses the in-memory auth + registry) ──────────────
+	const extensionRunnerRef: { current?: ExtensionRunner } = {};
+
+	const agent = new Agent({
+		initialState: {
+			systemPrompt: config.systemPrompt,
+			model,
+			thinkingLevel,
+			tools: [],
+		},
+		convertToLlm: (messages: AgentMessage[]): Message[] => convertToLlm(messages),
+		streamFn: async (m, context, streamOptions) => {
+			const auth = await modelRegistry.getApiKeyAndHeaders(m);
+			if (!auth.ok) {
+				throw new Error(auth.error);
+			}
+			const env = auth.env || streamOptions?.env ? { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } : undefined;
+			return streamSimple(m, context, {
+				...streamOptions,
+				apiKey: auth.apiKey,
+				env,
+				headers: auth.headers,
+			});
+		},
+		sessionId: sessionManager.getSessionId(),
+	});
+
+	// ── Save model + thinking level in session ────────────────────────────
+	if (model) {
+		sessionManager.appendModelChange(model.provider, model.id);
+	}
+	sessionManager.appendThinkingLevelChange(thinkingLevel);
+
+	// ── Create the session ────────────────────────────────────────────────
+	const session = new AgentSession({
+		agent,
+		sessionManager,
+		settingsManager,
+		cwd,
+		resourceLoader: noopResourceLoader,
+		customTools: options.customTools,
+		modelRegistry,
+		initialActiveToolNames,
+		allowedToolNames,
+		excludedToolNames: options.excludeTools,
+		extensionRunnerRef,
+		sessionStartEvent: options.sessionStartEvent,
+	});
+
+	// ── Override system prompt (AgentSession._buildRuntime may rebuild it) ─
+	if (config.systemPrompt) {
+		session.agent.state.systemPrompt = config.systemPrompt;
+	}
+
+	return {
+		session,
+		extensionsResult,
+	};
+}
+
 /**
  * Create an AgentSession with the specified options.
  *
@@ -164,6 +393,12 @@ function getDefaultAgentDir(): string {
  * ```
  */
 export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {
+	// ─── Child process fast path: skip all file I/O, locks, and discovery ───
+	const childConfig = readChildConfigFromEnv();
+	if (childConfig) {
+		return createAgentSessionFromChildConfig(childConfig, options);
+	}
+
 	const cwd = resolvePath(options.cwd ?? options.sessionManager?.getCwd() ?? process.cwd());
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getDefaultAgentDir();
 	let resourceLoader = options.resourceLoader;

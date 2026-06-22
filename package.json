@@ -25,9 +25,9 @@
     "@biomejs/biome": "^2.5.0",
     "@types/node": "^22.0.0",
     "@typescript/native-preview": "^7.0.0-dev",
-    "vitepress": "^1.6.4",
     "shx": "0.4.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vitepress": "^1.6.4"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -39,6 +39,7 @@
     "@mistralai/mistralai": "^2.2.6",
     "@smithy/node-http-handler": "^4.8.0",
     "@smithy/types": "^4.15.0",
+    "@typescript/native-preview-darwin-arm64": "7.0.0-dev.20260617.2",
     "http-proxy-agent": "^9.1.0",
     "https-proxy-agent": "^9.1.0"
   }

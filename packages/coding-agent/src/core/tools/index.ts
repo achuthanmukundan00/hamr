@@ -42,6 +42,7 @@ export {
 	type LsToolInput,
 	type LsToolOptions,
 } from "./ls.ts";
+export { PathGuard, PathGuardError, type PathGuardOptions } from "./path-guard.ts";
 export {
 	createReadTool,
 	createReadToolDefinition,
