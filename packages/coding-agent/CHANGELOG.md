@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1] - 2026-06-21
+
+### Fixed
+
+- **Fatal: better-sqlite3 native binding crash on Node 25.** `require("better-sqlite3")` succeeded but `new Database()` threw when the native `.node` binary was missing (no prebuild for Node 25 / ABI v141 on Linux). The loader now validates the binding with a `:memory:` probe. Init failures are cached so they don't retry and re-log on every turn.
+
 ## [0.5.0] - 2026-06-21
 
 ### Breaking
