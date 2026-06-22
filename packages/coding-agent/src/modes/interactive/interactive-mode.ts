@@ -3996,7 +3996,7 @@ export class InteractiveMode {
 	showNewVersionNotification(release: LatestHamrRelease): void {
 		const action = theme.fg("accent", `${APP_NAME} update`);
 		const updateInstruction = theme.fg("muted", `New version ${release.version} is available. Run `) + action;
-		const changelogUrl = "https://hamr.dev/changelog";
+		const changelogUrl = `https://github.com/skaft-software/hamr/releases/tag/v${release.version}`;
 		const changelogLink = getCapabilities().hyperlinks
 			? hyperlink(theme.fg("accent", "open changelog"), changelogUrl)
 			: theme.fg("accent", changelogUrl);

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2] - 2026-06-21
+
+### Fixed
+
+- **"Run hamr update" notification now links to the correct GitHub release changelog** instead of `hamr.dev/changelog`.
+- **Self-update now verifies the new version actually installed.** After `hamr update` completes, it spawns the new binary to confirm the version changed. If the old version is still running (Homebrew prefix, nvm path edge cases), it prints a clear warning with the `npm install -g` fallback command.
+
 ## [0.5.1] - 2026-06-21
 
 ### Fixed
