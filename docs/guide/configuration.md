@@ -4,30 +4,42 @@ Hamr uses a layered config system with clear precedence.
 
 ## Config Files
 
-| Level    | Path                          | Purpose               |
-| -------- | ----------------------------- | --------------------- |
-| Defaults | Built-in                      | Safe fallback values  |
-| Global   | `~/.config/hamr/config.toml` | Machine-wide defaults |
-| Local    | `<repo>/.hamr.toml`          | Per-project overrides |
+| Level       | Path                               | Purpose                     |
+| ----------- | ---------------------------------- | --------------------------- |
+| Defaults    | Built-in                           | Safe fallback values        |
+| Global TOML | `~/.config/hamr/config.toml`       | Machine-wide settings       |
+| Local TOML  | `<repo>/.hamr.toml`                | Per-project overrides       |
+| Models JSON | `~/.hamr/agent/models.json`        | Custom providers & models   |
 
 ## Precedence
 
 ```
-defaults → global config → local .hamr.toml
+defaults → global TOML → local TOML
 ```
 
-Local always wins over global. Global always wins over defaults.
+Local TOML always wins over global. `models.json` defines provider/model registrations independently — it doesn't compete with TOML for the same keys.
 
 ## Quick Start
 
-Create the file by hand — there is no scaffold command:
+### Configure a local or cloud provider
+
+From the TUI: `/login` → pick a method:
+
+- **Use a subscription** — OAuth login for Anthropic, GitHub Copilot, etc.
+- **Use an API key** — enter a key for any built-in cloud provider
+- **Use a custom/self-hosted endpoint** — configure a local server (LM Studio, llama.cpp, Ollama, vLLM) or any OpenAI/Anthropic-compatible proxy. Auto-discovers models. Saves to `~/.hamr/agent/models.json`.
+
+### Manual config files
 
 ```bash
-# Global (applies everywhere)
+# Global TOML settings
 vim ~/.config/hamr/config.toml
 
-# Project-local (committed to the repo)
+# Project-local overrides
 vim .hamr.toml
+
+# Custom providers and models
+vim ~/.hamr/agent/models.json
 ```
 
 > `hamr config` (without a subcommand) opens the TUI package manager for installing extensions and skills, not for editing provider config.

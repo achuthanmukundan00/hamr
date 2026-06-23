@@ -2,14 +2,12 @@ import { defineConfig } from 'vitepress';
 
 export default defineConfig({
   title: 'Hamr',
-  description: 'Local-first coding agent for Relay and your consumer GPU.',
+  description: 'Local-first coding agent.',
   base: '/',
   sitemap: { hostname: 'https://hamr-6j6.pages.dev' },
   cleanUrls: true,
-  appearance: 'dark',
   head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }]],
   themeConfig: {
-    siteTitle: '',
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'Parsers', link: '/guide/tool-call-parsing' },

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -382,6 +382,12 @@ describe("package commands", () => {
 		const recordPath = join(tempDir, "self-update.json");
 		mkdirSync(selfPackageDir, { recursive: true });
 		mkdirSync(join(projectDir, ".hamr"), { recursive: true });
+		// Dummy dist/cli.js so checkPostUpdateVersion spawn doesn't ENOENT
+		const distDir = join(selfPackageDir, "dist");
+		mkdirSync(distDir, { recursive: true });
+		const dummyCli = join(distDir, "cli.js");
+		writeFileSync(dummyCli, "#!/usr/bin/env node\nconsole.log('0.0.0');\n");
+		chmodSync(dummyCli, 0o755);
 		writeFileSync(
 			fakeNpmPath,
 			`const fs=require("node:fs"),path=require("node:path"),args=process.argv.slice(2),prefix=args[args.indexOf("--prefix")+1];
@@ -430,6 +436,12 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
 		const recordPath = join(tempDir, "self-update.json");
 		mkdirSync(selfPackageDir, { recursive: true });
+		// Dummy dist/cli.js so checkPostUpdateVersion spawn doesn't ENOENT
+		const distDir = join(selfPackageDir, "dist");
+		mkdirSync(distDir, { recursive: true });
+		const dummyCli = join(distDir, "cli.js");
+		writeFileSync(dummyCli, "#!/usr/bin/env node\nconsole.log('0.0.0');\n");
+		chmodSync(dummyCli, 0o755);
 		writeFileSync(
 			fakeNpmPath,
 			`const fs=require("node:fs"),path=require("node:path"),args=process.argv.slice(2),prefix=args[args.indexOf("--prefix")+1];
@@ -472,6 +484,12 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
 		const recordPath = join(tempDir, "self-update.json");
 		mkdirSync(selfPackageDir, { recursive: true });
+		// Dummy dist/cli.js so checkPostUpdateVersion spawn doesn't ENOENT
+		const distDir = join(selfPackageDir, "dist");
+		mkdirSync(distDir, { recursive: true });
+		const dummyCli = join(distDir, "cli.js");
+		writeFileSync(dummyCli, "#!/usr/bin/env node\nconsole.log('0.0.0');\n");
+		chmodSync(dummyCli, 0o755);
 		writeFileSync(
 			fakeNpmPath,
 			`const fs=require("node:fs"),path=require("node:path"),args=process.argv.slice(2),prefix=args[args.indexOf("--prefix")+1];

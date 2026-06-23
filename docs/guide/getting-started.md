@@ -21,12 +21,13 @@ No config file is required for local Relay at the default address.
 
 ## Config Files
 
-Hamr merges config from two locations — later wins:
+Hamr uses these config paths:
 
-1. `~/.config/hamr/config.toml` — global, machine-wide defaults
+1. `~/.config/hamr/config.toml` — global, machine-wide settings
 2. `.hamr.toml` — project-local, walks up from cwd until found
+3. `~/.hamr/agent/models.json` — custom providers and models
 
-Create either file by hand. There is no scaffold command.
+Use the TUI (`/login`) to configure providers, or create files by hand.
 
 ### Local inference (Relay)
 
