@@ -131,7 +131,6 @@ import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
-import { expandEnvForDiscovery } from "./env-expand.ts";
 import { routeInterruptKey } from "./interrupt-routing.ts";
 import {
 	getAvailableThemes,
@@ -5079,8 +5078,9 @@ export class InteractiveMode {
 				async (config: EndpointConfig) => {
 					done();
 					restoreEditor();
-					const discoveredCount = await this.saveEndpointToModelsJson(config);
+					this.writeEndpointToModelsJson(config);
 					this.session.modelRegistry.refresh();
+					const discoveredCount = await this.discoverAndUpdateModels(config.name, config.baseUrl, config.api);
 					const discoveryNote =
 						discoveredCount > 0
 							? `(${discoveredCount} model${discoveredCount === 1 ? "" : "s"} discovered)`
@@ -5100,7 +5100,7 @@ export class InteractiveMode {
 		});
 	}
 
-	private async saveEndpointToModelsJson(config: EndpointConfig): Promise<number> {
+	private writeEndpointToModelsJson(config: EndpointConfig): void {
 		const modelsPath = path.join(getAgentDir(), "models.json");
 
 		let data: Record<string, any> = {};
@@ -5123,46 +5123,13 @@ export class InteractiveMode {
 			}
 		}
 
-		// Try to auto-discover models from the endpoint.
-		let models: Array<Record<string, any>> | undefined;
-		let discoveredCount = 0;
-		if (config.api === "openai-completions") {
-			try {
-				const { discoverRelayModels } = await import("../../hamr/providers/relay-provider.ts");
-				const resolvedApiKey =
-					config.apiKey && config.apiKey !== "not-needed" ? expandEnvForDiscovery(config.apiKey) : undefined;
-				const resolvedHeaders: Record<string, string> = {};
-				for (const [key, value] of Object.entries(headers)) {
-					resolvedHeaders[key] = expandEnvForDiscovery(value);
-				}
-				const discovered = await discoverRelayModels(
-					config.baseUrl,
-					resolvedApiKey,
-					Object.keys(resolvedHeaders).length > 0 ? resolvedHeaders : undefined,
-				);
-				discoveredCount = discovered.length;
-				if (discovered.length > 0) {
-					models = discovered.map((m) => ({
-						id: m.id,
-						name: m.displayName,
-						contextWindow: m.contextWindow,
-						maxTokens: m.maxOutputTokens,
-						reasoning: m.supportsThinking,
-						input: m.supportsVision === false ? ["text"] : ["text", "image"],
-					}));
-				}
-			} catch {
-				// Discovery is best-effort
-			}
-		}
-
 		data.providers[config.name] = {
 			baseUrl: config.baseUrl,
 			api: config.api,
 			apiKey: config.apiKey || "not-needed",
 			authHeader: config.apiKey !== "not-needed" || undefined,
 			...(Object.keys(headers).length > 0 ? { headers } : {}),
-			models: models && models.length > 0 ? models : [{ id: "auto", name: "Auto-discovered (open /model to refresh)" }],
+			models: [{ id: "auto", name: "Auto-discovered (open /model to refresh)" }],
 		};
 
 		const dir = path.dirname(modelsPath);
@@ -5170,7 +5137,55 @@ export class InteractiveMode {
 			fs.mkdirSync(dir, { recursive: true });
 		}
 		fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
-		return discoveredCount;
+	}
+
+	private async discoverAndUpdateModels(providerName: string, baseUrl: string, api: string): Promise<number> {
+		if (api !== "openai-completions") return 0;
+
+		try {
+			// Resolve auth the same way the chat path does: models.json apiKey/headers
+			// plus authStorage provider env, using the full resolveConfigValue chain.
+			const registry = this.session.modelRegistry;
+			const syntheticModel: Model<any> = {
+				id: "auto",
+				name: "auto",
+				api: api as any,
+				provider: providerName,
+				baseUrl,
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 131072,
+				maxTokens: 16384,
+			};
+			const auth = await registry.getApiKeyAndHeaders(syntheticModel);
+			if (!auth.ok) return 0;
+
+			const { discoverRelayModels } = await import("../../hamr/providers/relay-provider.ts");
+			const discovered = await discoverRelayModels(baseUrl, auth.apiKey, auth.headers);
+			if (discovered.length === 0) return 0;
+
+			const models = discovered.map((m) => ({
+				id: m.id,
+				name: m.displayName,
+				contextWindow: m.contextWindow,
+				maxTokens: m.maxOutputTokens,
+				reasoning: m.supportsThinking,
+				input: m.supportsVision === false ? ["text"] : ["text", "image"],
+			}));
+
+			// Update models.json with discovered models
+			const modelsPath = path.join(getAgentDir(), "models.json");
+			const data = JSON.parse(fs.readFileSync(modelsPath, "utf-8")) as Record<string, any>;
+			if (data.providers?.[providerName]) {
+				data.providers[providerName].models = models;
+				fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
+				registry.refresh();
+			}
+			return discovered.length;
+		} catch {
+			return 0;
+		}
 	}
 
 	private showLoginProviderSelector(authType: "oauth" | "api_key"): void {

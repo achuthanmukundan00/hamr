@@ -382,7 +382,8 @@ export declare class InteractiveMode {
     private showLoginAuthTypeSelector;
     private loadExistingEndpointConfig;
     private showEndpointConfigFlow;
-    private saveEndpointToModelsJson;
+    private writeEndpointToModelsJson;
+    private discoverAndUpdateModels;
     private showLoginProviderSelector;
     private showOAuthSelector;
     private completeProviderAuthentication;

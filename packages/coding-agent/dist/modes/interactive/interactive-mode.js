@@ -63,7 +63,6 @@ import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { TrustSelectorComponent } from "./components/trust-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
-import { expandEnvForDiscovery } from "./env-expand.js";
 import { routeInterruptKey } from "./interrupt-routing.js";
 import { getAvailableThemes, getAvailableThemesWithPaths, getDefaultTheme, getEditorTheme, getMarkdownTheme, getThemeByName, initTheme, onThemeChange, setRegisteredThemes, setTheme, setThemeInstance, stopThemeWatcher, Theme, theme, } from "./theme/theme.js";
 function isExpandable(obj) {
@@ -4223,8 +4222,9 @@ export class InteractiveMode {
             const component = new EndpointConfigComponent(this.ui, async (config) => {
                 done();
                 restoreEditor();
-                const discoveredCount = await this.saveEndpointToModelsJson(config);
+                this.writeEndpointToModelsJson(config);
                 this.session.modelRegistry.refresh();
+                const discoveredCount = await this.discoverAndUpdateModels(config.name, config.baseUrl, config.api);
                 const discoveryNote = discoveredCount > 0
                     ? `(${discoveredCount} model${discoveredCount === 1 ? "" : "s"} discovered)`
                     : config.api === "openai-completions"
@@ -4239,7 +4239,7 @@ export class InteractiveMode {
             return { component, focus: component };
         });
     }
-    async saveEndpointToModelsJson(config) {
+    writeEndpointToModelsJson(config) {
         const modelsPath = path.join(getAgentDir(), "models.json");
         let data = {};
         try {
@@ -4259,48 +4259,67 @@ export class InteractiveMode {
                 headers[h.key] = h.secret ? `$${h.key.toUpperCase().replace(/-/g, "_")}` : h.value;
             }
         }
-        // Try to auto-discover models from the endpoint.
-        let models;
-        let discoveredCount = 0;
-        if (config.api === "openai-completions") {
-            try {
-                const { discoverRelayModels } = await import("../../hamr/providers/relay-provider.js");
-                const resolvedApiKey = config.apiKey && config.apiKey !== "not-needed" ? expandEnvForDiscovery(config.apiKey) : undefined;
-                const resolvedHeaders = {};
-                for (const [key, value] of Object.entries(headers)) {
-                    resolvedHeaders[key] = expandEnvForDiscovery(value);
-                }
-                const discovered = await discoverRelayModels(config.baseUrl, resolvedApiKey, Object.keys(resolvedHeaders).length > 0 ? resolvedHeaders : undefined);
-                discoveredCount = discovered.length;
-                if (discovered.length > 0) {
-                    models = discovered.map((m) => ({
-                        id: m.id,
-                        name: m.displayName,
-                        contextWindow: m.contextWindow,
-                        maxTokens: m.maxOutputTokens,
-                        reasoning: m.supportsThinking,
-                        input: m.supportsVision === false ? ["text"] : ["text", "image"],
-                    }));
-                }
-            }
-            catch {
-                // Discovery is best-effort
-            }
-        }
         data.providers[config.name] = {
             baseUrl: config.baseUrl,
             api: config.api,
             apiKey: config.apiKey || "not-needed",
             authHeader: config.apiKey !== "not-needed" || undefined,
             ...(Object.keys(headers).length > 0 ? { headers } : {}),
-            models: models && models.length > 0 ? models : [{ id: "auto", name: "Auto-discovered (open /model to refresh)" }],
+            models: [{ id: "auto", name: "Auto-discovered (open /model to refresh)" }],
         };
         const dir = path.dirname(modelsPath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
         fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
-        return discoveredCount;
+    }
+    async discoverAndUpdateModels(providerName, baseUrl, api) {
+        if (api !== "openai-completions")
+            return 0;
+        try {
+            // Resolve auth the same way the chat path does: models.json apiKey/headers
+            // plus authStorage provider env, using the full resolveConfigValue chain.
+            const registry = this.session.modelRegistry;
+            const syntheticModel = {
+                id: "auto",
+                name: "auto",
+                api: api,
+                provider: providerName,
+                baseUrl,
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 131072,
+                maxTokens: 16384,
+            };
+            const auth = await registry.getApiKeyAndHeaders(syntheticModel);
+            if (!auth.ok)
+                return 0;
+            const { discoverRelayModels } = await import("../../hamr/providers/relay-provider.js");
+            const discovered = await discoverRelayModels(baseUrl, auth.apiKey, auth.headers);
+            if (discovered.length === 0)
+                return 0;
+            const models = discovered.map((m) => ({
+                id: m.id,
+                name: m.displayName,
+                contextWindow: m.contextWindow,
+                maxTokens: m.maxOutputTokens,
+                reasoning: m.supportsThinking,
+                input: m.supportsVision === false ? ["text"] : ["text", "image"],
+            }));
+            // Update models.json with discovered models
+            const modelsPath = path.join(getAgentDir(), "models.json");
+            const data = JSON.parse(fs.readFileSync(modelsPath, "utf-8"));
+            if (data.providers?.[providerName]) {
+                data.providers[providerName].models = models;
+                fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
+                registry.refresh();
+            }
+            return discovered.length;
+        }
+        catch {
+            return 0;
+        }
     }
     showLoginProviderSelector(authType) {
         const providerOptions = this.getLoginProviderOptions(authType);

@@ -1,0 +1,26 @@
+{
+  "runId": "run-mqpkcc88-1",
+  "mode": "parallel",
+  "total": 5,
+  "done": 5,
+  "failed": 0,
+  "aborted": 0,
+  "startedAt": "2026-06-22T18:42:53.289Z",
+  "endedAt": "2026-06-22T18:43:01.187Z",
+  "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 13836,
+    "cost": {
+      "input": 0.004379145,
+      "output": 0.00049503,
+      "cacheRead": 0.0000116,
+      "cacheWrite": 0,
+      "total": 0.004885775000000001
+    }
+  },
+  "cwd": "/Users/achumukundan/workspace/git/hamr",
+  "parentSessionId": "019ef0a3-a2ad-71a0-aeae-a877333db1f0"
+}
