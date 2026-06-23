@@ -45,7 +45,7 @@ import { CustomEditor } from "./components/custom-editor.js";
 import { CustomMessageComponent } from "./components/custom-message.js";
 import { DaxnutsComponent } from "./components/daxnuts.js";
 import { DynamicBorder } from "./components/dynamic-border.js";
-import { EndpointConfigComponent } from "./components/endpoint-config.js";
+import { ENDPOINT_PRESETS, EndpointConfigComponent, } from "./components/endpoint-config.js";
 import { ExtensionEditorComponent } from "./components/extension-editor.js";
 import { ExtensionInputComponent } from "./components/extension-input.js";
 import { ExtensionSelectorComponent } from "./components/extension-selector.js";
@@ -63,6 +63,7 @@ import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { TrustSelectorComponent } from "./components/trust-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
+import { expandEnvForDiscovery } from "./env-expand.js";
 import { routeInterruptKey } from "./interrupt-routing.js";
 import { getAvailableThemes, getAvailableThemesWithPaths, getDefaultTheme, getEditorTheme, getMarkdownTheme, getThemeByName, initTheme, onThemeChange, setRegisteredThemes, setTheme, setThemeInstance, stopThemeWatcher, Theme, theme, } from "./theme/theme.js";
 function isExpandable(obj) {
@@ -4160,6 +4161,55 @@ export class InteractiveMode {
             return { component: selector, focus: selector };
         });
     }
+    loadExistingEndpointConfig() {
+        const modelsPath = path.join(getAgentDir(), "models.json");
+        try {
+            if (!fs.existsSync(modelsPath))
+                return undefined;
+            const data = JSON.parse(fs.readFileSync(modelsPath, "utf-8"));
+            const providers = data?.providers;
+            if (!providers || typeof providers !== "object")
+                return undefined;
+            // Find the first preset-matching provider (relay, lm-studio, etc.)
+            for (const preset of ENDPOINT_PRESETS) {
+                const provider = providers[preset.id];
+                if (!provider || typeof provider !== "object")
+                    continue;
+                const headers = [];
+                const savedHeaders = provider.headers;
+                if (savedHeaders && typeof savedHeaders === "object") {
+                    for (const [key, value] of Object.entries(savedHeaders)) {
+                        if (typeof value !== "string")
+                            continue;
+                        // A secret header is stored as the single-dollar reference
+                        // derived from its key (see saveEndpointToModelsJson). Only
+                        // treat the value as secret when it exactly matches that
+                        // reference — a literal value that merely looks like $FOO is
+                        // kept as-is so it isn't silently re-derived on re-save.
+                        const expectedRef = `$${key.toUpperCase().replace(/-/g, "_")}`;
+                        const isSecret = value === expectedRef;
+                        headers.push({
+                            key,
+                            value: isSecret ? "" : value,
+                            secret: isSecret,
+                        });
+                    }
+                }
+                const apiKey = typeof provider.apiKey === "string" && provider.apiKey !== "not-needed" ? provider.apiKey : undefined;
+                return {
+                    name: preset.id,
+                    baseUrl: typeof provider.baseUrl === "string" ? provider.baseUrl : undefined,
+                    api: provider.api === "anthropic-messages" ? "anthropic-messages" : "openai-completions",
+                    apiKey,
+                    headers,
+                };
+            }
+        }
+        catch {
+            // Ignore parse errors — start with defaults
+        }
+        return undefined;
+    }
     showEndpointConfigFlow() {
         const restoreEditor = () => {
             this.editorContainer.clear();
@@ -4168,17 +4218,24 @@ export class InteractiveMode {
             this.ui.requestRender();
         };
         const previousModel = this.session.model;
+        const initialConfig = this.loadExistingEndpointConfig();
         this.showSelector((done) => {
             const component = new EndpointConfigComponent(this.ui, async (config) => {
                 done();
                 restoreEditor();
-                await this.saveEndpointToModelsJson(config);
+                const discoveredCount = await this.saveEndpointToModelsJson(config);
                 this.session.modelRegistry.refresh();
+                const discoveryNote = discoveredCount > 0
+                    ? `(${discoveredCount} model${discoveredCount === 1 ? "" : "s"} discovered)`
+                    : config.api === "openai-completions"
+                        ? "(no models discovered — endpoint may be unreachable or need auth)"
+                        : "";
+                this.showStatus(`Endpoint "${config.name}" saved. ${discoveryNote} Use /model to select a model.`);
                 await this.completeProviderAuthentication(config.name, config.name, "api_key", previousModel);
             }, () => {
                 done();
                 restoreEditor();
-            });
+            }, initialConfig);
             return { component, focus: component };
         });
     }
@@ -4202,12 +4259,19 @@ export class InteractiveMode {
                 headers[h.key] = h.secret ? `$${h.key.toUpperCase().replace(/-/g, "_")}` : h.value;
             }
         }
-        // Try to auto-discover models from the endpoint
+        // Try to auto-discover models from the endpoint.
         let models;
+        let discoveredCount = 0;
         if (config.api === "openai-completions") {
             try {
                 const { discoverRelayModels } = await import("../../hamr/providers/relay-provider.js");
-                const discovered = await discoverRelayModels(config.baseUrl, config.apiKey !== "not-needed" ? config.apiKey : undefined, Object.keys(headers).length > 0 ? headers : undefined);
+                const resolvedApiKey = config.apiKey && config.apiKey !== "not-needed" ? expandEnvForDiscovery(config.apiKey) : undefined;
+                const resolvedHeaders = {};
+                for (const [key, value] of Object.entries(headers)) {
+                    resolvedHeaders[key] = expandEnvForDiscovery(value);
+                }
+                const discovered = await discoverRelayModels(config.baseUrl, resolvedApiKey, Object.keys(resolvedHeaders).length > 0 ? resolvedHeaders : undefined);
+                discoveredCount = discovered.length;
                 if (discovered.length > 0) {
                     models = discovered.map((m) => ({
                         id: m.id,
@@ -4229,13 +4293,14 @@ export class InteractiveMode {
             apiKey: config.apiKey || "not-needed",
             authHeader: config.apiKey !== "not-needed" || undefined,
             ...(Object.keys(headers).length > 0 ? { headers } : {}),
-            ...(models && models.length > 0 ? { models } : {}),
+            models: models && models.length > 0 ? models : [{ id: "auto", name: "Auto-discovered (open /model to refresh)" }],
         };
         const dir = path.dirname(modelsPath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
         fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
+        return discoveredCount;
     }
     showLoginProviderSelector(authType) {
         const providerOptions = this.getLoginProviderOptions(authType);

@@ -10,6 +10,9 @@ export interface CardConfig {
     showHeadings: boolean;
     /** "model" → active model glyph; "" → no glyph; any other string → literal glyph. */
     headingGlyph: string;
+    /** Glyph used for prompt (user message) card headings. "model" → active model
+     *  glyph; "" → no glyph; any other string → literal glyph. Default: "⚒". */
+    promptHeadingGlyph: string;
     promptLabel: string;
     responseLabel: string;
     thoughtLabel: string;
@@ -63,6 +66,7 @@ export declare class Theme {
     readonly cards: CardConfig;
     private fgColors;
     private bgColors;
+    private bgHex;
     private mode;
     constructor(fgColors: Record<ThemeColor, string | number>, bgColors: Record<ThemeBg, string | number>, mode: ColorMode, options?: {
         name?: string;
@@ -80,6 +84,8 @@ export declare class Theme {
     strikethrough(text: string): string;
     getFgAnsi(color: ThemeColor): string;
     getBgAnsi(color: ThemeBg): string;
+    /** Raw hex for a background color key (for color blending). */
+    getBgHex(color: ThemeBg): string | undefined;
     getColorMode(): ColorMode;
     getThinkingBorderColor(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): (str: string) => string;
     getBashModeBorderColor(): (str: string) => string;
@@ -119,6 +125,22 @@ export declare class Theme {
      * styling (editor borders, per-message accents, etc.).
      */
     modelHexColor(provider: string, modelLabel?: string): string | undefined;
+    /**
+     * Blend a model accent hex into a theme background to tint card surfaces
+     * with the model's brand color. Used for prompt/response card backgrounds
+     * when shadedSurfaces and modelAdaptive are both enabled — makes it easy
+     * to pick out prompts and responses visually while scrolling.
+     *
+     * The blend is ~12% model color into the base background so the tint is
+     * subtle and stays readable on both dark and light terminals.
+     */
+    modelAdaptiveBg(accentHex: string, bgHex: string): string;
+    /**
+     * Returns a background function that tints the card surface with the
+     * model's brand accent color. Falls back to the plain bg when
+     * modelAdaptive is off or no accent is provided.
+     */
+    modelAdaptiveBgFn(accentHex: string | undefined, bgKey: ThemeBg): (s: string) => string;
 }
 export declare function getAvailableThemes(): string[];
 export interface ThemeInfo {

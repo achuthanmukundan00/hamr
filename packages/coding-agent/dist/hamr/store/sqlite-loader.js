@@ -35,8 +35,10 @@ export function loadBetterSqlite3() {
     }
     catch (err) {
         _Database = null;
-        console.warn(`[hamr] better-sqlite3 not available. FTS5 memory persistence disabled.\n` +
-            `  If you just updated Node, run: npm install -g @skaft/hamr --build-from-source`);
+        const installHint = `  Rebuild the native addon:\n` +
+            `    npm rebuild -g better-sqlite3\n` +
+            `  Or reinstall: npm install -g @skaft/hamr --build-from-source`;
+        console.warn(`[hamr] better-sqlite3 not available. FTS5 memory persistence disabled.\n${installHint}`);
         if (err instanceof Error) {
             // Only log the message (not full stack) — the native addon path list is
             // already shown by the bindings module.

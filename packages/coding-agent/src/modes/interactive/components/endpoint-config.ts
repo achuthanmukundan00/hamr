@@ -34,6 +34,7 @@ export interface EndpointPreset {
 }
 
 export const ENDPOINT_PRESETS: EndpointPreset[] = [
+	{ label: "Relay", id: "relay", baseUrl: "http://127.0.0.1:1234/v1", api: "openai-completions" },
 	{ label: "LM Studio", id: "lm-studio", baseUrl: "http://localhost:1234/v1", api: "openai-completions" },
 	{ label: "llama.cpp", id: "llama-cpp", baseUrl: "http://localhost:8080/v1", api: "openai-completions" },
 	{ label: "Ollama", id: "ollama", baseUrl: "http://localhost:11434/v1", api: "openai-completions" },
@@ -79,20 +80,27 @@ export class EndpointConfigComponent extends Container {
 	private listContainer: Container;
 	private hintText: Text;
 
-	constructor(tui: TUI, onSave: (config: EndpointConfig) => void, onCancel: () => void) {
+	constructor(
+		tui: TUI,
+		onSave: (config: EndpointConfig) => void,
+		onCancel: () => void,
+		initialConfig?: Partial<EndpointConfig>,
+	) {
 		super();
 
 		this.tui = tui;
 		this.onSave = onSave;
 		this.onCancel = onCancel;
 
-		const preset = ENDPOINT_PRESETS[0];
+		const preset = ENDPOINT_PRESETS.find((p) => p.id === initialConfig?.name) ?? ENDPOINT_PRESETS[0];
+		this.presetIndex = ENDPOINT_PRESETS.indexOf(preset);
+
 		this.config = {
 			name: preset.id,
-			baseUrl: preset.baseUrl,
-			api: preset.api,
-			apiKey: "not-needed",
-			headers: [],
+			baseUrl: initialConfig?.baseUrl ?? preset.baseUrl,
+			api: initialConfig?.api ?? preset.api,
+			apiKey: initialConfig?.apiKey ?? "not-needed",
+			headers: initialConfig?.headers ?? [],
 		};
 
 		this.input = new Input();
@@ -258,14 +266,16 @@ export class EndpointConfigComponent extends Container {
 	}
 
 	private showEditPrompt(label: string): void {
+		this.input.focused = true;
 		this.listContainer.clear();
 		this.listContainer.addChild(new Text(theme.fg("text", label), 1, 0));
 		this.listContainer.addChild(this.input);
-		this.renderForm(); // updates hints
+		this.hintText.setText(`${keyHint("tui.select.confirm", "confirm")}  ${keyHint("tui.select.cancel", "cancel")}`);
 		this.tui.requestRender();
 	}
 
 	private commitEdit(): void {
+		this.input.focused = false;
 		switch (this.mode) {
 			case "edit_url":
 				this.config.baseUrl = this.input.getValue().trim() || this.config.baseUrl;

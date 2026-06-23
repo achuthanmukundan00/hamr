@@ -14,7 +14,7 @@
 		"toolResultIndent": 1,
 		"cardPadX": 1,
 		"cardPadY": 1,
-		"shadedSurfaces": true,
+		"shadedSurfaces": false,
 		"thinkingShaded": false,
 		"gaplessCards": true,
 		"showThoughtHeading": false

@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.6.1] - 2026-06-22
+
+### Fixed
+
+- **Endpoint model discovery failed with env-var credentials.** When saving a custom endpoint via `/login`, the `apiKey` and custom headers stored with `$VAR` / `$$VAR` env-var references were passed unexpanded to `GET /v1/models` during auto-discovery. This caused discovery to fail silently for endpoints behind Cloudflare Access or bearer-auth relays, leaving the provider with zero models. The save flow now expands env-var references before the discovery call.
+- **better-sqlite3 silent breakage after `hamr self-update`.** Self-update uses `--ignore-scripts` to skip package lifecycle scripts (avoids postinstall failures during tarball staging). This meant better-sqlite3's native addon was never compiled after an update, causing FTS5 memory persistence to silently stop working. Self-update now explicitly rebuilds the better-sqlite3 native addon after installation.
+
+### Added
+
+- **Relay preset in endpoint configuration.** The `/login` → custom endpoint form now lists Relay as the first preset (`http://127.0.0.1:1234/v1`).
+- **Endpoint configuration pre-populates** from existing `models.json` when re-editing, so users don't start from a blank form.
+
+### Changed
+
+- **Hamr theme: gapless cards enabled.** Card surfaces in the default "hamr" theme now use the compact gapless layout.
+- **Docs repositioned as "Relay-first."** Getting-started and provider docs now present Relay as the recommended inference gateway, with clearer guidance for other local endpoints.
+
+## [0.6.0] - 2026-06-22
+
+### Added
+
+- **Custom / self-hosted endpoint configuration in TUI.** `/login` now offers a third option "Use a custom/self-hosted endpoint" alongside subscriptions and API keys. Opens a form with presets (LM Studio, llama.cpp, Ollama, vLLM, Custom), URL/API type/key fields, and dynamic header editing. On save, writes to `~/.hamr/agent/models.json`, auto-discovers models from the endpoint via `GET /models`, and switches to the new provider immediately — no restart needed.
+- **24 new models in the registry.** HuggingFace: MiniMax-M2, MiniMax-M3, Qwen3-235B-A22B, Qwen3-32B, Qwen3-Coder-30B-A3B, Qwen3.5-122B-A10B, Qwen3.5-27B, Qwen3.5-35B-A3B, Qwen3.5-9B, Qwen3.6-35B-A3B, DeepSeek-R1, DeepSeek-V4-Flash, Gemma-4-26B-A4B-it, Gemma-4-31B-it, Llama-3.3-70B-Instruct, Kimi-K2.7-Code, Step-3.5-Flash, GLM-4.5, GLM-4.5-Air, GLM-4.5V, GLM-4.6, GLM-5.2. OpenRouter: `z-ai/glm-5v-turbo`, `sakana/fugu-ultra` (Anthropic Messages protocol). Removed `nex-agi/nex-n2-pro:free`.
+- **Dynamic model IDs through the type system.** `ModelApi`, `getModel()`, and `getModels()` now accept arbitrary `string` model IDs instead of being locked to literal keys from the registry — runtime-discovered models (from custom endpoints) no longer cause type errors.
+
+### Changed
+
+- **Docs rewritten around `models.json`** rather than TOML. All provider, relay, and configuration docs now show JSON examples for custom endpoints. Removed custom dark-theme VitePress layout (HamrLanding, nav logo, 110 lines of CSS) in favor of stock VitePress.
+
+### Fixed
+
+- **Self-update tests create dummy `dist/cli.js`** before spawning the CLI, preventing `ENOENT` crashes from `checkPostUpdateVersion`.
+- **Dist files rebuilt** to catch up with v0.5.2 source changes that weren't compiled before tagging (package-manager-cli `checkPostUpdateVersion`, better-sqlite3 `failedPaths` caching + `:memory:` probe, hamr theme `shadedSurfaces`/`gaplessCards`).
+
+## [0.5.2] - 2026-06-21
+
+### Fixed
+
+- **"Run hamr update" notification now links to the correct GitHub release changelog** instead of `hamr.dev/changelog`.
+- **Self-update now verifies the new version actually installed.** After `hamr update` completes, it spawns the new binary to confirm the version changed. If the old version is still running (Homebrew prefix, nvm path edge cases), it prints a clear warning with the `npm install -g` fallback command.
+
+## [0.5.1] - 2026-06-21
+
+### Fixed
+
+- **Fatal: better-sqlite3 native binding crash on Node 25.** `require("better-sqlite3")` succeeded but `new Database()` threw when the native `.node` binary was missing (no prebuild for Node 25 / ABI v141 on Linux). The loader now validates the binding with a `:memory:` probe. Init failures are cached so they don't retry and re-log on every turn.
+
 ## [0.5.0] - 2026-06-21
 
 ### Breaking
@@ -54,6 +101,8 @@
 - **Security: extension exec timeout.** Extension-spawned commands now have a default 10-minute timeout to prevent hung subprocesses from blocking the agent.
 - **Security: auth-storage lock busy-wait fixed.** Replaced with `Atomics.wait`-based sleep to avoid CPU spin during token-refresh contention.
 - **Hardened `.gitignore`** against accidental config credential commits.
+- **Fixed: adaptive card backgrounds rendered black when terminal bg could not be detected.** The COLORFGBG fallback for dark terminals now uses `#1a1a1a` instead of pure black, and the elevation computation applies a lightness floor so cards are always distinguishable from the terminal background.
+- **Separate lifecycle and tool abort signals.** The agent now distinguishes between lifecycle aborts (compaction, auto-retry — stop LLM streaming only) and tool aborts (user escape, session dispose — also kill running tools). Subagents and other long-running tools are no longer spuriously killed by internal lifecycle events.
 
 ## [0.4.0] - 2026-06-19
 

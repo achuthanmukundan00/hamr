@@ -28,14 +28,14 @@ Full list at `/login` → "Use an API key" in the TUI.
 
 ## Self-Hosted / Local Endpoints
 
-For local inference servers (llama.cpp, LM Studio, Ollama, vLLM, Relay) or custom OpenAI/Anthropic-compatible proxies, use **two** configuration paths:
+**Relay is the recommended inference gateway for Hamr.** It manages model lifecycle, graceful switching, and prefix-cache pre-warming. Hamr also works with LM Studio, llama.cpp, Ollama, vLLM, and any OpenAI/Anthropic-compatible proxy.
 
 ### 1. TUI (recommended)
 
 From the Hamr TUI: `/login` → "Use a custom/self-hosted endpoint"
 
 This opens a form where you can:
-- Pick a preset (LM Studio, llama.cpp, Ollama, vLLM, or custom)
+- Pick a preset (Relay, LM Studio, llama.cpp, Ollama, vLLM, or custom)
 - Set the base URL and API type
 - Configure optional API key and custom headers
 - Auto-discover available models from the endpoint
@@ -45,6 +45,20 @@ Configuration is saved to `~/.hamr/agent/models.json`.
 ### 2. models.json (manual / SDK)
 
 Create or edit `~/.hamr/agent/models.json`:
+
+```json
+{
+  "providers": {
+    "relay": {
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "api": "openai-completions",
+      "apiKey": "not-needed"
+    }
+  }
+}
+```
+
+Other local servers:
 
 ```json
 {
