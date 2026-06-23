@@ -1,7 +1,33 @@
 ---
-layout: hamr-landing
 title: Hamr
-description: Hamr is the de-facto coding agent for local models, built on Pi. Designed to help little models survive and big models breathe. Built for Relay, llama.cpp, and OpenAI-compatible inference.
+description: Local-first coding agent. Built for Relay, llama.cpp, and OpenAI-compatible inference.
 ---
 
-<!-- Rendered via custom HamrLanding layout -->
+# Hamr
+
+**Local-first coding agent.** Built for local models on consumer GPUs.
+
+## Quick Start
+
+```sh
+npm install -g @skaft/hamr
+hamr
+```
+
+Start your inference server (Relay, llama.cpp, LM Studio, Ollama, vLLM) at its default port, then run `hamr`. From the TUI: `/login` → "Use a custom/self-hosted endpoint" to configure.
+
+## Why Hamr
+
+- **Local-first** — designed for your GPU, not a cloud bill
+- **Relay-native** — auto-discovers models, handles lifecycle, prefix-cache pre-warming
+- **Pi SDK** — embed the agent in your own tools
+- **OpenAI-compatible** — works with any `/chat/completions` endpoint
+
+## Docs
+
+- [Getting Started](/guide/getting-started)
+- [Configuration](/guide/configuration)
+- [Providers & Endpoints](/guide/providers)
+- [Relay Setup](/guide/relay)
+- [Commands & TUI](/guide/commands)
+- [Architecture](/guide/architecture)

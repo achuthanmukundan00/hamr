@@ -45,6 +45,7 @@ import { CustomEditor } from "./components/custom-editor.js";
 import { CustomMessageComponent } from "./components/custom-message.js";
 import { DaxnutsComponent } from "./components/daxnuts.js";
 import { DynamicBorder } from "./components/dynamic-border.js";
+import { EndpointConfigComponent } from "./components/endpoint-config.js";
 import { ExtensionEditorComponent } from "./components/extension-editor.js";
 import { ExtensionInputComponent } from "./components/extension-input.js";
 import { ExtensionSelectorComponent } from "./components/extension-selector.js";
@@ -3287,7 +3288,7 @@ export class InteractiveMode {
     showNewVersionNotification(release) {
         const action = theme.fg("accent", `${APP_NAME} update`);
         const updateInstruction = theme.fg("muted", `New version ${release.version} is available. Run `) + action;
-        const changelogUrl = "https://hamr.dev/changelog";
+        const changelogUrl = `https://github.com/skaft-software/hamr/releases/tag/v${release.version}`;
         const changelogLink = getCapabilities().hyperlinks
             ? hyperlink(theme.fg("accent", "open changelog"), changelogUrl)
             : theme.fg("accent", changelogUrl);
@@ -4141,17 +4142,100 @@ export class InteractiveMode {
     showLoginAuthTypeSelector() {
         const subscriptionLabel = "Use a subscription";
         const apiKeyLabel = "Use an API key";
+        const endpointLabel = "Use a custom/self-hosted endpoint";
         this.showSelector((done) => {
-            const selector = new ExtensionSelectorComponent("Select authentication method:", [subscriptionLabel, apiKeyLabel], (option) => {
+            const selector = new ExtensionSelectorComponent("Select authentication method:", [subscriptionLabel, apiKeyLabel, endpointLabel], (option) => {
                 done();
-                const authType = option === subscriptionLabel ? "oauth" : "api_key";
-                this.showLoginProviderSelector(authType);
+                if (option === endpointLabel) {
+                    this.showEndpointConfigFlow();
+                }
+                else {
+                    const authType = option === subscriptionLabel ? "oauth" : "api_key";
+                    this.showLoginProviderSelector(authType);
+                }
             }, () => {
                 done();
                 this.ui.requestRender();
             });
             return { component: selector, focus: selector };
         });
+    }
+    showEndpointConfigFlow() {
+        const restoreEditor = () => {
+            this.editorContainer.clear();
+            this.editorContainer.addChild(this.editor);
+            this.ui.setFocus(this.editor);
+            this.ui.requestRender();
+        };
+        const previousModel = this.session.model;
+        this.showSelector((done) => {
+            const component = new EndpointConfigComponent(this.ui, async (config) => {
+                done();
+                restoreEditor();
+                await this.saveEndpointToModelsJson(config);
+                this.session.modelRegistry.refresh();
+                await this.completeProviderAuthentication(config.name, config.name, "api_key", previousModel);
+            }, () => {
+                done();
+                restoreEditor();
+            });
+            return { component, focus: component };
+        });
+    }
+    async saveEndpointToModelsJson(config) {
+        const modelsPath = path.join(getAgentDir(), "models.json");
+        let data = {};
+        try {
+            if (fs.existsSync(modelsPath)) {
+                data = JSON.parse(fs.readFileSync(modelsPath, "utf-8"));
+            }
+        }
+        catch {
+            // Start fresh if file is corrupt
+        }
+        if (!data.providers) {
+            data.providers = {};
+        }
+        const headers = {};
+        for (const h of config.headers) {
+            if (h.key) {
+                headers[h.key] = h.secret ? `$${h.key.toUpperCase().replace(/-/g, "_")}` : h.value;
+            }
+        }
+        // Try to auto-discover models from the endpoint
+        let models;
+        if (config.api === "openai-completions") {
+            try {
+                const { discoverRelayModels } = await import("../../hamr/providers/relay-provider.js");
+                const discovered = await discoverRelayModels(config.baseUrl, config.apiKey !== "not-needed" ? config.apiKey : undefined, Object.keys(headers).length > 0 ? headers : undefined);
+                if (discovered.length > 0) {
+                    models = discovered.map((m) => ({
+                        id: m.id,
+                        name: m.displayName,
+                        contextWindow: m.contextWindow,
+                        maxTokens: m.maxOutputTokens,
+                        reasoning: m.supportsThinking,
+                        input: m.supportsVision === false ? ["text"] : ["text", "image"],
+                    }));
+                }
+            }
+            catch {
+                // Discovery is best-effort
+            }
+        }
+        data.providers[config.name] = {
+            baseUrl: config.baseUrl,
+            api: config.api,
+            apiKey: config.apiKey || "not-needed",
+            authHeader: config.apiKey !== "not-needed" || undefined,
+            ...(Object.keys(headers).length > 0 ? { headers } : {}),
+            ...(models && models.length > 0 ? { models } : {}),
+        };
+        const dir = path.dirname(modelsPath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
     }
     showLoginProviderSelector(authType) {
         const providerOptions = this.getLoginProviderOptions(authType);

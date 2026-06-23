@@ -9,6 +9,8 @@ import { stripFtsMarks } from "./memory/fts-marks.js";
 import { HolographicMemory } from "./memory/HolographicMemory.js";
 import { loadBetterSqlite3 } from "./store/sqlite-loader.js";
 let memoryHandle;
+/** Paths where SQLite init failed, so we don't retry on every call. */
+const failedPaths = new Set();
 let currentTurnId = 0;
 export function setCurrentTurnId(id) {
     currentTurnId = id;
@@ -27,9 +29,13 @@ function getMemoryHandle(cwd) {
     const path = memoryPath(cwd);
     if (memoryHandle?.path === path)
         return memoryHandle;
-    const Database = loadBetterSqlite3();
-    if (!Database)
+    if (failedPaths.has(path))
         return undefined;
+    const Database = loadBetterSqlite3();
+    if (!Database) {
+        failedPaths.add(path);
+        return undefined;
+    }
     // Close old connection before opening new one
     if (memoryHandle) {
         try {
@@ -61,6 +67,7 @@ function getMemoryHandle(cwd) {
     }
     catch (err) {
         console.error(`[hamr] Failed to initialize SQLite memory at ${path}:`, err);
+        failedPaths.add(path);
         return undefined;
     }
 }

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.0] - 2026-06-22
+
+### Added
+
+- **Custom / self-hosted endpoint configuration in TUI.** `/login` now offers a third option "Use a custom/self-hosted endpoint" alongside subscriptions and API keys. Opens a form with presets (LM Studio, llama.cpp, Ollama, vLLM, Custom), URL/API type/key fields, and dynamic header editing. On save, writes to `~/.hamr/agent/models.json`, auto-discovers models from the endpoint via `GET /models`, and switches to the new provider immediately — no restart needed.
+- **24 new models in the registry.** HuggingFace: MiniMax-M2, MiniMax-M3, Qwen3-235B-A22B, Qwen3-32B, Qwen3-Coder-30B-A3B, Qwen3.5-122B-A10B, Qwen3.5-27B, Qwen3.5-35B-A3B, Qwen3.5-9B, Qwen3.6-35B-A3B, DeepSeek-R1, DeepSeek-V4-Flash, Gemma-4-26B-A4B-it, Gemma-4-31B-it, Llama-3.3-70B-Instruct, Kimi-K2.7-Code, Step-3.5-Flash, GLM-4.5, GLM-4.5-Air, GLM-4.5V, GLM-4.6, GLM-5.2. OpenRouter: `z-ai/glm-5v-turbo`, `sakana/fugu-ultra` (Anthropic Messages protocol). Removed `nex-agi/nex-n2-pro:free`.
+- **Dynamic model IDs through the type system.** `ModelApi`, `getModel()`, and `getModels()` now accept arbitrary `string` model IDs instead of being locked to literal keys from the registry — runtime-discovered models (from custom endpoints) no longer cause type errors.
+
+### Changed
+
+- **Docs rewritten around `models.json`** rather than TOML. All provider, relay, and configuration docs now show JSON examples for custom endpoints. Removed custom dark-theme VitePress layout (HamrLanding, nav logo, 110 lines of CSS) in favor of stock VitePress.
+
+### Fixed
+
+- **Self-update tests create dummy `dist/cli.js`** before spawning the CLI, preventing `ENOENT` crashes from `checkPostUpdateVersion`.
+- **Dist files rebuilt** to catch up with v0.5.2 source changes that weren't compiled before tagging (package-manager-cli `checkPostUpdateVersion`, better-sqlite3 `failedPaths` caching + `:memory:` probe, hamr theme `shadedSurfaces`/`gaplessCards`).
+
 ## [0.5.2] - 2026-06-21
 
 ### Fixed

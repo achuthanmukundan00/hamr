@@ -108,6 +108,7 @@ import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
+import { type EndpointConfig, EndpointConfigComponent } from "./components/endpoint-config.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
@@ -4982,14 +4983,19 @@ export class InteractiveMode {
 	private showLoginAuthTypeSelector(): void {
 		const subscriptionLabel = "Use a subscription";
 		const apiKeyLabel = "Use an API key";
+		const endpointLabel = "Use a custom/self-hosted endpoint";
 		this.showSelector((done) => {
 			const selector = new ExtensionSelectorComponent(
 				"Select authentication method:",
-				[subscriptionLabel, apiKeyLabel],
+				[subscriptionLabel, apiKeyLabel, endpointLabel],
 				(option) => {
 					done();
-					const authType = option === subscriptionLabel ? "oauth" : "api_key";
-					this.showLoginProviderSelector(authType);
+					if (option === endpointLabel) {
+						this.showEndpointConfigFlow();
+					} else {
+						const authType = option === subscriptionLabel ? "oauth" : "api_key";
+						this.showLoginProviderSelector(authType);
+					}
 				},
 				() => {
 					done();
@@ -4998,6 +5004,99 @@ export class InteractiveMode {
 			);
 			return { component: selector, focus: selector };
 		});
+	}
+
+	private showEndpointConfigFlow(): void {
+		const restoreEditor = () => {
+			this.editorContainer.clear();
+			this.editorContainer.addChild(this.editor);
+			this.ui.setFocus(this.editor);
+			this.ui.requestRender();
+		};
+
+		const previousModel = this.session.model;
+
+		this.showSelector((done) => {
+			const component = new EndpointConfigComponent(
+				this.ui,
+				async (config: EndpointConfig) => {
+					done();
+					restoreEditor();
+					await this.saveEndpointToModelsJson(config);
+					this.session.modelRegistry.refresh();
+					await this.completeProviderAuthentication(config.name, config.name, "api_key", previousModel);
+				},
+				() => {
+					done();
+					restoreEditor();
+				},
+			);
+			return { component, focus: component };
+		});
+	}
+
+	private async saveEndpointToModelsJson(config: EndpointConfig): Promise<void> {
+		const modelsPath = path.join(getAgentDir(), "models.json");
+
+		let data: Record<string, any> = {};
+		try {
+			if (fs.existsSync(modelsPath)) {
+				data = JSON.parse(fs.readFileSync(modelsPath, "utf-8")) as Record<string, any>;
+			}
+		} catch {
+			// Start fresh if file is corrupt
+		}
+
+		if (!data.providers) {
+			data.providers = {};
+		}
+
+		const headers: Record<string, string> = {};
+		for (const h of config.headers) {
+			if (h.key) {
+				headers[h.key] = h.secret ? `$${h.key.toUpperCase().replace(/-/g, "_")}` : h.value;
+			}
+		}
+
+		// Try to auto-discover models from the endpoint
+		let models: Array<Record<string, any>> | undefined;
+		if (config.api === "openai-completions") {
+			try {
+				const { discoverRelayModels } = await import("../../hamr/providers/relay-provider.ts");
+				const discovered = await discoverRelayModels(
+					config.baseUrl,
+					config.apiKey !== "not-needed" ? config.apiKey : undefined,
+					Object.keys(headers).length > 0 ? headers : undefined,
+				);
+				if (discovered.length > 0) {
+					models = discovered.map((m) => ({
+						id: m.id,
+						name: m.displayName,
+						contextWindow: m.contextWindow,
+						maxTokens: m.maxOutputTokens,
+						reasoning: m.supportsThinking,
+						input: m.supportsVision === false ? ["text"] : ["text", "image"],
+					}));
+				}
+			} catch {
+				// Discovery is best-effort
+			}
+		}
+
+		data.providers[config.name] = {
+			baseUrl: config.baseUrl,
+			api: config.api,
+			apiKey: config.apiKey || "not-needed",
+			authHeader: config.apiKey !== "not-needed" || undefined,
+			...(Object.keys(headers).length > 0 ? { headers } : {}),
+			...(models && models.length > 0 ? { models } : {}),
+		};
+
+		const dir = path.dirname(modelsPath);
+		if (!fs.existsSync(dir)) {
+			fs.mkdirSync(dir, { recursive: true });
+		}
+		fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
 	}
 
 	private showLoginProviderSelector(authType: "oauth" | "api_key"): void {

@@ -329,6 +329,32 @@ async function getSelfUpdatePlan(force) {
     console.log(chalk.green(`${APP_NAME} is already up to date (v${VERSION})`));
     return { packageName: PACKAGE_NAME, shouldRun: false };
 }
+/**
+ * Verify the self-update actually changed the installed version.
+ * Spawns a new hamr process to read its version, since the current
+ * process is the OLD binary. Warns if the update didn't take effect.
+ */
+function checkPostUpdateVersion() {
+    try {
+        const child = spawnProcess(process.execPath, ["--version"], { stdio: "pipe" });
+        let output = "";
+        child.stdout?.on("data", (data) => {
+            output += data.toString();
+        });
+        child.on("close", (code) => {
+            const newVersion = output.trim();
+            if (code === 0 && newVersion && newVersion !== VERSION) {
+                console.log(chalk.green(`Updated to ${APP_NAME} v${newVersion}`));
+            }
+            else if (code === 0 && newVersion === VERSION) {
+                console.log(chalk.yellow(`${APP_NAME} v${VERSION} is still running. Restart your terminal or run: npm install -g @skaft/hamr@latest`));
+            }
+        });
+    }
+    catch {
+        // Best-effort check; the update itself succeeded.
+    }
+}
 async function runSelfUpdate(command) {
     console.log(chalk.dim(`Updating ${APP_NAME} with ${command.display}...`));
     for (const step of command.steps ?? [command]) {
@@ -352,6 +378,10 @@ async function runSelfUpdate(command) {
             });
         });
     }
+    // Verify the update actually changed the installed version.
+    // If the new binary isn't on PATH yet (e.g. Homebrew prefix, nvm edge case),
+    // the user needs to restart their shell or use the full path.
+    checkPostUpdateVersion();
 }
 function prepareWindowsNpmSelfUpdate() {
     if (process.platform !== "win32") {

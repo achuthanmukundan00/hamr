@@ -1,180 +1,136 @@
 # Providers
 
 Hamr supports OpenAI-compatible and Anthropic Messages providers.
-You can configure multiple providers and switch between them at runtime.
+You can configure cloud providers, self-hosted endpoints, and switch between them at runtime.
 
 ## Provider Protocols
 
-| Protocol             | Description                                                        |
-| -------------------- | ------------------------------------------------------------------ |
-| `openai-compatible`  | Any service with an OpenAI-compatible `/chat/completions` endpoint |
-| `anthropic-compatible` | Real Anthropic Messages API adapter via `/v1/messages`           |
+| Protocol              | Description                                                        |
+| --------------------- | ------------------------------------------------------------------ |
+| `openai-completions`  | Any service with an OpenAI-compatible `/chat/completions` endpoint |
+| `anthropic-messages`  | Anthropic Messages API via `/v1/messages`                          |
 
-## Built-in Provider Presets
+## Cloud Providers
 
-Hamr ships with presets for these providers:
+Hamr ships with built-in models for these cloud providers. Set the API key via environment variable or `/login`:
 
-| Provider ID  | Protocol              | Base URL                         | Auth                 |
-| ------------ | --------------------- | -------------------------------- | -------------------- |
-| `relay`      | openai-compatible     | `http://127.0.0.1:1234/v1`       | none                 |
-| `custom`     | openai-compatible     | user-configured                  | optional             |
-| `deepseek`   | openai-compatible     | `https://api.deepseek.com/v1`    | `DEEPSEEK_API_KEY`   |
-| `openrouter` | openai-compatible     | `https://openrouter.ai/api/v1`   | `OPENROUTER_API_KEY` |
-| `groq`       | openai-compatible     | `https://api.groq.com/openai/v1` | `GROQ_API_KEY`       |
-| `anthropic`  | anthropic-compatible  | `https://api.anthropic.com`      | `ANTHROPIC_API_KEY`  |
-| `mistral`    | openai-compatible     | `https://api.mistral.ai/v1`      | `MISTRAL_API_KEY`    |
-| `together`   | openai-compatible     | `https://api.together.xyz/v1`    | `TOGETHER_API_KEY`   |
+| Provider    | Env Var              |
+| ----------- | -------------------- |
+| Anthropic   | `ANTHROPIC_API_KEY`  |
+| OpenAI      | `OPENAI_API_KEY`     |
+| DeepSeek    | `DEEPSEEK_API_KEY`   |
+| OpenRouter  | `OPENROUTER_API_KEY` |
+| Groq        | `GROQ_API_KEY`       |
+| Mistral     | `MISTRAL_API_KEY`    |
+| Together    | `TOGETHER_API_KEY`   |
 
-## Configuring a Provider
+Full list at `/login` → "Use an API key" in the TUI.
 
-All examples use the current multi-provider config format. The legacy `[provider]` format from v0.1–v0.3 still works but is not recommended for new configs.
+## Self-Hosted / Local Endpoints
 
-### Local Relay
+For local inference servers (llama.cpp, LM Studio, Ollama, vLLM, Relay) or custom OpenAI/Anthropic-compatible proxies, use **two** configuration paths:
 
-```toml
-[active]
-provider = "relay"
-model = "Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf"
+### 1. TUI (recommended)
 
-[providers.relay]
-enabled = true
-base_url = "http://127.0.0.1:1234/v1"
+From the Hamr TUI: `/login` → "Use a custom/self-hosted endpoint"
+
+This opens a form where you can:
+- Pick a preset (LM Studio, llama.cpp, Ollama, vLLM, or custom)
+- Set the base URL and API type
+- Configure optional API key and custom headers
+- Auto-discover available models from the endpoint
+
+Configuration is saved to `~/.hamr/agent/models.json`.
+
+### 2. models.json (manual / SDK)
+
+Create or edit `~/.hamr/agent/models.json`:
+
+```json
+{
+  "providers": {
+    "lm-studio": {
+      "baseUrl": "http://localhost:1234/v1",
+      "api": "openai-completions",
+      "apiKey": "not-needed",
+      "models": [
+        { "id": "qwen2.5-coder-7b" }
+      ]
+    }
+  }
+}
 ```
 
-The `base_url` line is only needed when not running on the default port. Set `model` to the exact ID your server reports from `GET /models`.
+For servers that don't understand the `developer` role or `reasoning_effort`:
 
-### DeepSeek
-
-```toml
-[active]
-provider = "deepseek"
-model = "deepseek-chat"
-
-[providers.deepseek]
-enabled = true
-api_key_env = "DEEPSEEK_API_KEY"
+```json
+{
+  "providers": {
+    "llama.cpp": {
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "not-needed",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        { "id": "local-model" }
+      ]
+    }
+  }
+}
 ```
 
-### OpenRouter
+The file reloads each time you open `/model`. Edit during session; no restart needed.
 
-```toml
-[active]
-provider = "openrouter"
-model = "deepseek/deepseek-chat"
+### Headers & API Keys
 
-[providers.openrouter]
-enabled = true
-api_key_env = "OPENROUTER_API_KEY"
+API key and header values support environment variable interpolation (`$VAR`, `${VAR}`) and shell commands (`!command`):
 
-[providers.openrouter.headers]
-HTTP-Referer = "https://github.com/skaft-software/hamr"
-X-Title = "Hamr"
+```json
+{
+  "providers": {
+    "custom-proxy": {
+      "baseUrl": "https://proxy.example.com/v1",
+      "api": "openai-completions",
+      "apiKey": "$PROXY_API_KEY",
+      "headers": {
+        "X-Custom-Auth": "!op read 'op://vault/item/secret'"
+      },
+      "models": [
+        { "id": "proxy-model" }
+      ]
+    }
+  }
+}
 ```
-
-### Groq
-
-```toml
-[active]
-provider = "groq"
-model = "llama-3.3-70b-versatile"
-
-[providers.groq]
-enabled = true
-api_key_env = "GROQ_API_KEY"
-```
-
-### Anthropic
-
-```toml
-[active]
-provider = "anthropic"
-model = "claude-sonnet-4-5-20250929"
-
-[providers.anthropic]
-enabled = true
-compatibility = "anthropic-compatible"
-api_key_env = "ANTHROPIC_API_KEY"
-```
-
-Anthropic uses the real Messages API (`POST /v1/messages`) with `x-api-key` auth. System prompts map to the top-level `system` field. Tool use uses the native Anthropic tool format.
-
-### Custom OpenAI-compatible
-
-```toml
-[active]
-provider = "myserver"
-model = "local-model"
-
-[providers.myserver]
-enabled = true
-base_url = "http://127.0.0.1:8080/v1"
-
-[[providers.myserver.models]]
-id = "local-model"
-display_name = "My Local Model"
-context_window = 131072
-supports_thinking = false
-```
-
-## API Key Configuration
-
-Prefer `api_key_env` over `api_key`. The environment variable is never written to disk.
-
-```toml
-[providers.deepseek]
-api_key_env = "DEEPSEEK_API_KEY"  # reads from process.env.DEEPSEEK_API_KEY
-```
-
-## Custom Headers
-
-Header values can reference environment variables using `$VAR` or `${VAR}` syntax:
-
-```toml
-[providers.relay.headers]
-"CF-Access-Client-Id" = "${CF_ACCESS_CLIENT_ID}"
-"CF-Access-Client-Secret" = "${CF_ACCESS_CLIENT_SECRET}"
-```
-
-Hamr resolves variables from `process.env` at runtime. Unset vars omit the header entirely.
-
-## Token Pricing & Session Spend
-
-Cloud providers have preset token pricing. Override in config:
-
-```toml
-[providers.deepseek]
-input_price_per_1m_tokens = 0.27   # USD per 1M input tokens
-output_price_per_1m_tokens = 1.10  # USD per 1M output tokens
-```
-
-Default pricing per provider:
-
-| Provider   | Input ($/1M) | Output ($/1M) |
-| ---------- | ------------ | ------------- |
-| DeepSeek   | $0.27        | $1.10         |
-| Groq       | $0.59        | $0.79         |
-| Anthropic  | $3.00        | $15.00        |
-| OpenRouter | varies       | varies        |
-
-When pricing is configured, the TUI shows a session spend indicator at the bottom: `Spend: $0.004`. Local providers show `Spend: local`.
 
 ## Switching Providers
 
-From the TUI: press `/`, type `settings`, navigate to the **Model** tab. Changes persist to the active config file.
+From the TUI: press `/`, type `model`, or use `/login` to configure credentials.
+Changes to `models.json` are picked up on next `/model` open without restart.
 
-## Live Provider Smoke Tests
+## Token Pricing
 
-Smoke tests verify end-to-end connectivity. Run from source only — they require API keys and are not run in CI.
+Cloud providers have preset token pricing. Local/self-hosted providers default to zero cost. Override in `models.json`:
 
-```bash
-HAMR_LIVE_PROVIDER=relay bun run smoke:provider
-HAMR_LIVE_PROVIDER=deepseek bun run smoke:provider
-HAMR_LIVE_PROVIDER=openrouter bun run smoke:provider
-HAMR_LIVE_PROVIDER=anthropic bun run smoke:provider
-HAMR_LIVE_PROVIDER=custom HAMR_CUSTOM_BASE_URL=http://127.0.0.1:1234/v1 bun run smoke:provider
+```json
+{
+  "providers": {
+    "my-provider": {
+      "baseUrl": "...",
+      "api": "openai-completions",
+      "apiKey": "...",
+      "models": [
+        {
+          "id": "model-id",
+          "cost": { "input": 0.27, "output": 1.10, "cacheRead": 0, "cacheWrite": 0 }
+        }
+      ]
+    }
+  }
+}
 ```
 
-## Known Limitations
-
-- Mistral and Together are available as presets but lack dedicated smoke tests.
-- Streaming is implemented in the shared OpenAI-compatible client but the Anthropic adapter only supports non-streaming requests.
+Cost is per million tokens.

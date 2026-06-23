@@ -1,11 +1,12 @@
 import { MODELS } from "./models.generated.ts";
 import type { Api, KnownProvider, Model, ModelThinkingLevel, Usage } from "./types.ts";
-type ModelApi<TProvider extends KnownProvider, TModelId extends keyof (typeof MODELS)[TProvider]> = (typeof MODELS)[TProvider][TModelId] extends {
+type ModelApi<TProvider extends KnownProvider, TModelId extends string> = TProvider extends keyof typeof MODELS ? TModelId extends keyof (typeof MODELS)[TProvider] ? (typeof MODELS)[TProvider][TModelId] extends {
     api: infer TApi;
-} ? (TApi extends Api ? TApi : never) : never;
-export declare function getModel<TProvider extends KnownProvider, TModelId extends keyof (typeof MODELS)[TProvider]>(provider: TProvider, modelId: TModelId): Model<ModelApi<TProvider, TModelId>>;
+} ? TApi extends Api ? TApi : never : never : never : never;
+export declare function getModel<TProvider extends KnownProvider, TModelId extends string>(provider: TProvider, modelId: TModelId): Model<ModelApi<TProvider, TModelId>>;
 export declare function getProviders(): KnownProvider[];
-export declare function getModels<TProvider extends KnownProvider>(provider: TProvider): Model<ModelApi<TProvider, keyof (typeof MODELS)[TProvider]>>[];
+type AnyModelId = string;
+export declare function getModels<TProvider extends KnownProvider>(provider: TProvider): Model<ModelApi<TProvider, AnyModelId>>[];
 export declare function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage): Usage["cost"];
 export declare function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[];
 export declare function clampThinkingLevel<TApi extends Api>(model: Model<TApi>, level: ModelThinkingLevel): ModelThinkingLevel;
