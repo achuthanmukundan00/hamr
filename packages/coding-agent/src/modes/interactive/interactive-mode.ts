@@ -2936,6 +2936,11 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					// Clear any model-loading indicator now that we have a response.
+					if (this.modelLoadingText) {
+						this.statusContainer.clear();
+						this.modelLoadingText = undefined;
+					}
 					// Capture per-message model accent so each card retains
 					// its model identity after mid-session model switches.
 					const model = this.session.model;
@@ -3100,6 +3105,9 @@ export class InteractiveMode {
 				if (this.loadingAnimation) {
 					this.loadingAnimation.stop();
 					this.loadingAnimation = undefined;
+				}
+				if (this.modelLoadingText) {
+					this.modelLoadingText = undefined;
 					this.statusContainer.clear();
 				}
 				if (this.streamingComponent) {
