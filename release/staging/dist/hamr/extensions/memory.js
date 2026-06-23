@@ -92,7 +92,7 @@ export function applyTokenBudget(autoResults, charBudget) {
             if (!line.startsWith("// Search") && !line.startsWith("[")) {
                 const remaining = charBudget - charsUsed;
                 if (remaining > 20) {
-                    truncated.push(line.slice(0, remaining - 1) + "…");
+                    truncated.push(`${line.slice(0, remaining - 1)}…`);
                 }
             }
             break;

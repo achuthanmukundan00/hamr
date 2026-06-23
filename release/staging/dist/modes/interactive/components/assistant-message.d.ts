@@ -1,14 +1,11 @@
 import type { AssistantMessage } from "@hamr/ai";
 import { Container, type MarkdownTheme } from "@hamr/tui";
 /**
- * Plain/fallback component for assistant messages.
+ * Component that renders a complete assistant message.
  *
- * Renders text blocks as plain Markdown and thinking blocks as plain text.
- * No card structure, headings, or model accent — intended as the minimal
- * fallback when no extension registers a role renderer.
- *
- * Extensions (such as hamr-cards) can register a role renderer to wrap
- * blocks in themed cards with headings and model branding.
+ * Renders thinking blocks and text blocks as visually distinct cards. Model
+ * identity is kept as a heading accent only; card surfaces come from the theme
+ * so prompt/response/tool blocks stay visually consistent across models.
  */
 export declare class AssistantMessageComponent extends Container {
     private contentContainer;
@@ -17,14 +14,15 @@ export declare class AssistantMessageComponent extends Container {
     private hiddenThinkingLabel;
     private lastMessage?;
     private hasToolCalls;
-    private _modelAccent?;
-    private _modelGlyph?;
+    private modelAccent?;
+    private modelGlyph?;
     constructor(message?: AssistantMessage, hideThinkingBlock?: boolean, markdownTheme?: MarkdownTheme, hiddenThinkingLabel?: string, modelAccent?: string, modelGlyph?: string);
     invalidate(): void;
     setHideThinkingBlock(hide: boolean): void;
     setHiddenThinkingLabel(label: string): void;
-    setModelAccent(_hex: string | undefined): void;
+    setModelAccent(hex: string | undefined): void;
     render(width: number): string[];
     updateContent(message: AssistantMessage): void;
+    private addStatusCard;
 }
 //# sourceMappingURL=assistant-message.d.ts.map

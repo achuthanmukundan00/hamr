@@ -2,7 +2,7 @@
   "$schema": "./theme-schema.json",
   "name": "hamr",
   "modelAdaptive": true,
-  "adaptiveBackground": false,
+  "adaptiveBackground": true,
   "cards": {
     "showHeadings": true,
     "headingGlyph": "model",

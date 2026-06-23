@@ -25,14 +25,24 @@ export function loadBetterSqlite3() {
     try {
         // Dynamic require — caught at runtime, doesn't block module loading
         const mod = require("better-sqlite3");
+        // Verify the native binding actually loads (require() can succeed while
+        // the .node file is missing — the JS loads but the native addon fails
+        // when you call `new Database()`).
+        const db = new mod(":memory:");
+        db.close();
         _Database = mod;
         return _Database;
     }
     catch (err) {
         _Database = null;
-        console.warn(`[hamr] better-sqlite3 not available. FTS5 memory persistence disabled.`, `Install: cd packages/coding-agent && npm install better-sqlite3 --include=optional`);
-        if (err instanceof Error && err.stack) {
-            console.warn(`[hamr] better-sqlite3 load error: ${err.message}`);
+        const installHint = `  Rebuild the native addon:\n` +
+            `    npm rebuild -g better-sqlite3\n` +
+            `  Or reinstall: npm install -g @skaft/hamr --build-from-source`;
+        console.warn(`[hamr] better-sqlite3 not available. FTS5 memory persistence disabled.\n${installHint}`);
+        if (err instanceof Error) {
+            // Only log the message (not full stack) — the native addon path list is
+            // already shown by the bindings module.
+            console.warn(`[hamr] better-sqlite3 error: ${err.message}`);
         }
         return null;
     }

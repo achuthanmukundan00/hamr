@@ -2,7 +2,7 @@
 	"$schema": "./theme-schema.json",
 	"name": "light",
 	"modelAdaptive": false,
-	"adaptiveBackground": false,
+	"adaptiveBackground": true,
 	"cards": {
 		"showHeadings": true,
 		"headingGlyph": "model",

@@ -45,6 +45,7 @@ import { CustomEditor } from "./components/custom-editor.js";
 import { CustomMessageComponent } from "./components/custom-message.js";
 import { DaxnutsComponent } from "./components/daxnuts.js";
 import { DynamicBorder } from "./components/dynamic-border.js";
+import { ENDPOINT_PRESETS, EndpointConfigComponent, } from "./components/endpoint-config.js";
 import { ExtensionEditorComponent } from "./components/extension-editor.js";
 import { ExtensionInputComponent } from "./components/extension-input.js";
 import { ExtensionSelectorComponent } from "./components/extension-selector.js";
@@ -62,6 +63,7 @@ import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { TrustSelectorComponent } from "./components/trust-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
+import { expandEnvForDiscovery } from "./env-expand.js";
 import { routeInterruptKey } from "./interrupt-routing.js";
 import { getAvailableThemes, getAvailableThemesWithPaths, getDefaultTheme, getEditorTheme, getMarkdownTheme, getThemeByName, initTheme, onThemeChange, setRegisteredThemes, setTheme, setThemeInstance, stopThemeWatcher, Theme, theme, } from "./theme/theme.js";
 function isExpandable(obj) {
@@ -2688,7 +2690,12 @@ export class InteractiveMode {
         // default) each card relies on its own top/bottom padding, which keeps
         // spacing consistent instead of mixing shaded card padding with an
         // unshaded spacer. Themes can opt back into a spacer.
-        if (!theme.cards.gaplessCards && this.chatContainer.children.length > 0) {
+        //
+        // Skip when the last chat child is already a Spacer (avoids doubling
+        // when a component like BashExecution adds its own lead spacer).
+        if (!theme.cards.gaplessCards &&
+            this.chatContainer.children.length > 0 &&
+            !(this.chatContainer.children[this.chatContainer.children.length - 1] instanceof Spacer)) {
             this.chatContainer.addChild(new Spacer(1));
         }
         switch (message.role) {
@@ -3282,7 +3289,7 @@ export class InteractiveMode {
     showNewVersionNotification(release) {
         const action = theme.fg("accent", `${APP_NAME} update`);
         const updateInstruction = theme.fg("muted", `New version ${release.version} is available. Run `) + action;
-        const changelogUrl = "https://hamr.dev/changelog";
+        const changelogUrl = `https://github.com/skaft-software/hamr/releases/tag/v${release.version}`;
         const changelogLink = getCapabilities().hyperlinks
             ? hyperlink(theme.fg("accent", "open changelog"), changelogUrl)
             : theme.fg("accent", changelogUrl);
@@ -4136,17 +4143,160 @@ export class InteractiveMode {
     showLoginAuthTypeSelector() {
         const subscriptionLabel = "Use a subscription";
         const apiKeyLabel = "Use an API key";
+        const endpointLabel = "Use a custom/self-hosted endpoint";
         this.showSelector((done) => {
-            const selector = new ExtensionSelectorComponent("Select authentication method:", [subscriptionLabel, apiKeyLabel], (option) => {
+            const selector = new ExtensionSelectorComponent("Select authentication method:", [subscriptionLabel, apiKeyLabel, endpointLabel], (option) => {
                 done();
-                const authType = option === subscriptionLabel ? "oauth" : "api_key";
-                this.showLoginProviderSelector(authType);
+                if (option === endpointLabel) {
+                    this.showEndpointConfigFlow();
+                }
+                else {
+                    const authType = option === subscriptionLabel ? "oauth" : "api_key";
+                    this.showLoginProviderSelector(authType);
+                }
             }, () => {
                 done();
                 this.ui.requestRender();
             });
             return { component: selector, focus: selector };
         });
+    }
+    loadExistingEndpointConfig() {
+        const modelsPath = path.join(getAgentDir(), "models.json");
+        try {
+            if (!fs.existsSync(modelsPath))
+                return undefined;
+            const data = JSON.parse(fs.readFileSync(modelsPath, "utf-8"));
+            const providers = data?.providers;
+            if (!providers || typeof providers !== "object")
+                return undefined;
+            // Find the first preset-matching provider (relay, lm-studio, etc.)
+            for (const preset of ENDPOINT_PRESETS) {
+                const provider = providers[preset.id];
+                if (!provider || typeof provider !== "object")
+                    continue;
+                const headers = [];
+                const savedHeaders = provider.headers;
+                if (savedHeaders && typeof savedHeaders === "object") {
+                    for (const [key, value] of Object.entries(savedHeaders)) {
+                        if (typeof value !== "string")
+                            continue;
+                        // A secret header is stored as the single-dollar reference
+                        // derived from its key (see saveEndpointToModelsJson). Only
+                        // treat the value as secret when it exactly matches that
+                        // reference — a literal value that merely looks like $FOO is
+                        // kept as-is so it isn't silently re-derived on re-save.
+                        const expectedRef = `$${key.toUpperCase().replace(/-/g, "_")}`;
+                        const isSecret = value === expectedRef;
+                        headers.push({
+                            key,
+                            value: isSecret ? "" : value,
+                            secret: isSecret,
+                        });
+                    }
+                }
+                const apiKey = typeof provider.apiKey === "string" && provider.apiKey !== "not-needed" ? provider.apiKey : undefined;
+                return {
+                    name: preset.id,
+                    baseUrl: typeof provider.baseUrl === "string" ? provider.baseUrl : undefined,
+                    api: provider.api === "anthropic-messages" ? "anthropic-messages" : "openai-completions",
+                    apiKey,
+                    headers,
+                };
+            }
+        }
+        catch {
+            // Ignore parse errors — start with defaults
+        }
+        return undefined;
+    }
+    showEndpointConfigFlow() {
+        const restoreEditor = () => {
+            this.editorContainer.clear();
+            this.editorContainer.addChild(this.editor);
+            this.ui.setFocus(this.editor);
+            this.ui.requestRender();
+        };
+        const previousModel = this.session.model;
+        const initialConfig = this.loadExistingEndpointConfig();
+        this.showSelector((done) => {
+            const component = new EndpointConfigComponent(this.ui, async (config) => {
+                done();
+                restoreEditor();
+                await this.saveEndpointToModelsJson(config);
+                this.session.modelRegistry.refresh();
+                await this.completeProviderAuthentication(config.name, config.name, "api_key", previousModel);
+            }, () => {
+                done();
+                restoreEditor();
+            }, initialConfig);
+            return { component, focus: component };
+        });
+    }
+    async saveEndpointToModelsJson(config) {
+        const modelsPath = path.join(getAgentDir(), "models.json");
+        let data = {};
+        try {
+            if (fs.existsSync(modelsPath)) {
+                data = JSON.parse(fs.readFileSync(modelsPath, "utf-8"));
+            }
+        }
+        catch {
+            // Start fresh if file is corrupt
+        }
+        if (!data.providers) {
+            data.providers = {};
+        }
+        const headers = {};
+        for (const h of config.headers) {
+            if (h.key) {
+                headers[h.key] = h.secret ? `$${h.key.toUpperCase().replace(/-/g, "_")}` : h.value;
+            }
+        }
+        // Try to auto-discover models from the endpoint.
+        // Expand env-var references in the apiKey and headers before making
+        // the network call so the endpoint sees real credentials, not literal
+        // $VAR / $$VAR placeholders.
+        let models;
+        if (config.api === "openai-completions") {
+            try {
+                const { discoverRelayModels } = await import("../../hamr/providers/relay-provider.js");
+                const resolvedApiKey = config.apiKey && config.apiKey !== "not-needed"
+                    ? expandEnvForDiscovery(config.apiKey)
+                    : undefined;
+                const resolvedHeaders = {};
+                for (const [key, value] of Object.entries(headers)) {
+                    resolvedHeaders[key] = expandEnvForDiscovery(value);
+                }
+                const discovered = await discoverRelayModels(config.baseUrl, resolvedApiKey, Object.keys(resolvedHeaders).length > 0 ? resolvedHeaders : undefined);
+                if (discovered.length > 0) {
+                    models = discovered.map((m) => ({
+                        id: m.id,
+                        name: m.displayName,
+                        contextWindow: m.contextWindow,
+                        maxTokens: m.maxOutputTokens,
+                        reasoning: m.supportsThinking,
+                        input: m.supportsVision === false ? ["text"] : ["text", "image"],
+                    }));
+                }
+            }
+            catch {
+                // Discovery is best-effort
+            }
+        }
+        data.providers[config.name] = {
+            baseUrl: config.baseUrl,
+            api: config.api,
+            apiKey: config.apiKey || "not-needed",
+            authHeader: config.apiKey !== "not-needed" || undefined,
+            ...(Object.keys(headers).length > 0 ? { headers } : {}),
+            ...(models && models.length > 0 ? { models } : {}),
+        };
+        const dir = path.dirname(modelsPath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
     }
     showLoginProviderSelector(authType) {
         const providerOptions = this.getLoginProviderOptions(authType);

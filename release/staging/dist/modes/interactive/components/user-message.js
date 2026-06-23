@@ -1,22 +1,52 @@
-import { Container, Markdown } from "@hamr/tui";
-import { getMarkdownTheme } from "../theme/theme.js";
+import { Box, Container, Markdown, Text } from "@hamr/tui";
+import { getMarkdownTheme, theme } from "../theme/theme.js";
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 /**
- * Plain/fallback component for user messages.
+ * Convert a hex color string (e.g. "#875fff") to an ANSI foreground color escape.
+ */
+function hexToAnsiFg(hex) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `\x1b[38;2;${r};${g};${b}m`;
+}
+/**
+ * Component that renders a user message with a branded PROMPT card header.
  *
- * Renders the message text as Markdown with no card structure, no heading,
- * and no model accent. Extensions (such as hamr-cards) can register a role
- * renderer to wrap this in a themed card if desired.
- *
- * The constructor keeps modelAccent/modelGlyph params for API compatibility
- * but they are ignored in the plain fallback.
+ * Every user message was sent to a specific model — the card heading always
+ * shows that model's glyph + "PROMPT" so you can see which model you prompted
+ * even after mid-session model switches. The heading color reflects the model's
+ * brand accent when modelAdaptive is on, or the theme accent when off.
  */
 export class UserMessageComponent extends Container {
-    constructor(text, markdownTheme = getMarkdownTheme(), _modelAccent, _modelGlyph) {
+    constructor(text, markdownTheme = getMarkdownTheme(), modelAccent, modelGlyph) {
         super();
-        this.addChild(new Markdown(text, 1, 0, markdownTheme, undefined, { preserveOrderedListMarkers: true }));
+        // Card presentation comes from the theme (theme.cards) rather than being
+        // hardcoded, so the "hamr look" is portable theme data.
+        const cards = theme.cards;
+        const glyph = cards.promptHeadingGlyph === "model" ? modelGlyph : cards.promptHeadingGlyph || undefined;
+        const showHeading = cards.showHeadings && !!glyph;
+        // Keep model color as an accent only. Using it as the card background
+        // makes orange/red models dominate the entire prompt block.
+        const promptBgFn = cards.shadedSurfaces ? theme.modelAdaptiveBgFn(modelAccent, "userMessageBg") : undefined;
+        this.contentBox = new Box(cards.cardPadX, cards.cardPadY, promptBgFn);
+        // Show the glyph + label heading when configured. Uses model brand color
+        // when modelAdaptive, theme accent otherwise.
+        if (showHeading) {
+            const headingColor = modelAccent && theme.modelAdaptive
+                ? (s) => `${hexToAnsiFg(modelAccent)}${s}\x1b[39m`
+                : (s) => theme.fg("accent", s);
+            this.contentBox.addChild(new Text(theme.bold(headingColor(`${glyph} ${cards.promptLabel}`)), cards.headingIndent, 0));
+        }
+        // Indent the body so it nests under the label (past the glyph); without a
+        // heading, keep the body at the base heading indent.
+        const bodyIndent = showHeading ? cards.bodyIndent : cards.headingIndent;
+        this.contentBox.addChild(new Markdown(text, bodyIndent, 0, markdownTheme, {
+            color: (content) => theme.fg("userMessageText", content),
+        }, { preserveOrderedListMarkers: true }));
+        this.addChild(this.contentBox);
     }
     render(width) {
         const lines = super.render(width);

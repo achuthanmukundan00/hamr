@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { Markdown } from "@hamr/tui";
 import chalk from "chalk";
 import { selectConfig } from "./cli/config-selector.js";
@@ -382,6 +384,87 @@ async function runSelfUpdate(command) {
     // If the new binary isn't on PATH yet (e.g. Homebrew prefix, nvm edge case),
     // the user needs to restart their shell or use the full path.
     checkPostUpdateVersion();
+    // self-update uses --ignore-scripts to avoid postinstall issues, but
+    // better-sqlite3 needs its native addon compiled. Rebuild it explicitly.
+    await rebuildBetterSqlite3();
+}
+/**
+ * Rebuild the better-sqlite3 native addon after a self-update.
+ *
+ * Self-updates use --ignore-scripts to skip package lifecycle scripts
+ * (avoids e.g. protobufjs postinstall failures during tarball staging).
+ * This means better-sqlite3's prebuild-install / node-gyp step never runs.
+ * We run the rebuild explicitly so FTS5 memory persistence works on first
+ * launch after the update.
+ */
+async function rebuildBetterSqlite3() {
+    const packageDir = getPackageDir();
+    const bsqlDir = join(packageDir, "node_modules", "better-sqlite3");
+    if (!existsSync(join(bsqlDir, "package.json"))) {
+        return;
+    }
+    // Check if the native binding already exists (e.g. prebuilt binary was
+    // downloaded despite --ignore-scripts, or a previous rebuild succeeded).
+    // We check a few common locations.
+    const candidateDirs = [
+        join(bsqlDir, "build", "Release"),
+        join(bsqlDir, "build", "Debug"),
+        join(bsqlDir, "prebuilds"),
+    ];
+    const hasBinding = candidateDirs.some((d) => existsSync(d));
+    if (hasBinding) {
+        return;
+    }
+    const method = detectInstallMethod();
+    let rebuild = null;
+    switch (method) {
+        case "npm":
+            rebuild = { command: "npm", args: ["rebuild", "better-sqlite3"] };
+            break;
+        case "pnpm":
+            rebuild = { command: "pnpm", args: ["rebuild", "better-sqlite3"] };
+            break;
+        case "yarn":
+            // yarn 1.x: no dedicated rebuild; fall through to npm
+            rebuild = { command: "npm", args: ["rebuild", "better-sqlite3"] };
+            break;
+        case "bun":
+        case "bun-binary":
+            // bun pm rebuild is available in newer versions; fall back to npm
+            rebuild = { command: "npm", args: ["rebuild", "better-sqlite3"] };
+            break;
+        default:
+            rebuild = { command: "npm", args: ["rebuild", "better-sqlite3"] };
+            break;
+    }
+    if (!rebuild)
+        return;
+    console.log(chalk.dim("Rebuilding better-sqlite3 native addon…"));
+    try {
+        await new Promise((resolve, reject) => {
+            const child = spawnProcess(rebuild.command, rebuild.args, {
+                cwd: packageDir,
+                stdio: "pipe",
+            });
+            let stderr = "";
+            child.stderr?.on("data", (data) => {
+                stderr += data.toString();
+            });
+            child.on("error", reject);
+            child.on("close", (code) => {
+                if (code === 0) {
+                    resolve();
+                }
+                else {
+                    reject(new Error(stderr.trim() || `exit code ${code ?? "unknown"}`));
+                }
+            });
+        });
+    }
+    catch (err) {
+        console.warn(chalk.yellow(`Warning: Failed to rebuild better-sqlite3: ${err instanceof Error ? err.message : String(err)}`));
+        console.warn(chalk.dim("If FTS5 memory is unavailable, run: npm install -g @skaft/hamr --build-from-source"));
+    }
 }
 function prepareWindowsNpmSelfUpdate() {
     if (process.platform !== "win32") {

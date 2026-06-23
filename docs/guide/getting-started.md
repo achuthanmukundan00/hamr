@@ -6,7 +6,7 @@
 npm install -g @skaft/hamr
 ```
 
-> **Tip:** Hamr works best with Relay, the local inference gateway that handles model lifecycle, graceful switching, and prefix-cache pre-warming. See the [Relay docs](/guide/relay) for setup.
+> **Tip:** Hamr works best with [Relay](/guide/relay), the recommended local inference gateway. Also works with LM Studio, llama.cpp, Ollama, vLLM, and any OpenAI-compatible endpoint.
 
 ## Quick Start
 

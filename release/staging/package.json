@@ -1,0 +1,91 @@
+{
+  "name": "@skaft/hamr",
+  "version": "0.6.1",
+  "description": "Coding agent CLI with read, bash, edit, write tools and session management",
+  "type": "module",
+  "hamrConfig": {
+    "name": "hamr",
+    "configDir": ".hamr"
+  },
+  "bin": {
+    "hamr": "dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "get-east-asian-width": "1.6.0",
+    "marked": "18.0.5",
+    "@anthropic-ai/sdk": "0.91.1",
+    "@aws-sdk/client-bedrock-runtime": "3.1048.0",
+    "@smithy/node-http-handler": "4.7.3",
+    "@google/genai": "1.52.0",
+    "@mistralai/mistralai": "2.2.1",
+    "http-proxy-agent": "7.0.2",
+    "https-proxy-agent": "7.0.6",
+    "openai": "6.26.0",
+    "partial-json": "0.1.7",
+    "typebox": "1.1.38",
+    "ignore": "7.0.5",
+    "yaml": "2.9.0",
+    "@silvia-odwyer/photon-node": "0.3.4",
+    "better-sqlite3": "^12.11.1",
+    "chalk": "5.6.2",
+    "cross-spawn": "7.0.6",
+    "diff": "8.0.4",
+    "glob": "13.0.6",
+    "highlight.js": "10.7.3",
+    "hosted-git-info": "9.0.3",
+    "jiti": "2.7.0",
+    "minimatch": "10.2.5",
+    "proper-lockfile": "4.1.2",
+    "semver": "7.8.0",
+    "toml": "3.0.0",
+    "undici": "8.3.0",
+    "@hamr/tui": "0.79.7",
+    "@hamr/ai": "0.79.7",
+    "@hamr/agent": "0.79.7",
+    "protobufjs": "7.6.4"
+  },
+  "bundledDependencies": [
+    "@hamr/agent",
+    "@hamr/ai",
+    "@hamr/tui",
+    "protobufjs"
+  ],
+  "optionalDependencies": {
+    "@mariozechner/clipboard": "0.3.9"
+  },
+  "overrides": {
+    "rimraf": "6.1.2",
+    "gaxios": {
+      "rimraf": "6.1.2"
+    }
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "keywords": [
+    "coding-agent",
+    "ai",
+    "llm",
+    "cli",
+    "tui",
+    "agent"
+  ],
+  "author": "Skaft",
+  "contributors": [
+    "Mario Zechner (original Pi author)"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skaft-software/hamr.git",
+    "directory": "packages/coding-agent"
+  }
+}

@@ -380,6 +380,9 @@ export declare class InteractiveMode {
     private getLoginProviderOptions;
     private getLogoutProviderOptions;
     private showLoginAuthTypeSelector;
+    private loadExistingEndpointConfig;
+    private showEndpointConfigFlow;
+    private saveEndpointToModelsJson;
     private showLoginProviderSelector;
     private showOAuthSelector;
     private completeProviderAuthentication;
