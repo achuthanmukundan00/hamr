@@ -473,7 +473,12 @@ function modelToProviderModel(
 			compatibility === "openai-compatible"
 				? {
 						supportsDeveloperRole: false,
-						supportsUsageInStreaming: false,
+						// Request stream_options.include_usage. llama.cpp (build 9634+) and the
+						// relay both honor it and emit a final usage-only chunk, which is what
+						// makes real token counts — and thus the context-window % — work. The
+						// WIP-baseline default was a conservative `false`, which suppressed usage
+						// and forced the footer onto a chars/4 estimate (showing 0%). Opt in.
+						supportsUsageInStreaming: true,
 						supportsStrictMode: false,
 						maxTokensField: "max_tokens",
 						// Enable Anthropic-style cache_control markers on system prompt,

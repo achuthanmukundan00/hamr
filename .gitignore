@@ -2,6 +2,7 @@
 node_modules/
 
 # Local hamr config may contain live credentials (API keys, CF-Access tokens)
+.hamr/
 .hamr.toml
 .hamr.toml.bak
 .hamr.toml.bak-*
