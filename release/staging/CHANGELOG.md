@@ -1,16 +1,16 @@
 # Changelog
 
-## [0.6.1] - 2026-06-22
+## [0.6.1] - 2026-06-23
 
 ### Fixed
 
-- **Endpoint model discovery failed with env-var credentials.** When saving a custom endpoint via `/login`, the `apiKey` and custom headers stored with `$VAR` / `$$VAR` env-var references were passed unexpanded to `GET /v1/models` during auto-discovery. This caused discovery to fail silently for endpoints behind Cloudflare Access or bearer-auth relays, leaving the provider with zero models. The save flow now expands env-var references before the discovery call.
+- **Relay providers authenticated with `models.json` creds were probed unauthenticated at startup.** The startup discovery path (`GET /v1/models`) and the request-time registration historically sourced credentials only from `.hamr.toml`. Relay providers that keep their real credentials in the agent layer — API key in `auth.json`, CF-Access headers in `models.json` — were probed with no auth headers, got a 401, and silently registered zero models (or registered with the `"not-needed"` fallback key). Both paths now resolve credentials from the agent layer via the same `getApiKeyAndHeaders`-equivalent chain the chat path uses: `models.json` headers/`apiKey` resolved against `auth.json`'s provider `env`. The relay endpoint base URL also falls back to the agent layer, so a `.hamr.toml` `[providers.relay]` block is no longer required — the file can stay TUI-only. Plain LM Studio / keyless local endpoints are unaffected (agent-layer resolution returns undefined, falls back to `.hamr.toml`).
+- **Custom endpoint discovery passed env-var references unexpanded.** When saving a custom endpoint via `/login`, `$VAR` / `${VAR}` references in `apiKey` and headers were sent raw to `GET /v1/models` during auto-discovery, silently failing for endpoints behind bearer-auth or Cloudflare Access. Discovery now resolves credentials through the full `ModelRegistry.getApiKeyAndHeaders()` chain — same as chat and startup.
 - **better-sqlite3 silent breakage after `hamr self-update`.** Self-update uses `--ignore-scripts` to skip package lifecycle scripts (avoids postinstall failures during tarball staging). This meant better-sqlite3's native addon was never compiled after an update, causing FTS5 memory persistence to silently stop working. Self-update now explicitly rebuilds the better-sqlite3 native addon after installation.
 
 ### Added
 
-- **Relay preset in endpoint configuration.** The `/login` → custom endpoint form now lists Relay as the first preset (`http://127.0.0.1:1234/v1`).
-- **Endpoint configuration pre-populates** from existing `models.json` when re-editing, so users don't start from a blank form.
+- **Relay preset in endpoint configuration.** The `/login` → custom endpoint form now lists Relay as the first preset. It also pre-populates from any existing `models.json` entry when re-editing.
 
 ### Changed
 
