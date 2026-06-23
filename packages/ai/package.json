@@ -62,10 +62,10 @@
 		"clean": "shx rm -rf dist",
 		"generate-models": "node scripts/generate-models.ts",
 		"generate-image-models": "node scripts/generate-image-models.ts",
-		"build": "npm run generate-models && npm run generate-image-models && biome format --write src/models.generated.ts src/image-models.generated.ts && tsgo -p tsconfig.build.json",
+		"build": "bun run generate-models && bun run generate-image-models && biome format --write src/models.generated.ts src/image-models.generated.ts && tsgo -p tsconfig.build.json",
 		"test": "vitest --run",
 	"test:e2e": "PI_E2E=true vitest --run",
-		"prepublishOnly": "npm run clean && npm run build"
+		"prepublishOnly": "bun run clean && bun run build"
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.91.1",

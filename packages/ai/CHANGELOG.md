@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed generated model pricing metadata to reflect updated input, output, and cache-read costs.
+
 ## [0.79.6] - 2026-06-16
 
 ### Fixed

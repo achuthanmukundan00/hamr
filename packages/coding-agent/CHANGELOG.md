@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.1] - 2026-06-23
+
+### Added
+
+- **Custom endpoint form in /login for local providers.** The login page now offers a form to configure custom/self-hosted inference endpoints (LM Studio, llama.cpp, Ollama, vLLM, Custom) without going through the full /login flow. Saves to `~/.hamr/agent/models.json`, auto-discovers models, and switches provider immediately — no restart needed.
+- **Agent-layer relay auth resolution.** Providers now resolve credentials from `models.json`/`auth.json` in the agent layer, falling back to `hamr.toml` and then local defaults. Relay endpoints whose credentials live in the agent layer are now probed and registered with the correct auth instead of falling back to an unauthenticated placeholder.
+
+### Fixed
+
+- **Unified endpoint discovery auth with chat path.** Endpoint discovery now uses the same auth flow as the chat path, ensuring credentials are applied consistently whether the provider is discovered via /login or registered dynamically.
+- **Stale model-loading indicator cleared on response.** The model-loading status text is now cleared when an assistant response arrives, so the indicator no longer sticks after the model has responded.
+
 ## [0.6.0] - 2026-06-22
 
 ### Added

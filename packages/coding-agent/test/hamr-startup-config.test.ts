@@ -97,7 +97,8 @@ describe("Hamr startup config relay compatibility", () => {
 		expect(relay).toBeDefined();
 		expect(relay?.config.models?.[0]?.compat).toMatchObject({
 			supportsDeveloperRole: false,
-			supportsUsageInStreaming: false,
+			// Opt in to streaming usage so real token counts drive the context-window %.
+			supportsUsageInStreaming: true,
 			supportsStrictMode: false,
 			maxTokensField: "max_tokens",
 		});

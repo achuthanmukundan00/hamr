@@ -2,6 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getModel } from "@hamr/ai";
 import { parse as parseToml } from "toml";
+import { getAgentDir } from "../config.js";
+import { AuthStorage } from "../core/auth-storage.js";
+import { resolveConfigValueOrThrow, resolveHeadersOrThrow } from "../core/resolve-config-value.js";
 import { detectParserId } from "./providers/parsers/types.js";
 import { discoverRelayModels as discoverRelayEndpointModels } from "./providers/relay-provider.js";
 const DEFAULT_RELAY_BASE_URL = "http://127.0.0.1:1234/v1";
@@ -21,12 +24,34 @@ function expandEnv(value) {
         .replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "")
         .replace(/\$(\w+)/g, (_, name) => process.env[name] ?? "");
 }
-/** Resolve the effective relay base URL: env override > config > default. */
+/** Read a provider's `baseUrl` from the agent layer (`models.json`), if present. */
+function agentLayerBaseUrl(providerId) {
+    try {
+        const modelsPath = join(getAgentDir(), "models.json");
+        if (!existsSync(modelsPath))
+            return undefined;
+        const data = JSON.parse(readFileSync(modelsPath, "utf-8"));
+        const baseUrl = data.providers?.[providerId]?.baseUrl;
+        return typeof baseUrl === "string" && baseUrl.trim() ? baseUrl.trim() : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+/**
+ * Resolve the effective relay base URL, in priority order: env override →
+ * hamr.toml `base_url` (if the user pinned one) → agent-layer `models.json`
+ * baseUrl (the relay endpoint, same source as its creds) → local default.
+ *
+ * The agent-layer fallback lets the relay endpoint live entirely in the agent
+ * layer, so hamr.toml needs no provider block — it stays a preferences/theming
+ * file.
+ */
 function resolveRelayBaseUrl(provider) {
     const fromEnv = process.env[RELAY_BASE_URL_ENV]?.trim();
     if (fromEnv)
         return fromEnv;
-    return providerBaseUrl(provider) ?? DEFAULT_RELAY_BASE_URL;
+    return providerBaseUrl(provider) ?? agentLayerBaseUrl("relay") ?? DEFAULT_RELAY_BASE_URL;
 }
 function globalHamrConfigPath() {
     const home = process.env.HOME || process.env.USERPROFILE;
@@ -69,11 +94,13 @@ export function loadHamrStartupConfig(cwd = process.cwd()) {
             thinking: "off",
         },
         providers: {
+            // The relay endpoint is not pinned here: resolveRelayBaseUrl sources it
+            // from the agent layer (models.json) and falls back to the local default,
+            // so the relay is determined by the standard discovery path, not config.
             relay: {
                 enabled: true,
                 name: "Relay",
                 compatibility: "openai-compatible",
-                base_url: DEFAULT_RELAY_BASE_URL,
             },
         },
         sourcePaths: [],
@@ -197,11 +224,58 @@ function mergeProviderModels(configured, discovered) {
     ];
 }
 /**
+ * Resolve a provider's credentials from the agent layer (`models.json` +
+ * `auth.json`) — the same source the chat path uses via
+ * `ModelRegistry.getApiKeyAndHeaders`.
+ *
+ * Both halves of provider auth historically ignored this: discovery read only
+ * the hamr.toml provider block, and the request-time registration apiKey fell
+ * back to `LOCAL_API_KEY` ("not-needed"). So a relay-style provider that keeps
+ * its real credentials in the agent layer (e.g. behind Cloudflare Access:
+ * CF-Access headers in `models.json`, secrets in `auth.json`'s provider `env`)
+ * was probed unauthenticated AND registered with a junk key. Resolving here and
+ * threading the result into both paths keeps hamr authenticated wherever chat
+ * is. Returns `undefined` when the provider has no agent-layer entry (e.g. a
+ * plain LM Studio endpoint), so callers fall back to the hamr.toml creds and the
+ * unauthenticated probe still works as before.
+ *
+ * `headers` deliberately excludes `Authorization` — the bearer is carried via
+ * `apiKey` + `authHeader` so each consumer (discovery probe vs. registry) adds
+ * it the way it expects.
+ */
+async function resolveAgentLayerAuth(providerId) {
+    try {
+        const modelsPath = join(getAgentDir(), "models.json");
+        if (!existsSync(modelsPath))
+            return undefined;
+        const data = JSON.parse(readFileSync(modelsPath, "utf-8"));
+        const providerConfig = data.providers?.[providerId];
+        if (!providerConfig)
+            return undefined;
+        const authStorage = AuthStorage.create();
+        const providerEnv = authStorage.getProviderEnv(providerId);
+        const apiKey = (await authStorage.getApiKey(providerId, { includeFallback: false })) ??
+            (providerConfig.apiKey
+                ? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${providerId}"`, providerEnv)
+                : undefined);
+        const headers = resolveHeadersOrThrow(providerConfig.headers, `provider "${providerId}"`, providerEnv);
+        return { apiKey, headers, authHeader: providerConfig.authHeader === true };
+    }
+    catch {
+        // Any resolution failure (missing env var, unreadable file) falls back to
+        // hamr.toml creds — never block startup discovery.
+        return undefined;
+    }
+}
+/**
  * Resolve the model list for a provider. Explicit config models define local
  * intent, but OpenAI-compatible providers are still probed so live endpoint
  * facts (especially context length) can override stale or incomplete config.
+ *
+ * `agentAuth` is resolved once by the caller and reused for both the probe and
+ * the registration so they always send the same credentials.
  */
-async function resolveProviderModels(providerId, provider) {
+async function resolveProviderModels(providerId, provider, agentAuth) {
     const configured = provider.models ?? [];
     const compatibility = provider.compatibility ?? "openai-compatible";
     if (compatibility !== "openai-compatible")
@@ -209,7 +283,13 @@ async function resolveProviderModels(providerId, provider) {
     const baseUrl = providerId === "relay" ? resolveRelayBaseUrl(provider) : providerBaseUrl(provider);
     if (!baseUrl)
         return configured;
-    const discovered = await discoverRelayModels(baseUrl, resolveProviderApiKey(provider), providerHeaders(provider));
+    // Prefer agent-layer creds (models.json/auth.json), exactly as chat does;
+    // fall back to the hamr.toml provider block for endpoints configured purely
+    // there (e.g. a local LM Studio that needs no auth). discoverRelayModels adds
+    // `Authorization: Bearer <apiKey>` itself, so headers stays CF-Access-only.
+    const apiKey = agentAuth?.apiKey ?? resolveProviderApiKey(provider);
+    const headers = agentAuth?.headers ?? providerHeaders(provider);
+    const discovered = await discoverRelayModels(baseUrl, apiKey, headers);
     return mergeProviderModels(configured, discovered);
 }
 function detectThinkingFormat(modelId) {
@@ -285,7 +365,12 @@ function modelToProviderModel(model, provider, providerId) {
         compat: compatibility === "openai-compatible"
             ? {
                 supportsDeveloperRole: false,
-                supportsUsageInStreaming: false,
+                // Request stream_options.include_usage. llama.cpp (build 9634+) and the
+                // relay both honor it and emit a final usage-only chunk, which is what
+                // makes real token counts — and thus the context-window % — work. The
+                // WIP-baseline default was a conservative `false`, which suppressed usage
+                // and forced the footer onto a chars/4 estimate (showing 0%). Opt in.
+                supportsUsageInStreaming: true,
                 supportsStrictMode: false,
                 maxTokensField: "max_tokens",
                 // Enable Anthropic-style cache_control markers on system prompt,
@@ -329,7 +414,10 @@ export async function buildHamrProviderRegistrations(config) {
         const baseUrl = expandEnv(resolvedBaseUrl);
         if (!baseUrl)
             continue;
-        const models = await resolveProviderModels(providerId, provider);
+        // Resolve agent-layer creds once and reuse for both the discovery probe
+        // and the request-time registration, so they never disagree.
+        const agentAuth = await resolveAgentLayerAuth(providerId);
+        const models = await resolveProviderModels(providerId, provider, agentAuth);
         if (models.length === 0)
             continue;
         // Per-model tool-call parser: explicit config override wins, otherwise
@@ -350,12 +438,20 @@ export async function buildHamrProviderRegistrations(config) {
                 name: provider.name ?? providerId,
                 baseUrl,
                 api: compatibility === "anthropic-compatible" ? "anthropic-messages" : "openai-completions",
-                apiKey: provider.api_key ??
+                // Request-time creds, in priority order: agent-layer (models.json /
+                // auth.json, same as chat) → hamr.toml literal → hamr.toml env ref →
+                // "not-needed" for keyless local endpoints (LM Studio). Previously this
+                // only saw the hamr.toml chain, so a relay whose key lives in the agent
+                // layer was registered with "not-needed" and every request 401'd.
+                apiKey: agentAuth?.apiKey ??
+                    provider.api_key ??
                     provider.apiKey ??
                     envReference(provider.api_key_env ?? provider.apiKeyEnv) ??
                     LOCAL_API_KEY,
-                authHeader: false,
-                headers: providerHeaders(provider),
+                // When the agent layer says this provider wants a bearer, let the
+                // registry attach `Authorization: Bearer <apiKey>` at request time.
+                authHeader: agentAuth?.authHeader ?? false,
+                headers: agentAuth?.headers ?? providerHeaders(provider),
                 models: models.map((model) => modelToProviderModel(model, provider, providerId)),
             },
         });

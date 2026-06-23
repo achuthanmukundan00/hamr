@@ -9570,6 +9570,26 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "glm-5.2": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            compat: {
+                maxTokensField: "max_tokens";
+            };
+            reasoning: true;
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "gpt-5": {
             id: string;
             name: string;
@@ -11131,23 +11151,6 @@ export declare const MODELS: {
                 high: string;
                 xhigh: string;
             };
-            input: "text"[];
-            cost: {
-                input: number;
-                output: number;
-                cacheRead: number;
-                cacheWrite: number;
-            };
-            contextWindow: number;
-            maxTokens: number;
-        };
-        readonly "essentialai/rnj-1-instruct": {
-            id: string;
-            name: string;
-            api: "openai-completions";
-            provider: string;
-            baseUrl: string;
-            reasoning: false;
             input: "text"[];
             cost: {
                 input: number;
@@ -13448,23 +13451,6 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
-        readonly "prime-intellect/intellect-3": {
-            id: string;
-            name: string;
-            api: "openai-completions";
-            provider: string;
-            baseUrl: string;
-            reasoning: true;
-            input: "text"[];
-            cost: {
-                input: number;
-                output: number;
-                cacheRead: number;
-                cacheWrite: number;
-            };
-            contextWindow: number;
-            maxTokens: number;
-        };
         readonly "qwen/qwen-2.5-72b-instruct": {
             id: string;
             name: string;
@@ -14356,23 +14342,6 @@ export declare const MODELS: {
             provider: string;
             baseUrl: string;
             reasoning: true;
-            input: "text"[];
-            cost: {
-                input: number;
-                output: number;
-                cacheRead: number;
-                cacheWrite: number;
-            };
-            contextWindow: number;
-            maxTokens: number;
-        };
-        readonly "thedrummer/rocinante-12b": {
-            id: string;
-            name: string;
-            api: "openai-completions";
-            provider: string;
-            baseUrl: string;
-            reasoning: false;
             input: "text"[];
             cost: {
                 input: number;
