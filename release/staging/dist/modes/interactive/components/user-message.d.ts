@@ -1,16 +1,15 @@
 import { Container, type MarkdownTheme } from "@hamr/tui";
 /**
- * Plain/fallback component for user messages.
+ * Component that renders a user message with a branded PROMPT card header.
  *
- * Renders the message text as Markdown with no card structure, no heading,
- * and no model accent. Extensions (such as hamr-cards) can register a role
- * renderer to wrap this in a themed card if desired.
- *
- * The constructor keeps modelAccent/modelGlyph params for API compatibility
- * but they are ignored in the plain fallback.
+ * Every user message was sent to a specific model — the card heading always
+ * shows that model's glyph + "PROMPT" so you can see which model you prompted
+ * even after mid-session model switches. The heading color reflects the model's
+ * brand accent when modelAdaptive is on, or the theme accent when off.
  */
 export declare class UserMessageComponent extends Container {
-    constructor(text: string, markdownTheme?: MarkdownTheme, _modelAccent?: string, _modelGlyph?: string);
+    private contentBox;
+    constructor(text: string, markdownTheme?: MarkdownTheme, modelAccent?: string, modelGlyph?: string);
     render(width: number): string[];
 }
 //# sourceMappingURL=user-message.d.ts.map

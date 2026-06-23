@@ -108,7 +108,12 @@ import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
-import { type EndpointConfig, EndpointConfigComponent } from "./components/endpoint-config.ts";
+import {
+	ENDPOINT_PRESETS,
+	type EndpointConfig,
+	EndpointConfigComponent,
+	type EndpointHeader,
+} from "./components/endpoint-config.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
@@ -126,6 +131,7 @@ import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
+import { expandEnvForDiscovery } from "./env-expand.ts";
 import { routeInterruptKey } from "./interrupt-routing.ts";
 import {
 	getAvailableThemes,
@@ -5006,6 +5012,56 @@ export class InteractiveMode {
 		});
 	}
 
+	private loadExistingEndpointConfig(): Partial<EndpointConfig> | undefined {
+		const modelsPath = path.join(getAgentDir(), "models.json");
+		try {
+			if (!fs.existsSync(modelsPath)) return undefined;
+			const data = JSON.parse(fs.readFileSync(modelsPath, "utf-8")) as Record<string, any>;
+			const providers = data?.providers;
+			if (!providers || typeof providers !== "object") return undefined;
+
+			// Find the first preset-matching provider (relay, lm-studio, etc.)
+			for (const preset of ENDPOINT_PRESETS) {
+				const provider = providers[preset.id];
+				if (!provider || typeof provider !== "object") continue;
+
+				const headers: EndpointHeader[] = [];
+				const savedHeaders = provider.headers;
+				if (savedHeaders && typeof savedHeaders === "object") {
+					for (const [key, value] of Object.entries(savedHeaders)) {
+						if (typeof value !== "string") continue;
+						// A secret header is stored as the single-dollar reference
+						// derived from its key (see saveEndpointToModelsJson). Only
+						// treat the value as secret when it exactly matches that
+						// reference — a literal value that merely looks like $FOO is
+						// kept as-is so it isn't silently re-derived on re-save.
+						const expectedRef = `$${key.toUpperCase().replace(/-/g, "_")}`;
+						const isSecret = value === expectedRef;
+						headers.push({
+							key,
+							value: isSecret ? "" : value,
+							secret: isSecret,
+						});
+					}
+				}
+
+				const apiKey =
+					typeof provider.apiKey === "string" && provider.apiKey !== "not-needed" ? provider.apiKey : undefined;
+
+				return {
+					name: preset.id,
+					baseUrl: typeof provider.baseUrl === "string" ? provider.baseUrl : undefined,
+					api: provider.api === "anthropic-messages" ? "anthropic-messages" : "openai-completions",
+					apiKey,
+					headers,
+				};
+			}
+		} catch {
+			// Ignore parse errors — start with defaults
+		}
+		return undefined;
+	}
+
 	private showEndpointConfigFlow(): void {
 		const restoreEditor = () => {
 			this.editorContainer.clear();
@@ -5015,6 +5071,7 @@ export class InteractiveMode {
 		};
 
 		const previousModel = this.session.model;
+		const initialConfig = this.loadExistingEndpointConfig();
 
 		this.showSelector((done) => {
 			const component = new EndpointConfigComponent(
@@ -5022,20 +5079,28 @@ export class InteractiveMode {
 				async (config: EndpointConfig) => {
 					done();
 					restoreEditor();
-					await this.saveEndpointToModelsJson(config);
+					const discoveredCount = await this.saveEndpointToModelsJson(config);
 					this.session.modelRegistry.refresh();
+					const discoveryNote =
+						discoveredCount > 0
+							? `(${discoveredCount} model${discoveredCount === 1 ? "" : "s"} discovered)`
+							: config.api === "openai-completions"
+								? "(no models discovered — endpoint may be unreachable or need auth)"
+								: "";
+					this.showStatus(`Endpoint "${config.name}" saved. ${discoveryNote} Use /model to select a model.`);
 					await this.completeProviderAuthentication(config.name, config.name, "api_key", previousModel);
 				},
 				() => {
 					done();
 					restoreEditor();
 				},
+				initialConfig,
 			);
 			return { component, focus: component };
 		});
 	}
 
-	private async saveEndpointToModelsJson(config: EndpointConfig): Promise<void> {
+	private async saveEndpointToModelsJson(config: EndpointConfig): Promise<number> {
 		const modelsPath = path.join(getAgentDir(), "models.json");
 
 		let data: Record<string, any> = {};
@@ -5058,16 +5123,24 @@ export class InteractiveMode {
 			}
 		}
 
-		// Try to auto-discover models from the endpoint
+		// Try to auto-discover models from the endpoint.
 		let models: Array<Record<string, any>> | undefined;
+		let discoveredCount = 0;
 		if (config.api === "openai-completions") {
 			try {
 				const { discoverRelayModels } = await import("../../hamr/providers/relay-provider.ts");
+				const resolvedApiKey =
+					config.apiKey && config.apiKey !== "not-needed" ? expandEnvForDiscovery(config.apiKey) : undefined;
+				const resolvedHeaders: Record<string, string> = {};
+				for (const [key, value] of Object.entries(headers)) {
+					resolvedHeaders[key] = expandEnvForDiscovery(value);
+				}
 				const discovered = await discoverRelayModels(
 					config.baseUrl,
-					config.apiKey !== "not-needed" ? config.apiKey : undefined,
-					Object.keys(headers).length > 0 ? headers : undefined,
+					resolvedApiKey,
+					Object.keys(resolvedHeaders).length > 0 ? resolvedHeaders : undefined,
 				);
+				discoveredCount = discovered.length;
 				if (discovered.length > 0) {
 					models = discovered.map((m) => ({
 						id: m.id,
@@ -5089,7 +5162,7 @@ export class InteractiveMode {
 			apiKey: config.apiKey || "not-needed",
 			authHeader: config.apiKey !== "not-needed" || undefined,
 			...(Object.keys(headers).length > 0 ? { headers } : {}),
-			...(models && models.length > 0 ? { models } : {}),
+			models: models && models.length > 0 ? models : [{ id: "auto", name: "Auto-discovered (open /model to refresh)" }],
 		};
 
 		const dir = path.dirname(modelsPath);
@@ -5097,6 +5170,7 @@ export class InteractiveMode {
 			fs.mkdirSync(dir, { recursive: true });
 		}
 		fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
+		return discoveredCount;
 	}
 
 	private showLoginProviderSelector(authType: "oauth" | "api_key"): void {

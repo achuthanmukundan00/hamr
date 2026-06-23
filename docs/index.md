@@ -18,8 +18,8 @@ Start your inference server (Relay, llama.cpp, LM Studio, Ollama, vLLM) at its d
 
 ## Why Hamr
 
+- **Relay-first** — recommended inference gateway: model lifecycle, prefix-cache pre-warming
 - **Local-first** — designed for your GPU, not a cloud bill
-- **Relay-native** — auto-discovers models, handles lifecycle, prefix-cache pre-warming
 - **Pi SDK** — embed the agent in your own tools
 - **OpenAI-compatible** — works with any `/chat/completions` endpoint
 
