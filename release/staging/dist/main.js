@@ -22,7 +22,7 @@ import { createAgentSessionFromServices, createAgentSessionServices, } from "./c
 import { formatNoModelsAvailableMessage } from "./core/auth-guidance.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { exportFromFile } from "./core/export-html/index.js";
-import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.js";
+import { applyHttpProxySettings, configureHttpDispatcher, excludeProvidersFromProxy } from "./core/http-dispatcher.js";
 import { resolveCliModel, resolveModelScope } from "./core/model-resolver.js";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.js";
 import { resolveProjectTrusted } from "./core/project-trust.js";
@@ -643,6 +643,23 @@ export async function main(args, options) {
     time("createAgentSessionRuntime");
     const { services, session, modelFallbackMessage } = runtime;
     const { settingsManager, modelRegistry, resourceLoader } = services;
+    // Exclude known provider hosts from the HTTP proxy so credentials and
+    // CF-Access headers are never forwarded to an intermediate proxy.
+    // Provider traffic always uses direct connections.
+    const providerHosts = [
+        ...new Set(modelRegistry
+            .getAll()
+            .map((m) => {
+            try {
+                return new URL(m.baseUrl).hostname;
+            }
+            catch {
+                return undefined;
+            }
+        })
+            .filter(Boolean)),
+    ];
+    excludeProvidersFromProxy(providerHosts);
     applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
     configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
     if (parsed.help) {

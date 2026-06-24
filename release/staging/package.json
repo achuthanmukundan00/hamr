@@ -1,6 +1,6 @@
 {
   "name": "@skaft/hamr",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Coding agent CLI with read, bash, edit, write tools and session management",
   "type": "module",
   "hamrConfig": {

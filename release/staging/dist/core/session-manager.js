@@ -217,7 +217,7 @@ export function buildSessionContext(entries, leafId, byId) {
  * Compute the default session directory for a cwd.
  * Encodes cwd into a safe directory name under ~/.hamr/agent/sessions/.
  */
-function getDefaultSessionDirPath(cwd, agentDir = getDefaultAgentDir()) {
+export function getDefaultSessionDirPath(cwd, agentDir = getDefaultAgentDir()) {
     const resolvedCwd = resolvePath(cwd);
     const resolvedAgentDir = resolvePath(agentDir);
     const safePath = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;

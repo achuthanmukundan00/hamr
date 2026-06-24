@@ -119,6 +119,8 @@ function getLastAssistantUsageInfo(messages) {
  */
 export function estimateContextTokens(messages) {
     const usageInfo = getLastAssistantUsageInfo(messages);
+    // When no assistant has returned usage (fresh session or all aborted/error),
+    // fall back to estimating all messages via char-count heuristic.
     if (!usageInfo) {
         let estimated = 0;
         for (const message of messages) {
@@ -132,6 +134,22 @@ export function estimateContextTokens(messages) {
         };
     }
     const usageTokens = calculateContextTokens(usageInfo.usage);
+    // Some providers (relay / local inference servers) don't return valid
+    // usage in streaming chunks. The usage object exists but is all zeros.
+    // In that case fall back to estimation so the footer shows a useful
+    // context percentage instead of 0%.
+    if (usageTokens === 0 && messages.length > 0) {
+        let estimated = 0;
+        for (const message of messages) {
+            estimated += estimateTokens(message);
+        }
+        return {
+            tokens: estimated,
+            usageTokens: 0,
+            trailingTokens: estimated,
+            lastUsageIndex: null,
+        };
+    }
     let trailingTokens = 0;
     for (let i = usageInfo.index + 1; i < messages.length; i++) {
         trailingTokens += estimateTokens(messages[i]);

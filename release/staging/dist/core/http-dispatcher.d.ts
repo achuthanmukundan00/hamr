@@ -27,6 +27,12 @@ export declare function validateProxyUrl(httpProxy: string | undefined): string 
  * traffic including Authorization and provider-specific credential headers.
  */
 export declare function warnProxyActive(proxy: string | undefined): void;
+/**
+ * Exclude known provider hosts from the HTTP proxy so credentials and
+ * CF-Access headers are never forwarded to a proxy. Provider traffic
+ * to these hosts uses direct connections.
+ */
+export declare function excludeProvidersFromProxy(providerHosts: string[]): void;
 export declare function applyHttpProxySettings(httpProxy: string | undefined): void;
 export declare function configureHttpDispatcher(timeoutMs?: number): void;
 //# sourceMappingURL=http-dispatcher.d.ts.map
