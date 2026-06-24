@@ -21,6 +21,7 @@
 - **Full event JSON persisted to subagent disk logs.** `events.ndjson` now stores complete event payloads for forensic replay. Only the in-memory `recentEvents` ring buffer (shown in the UI) is truncated to 256 chars. Disk writes use `0o600` permissions.
 - **Subagent result files write full output.** Worker final output is now written to disk in full — previously it was capped at `OUTPUT_TAIL_BYTES` alongside the in-memory preview.
 - **Child session path matches parent encoding.** Spawn points now use the shared `getDefaultSessionDirPath` encoder, honoring any configured agent directory so the session tree can cross-reference child sessions.
+- **Post-update version check ran `node --version` instead of `hamr --version`.** `checkPostUpdateVersion` spawned `process.execPath` (Node.js) with `--version`, returning Node's version string (`v26.0.0`) instead of hamr's version, which broke the confirmation message and internal version detection. Now passes `process.argv[1]` (the CLI entrypoint) so it properly runs `hamr --version`.
 
 ### Changed
 
