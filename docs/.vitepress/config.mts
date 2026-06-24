@@ -8,6 +8,7 @@ export default defineConfig({
   cleanUrls: true,
   head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }]],
   themeConfig: {
+    siteTitle: '⚒ hamr',
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'Parsers', link: '/guide/tool-call-parsing' },
