@@ -24,7 +24,7 @@ import { Type } from "typebox";
 import type { ExtensionContext, ExtensionFactory } from "../../core/extensions/types.ts";
 import { defineTool } from "../../core/extensions/types.ts";
 import type { HamrChildConfig } from "../../core/sdk.ts";
-import type { SpawnPolicy } from "../../core/session-manager.ts";
+import { getDefaultSessionDirPath, type SpawnPolicy } from "../../core/session-manager.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { getMarkdownTheme } from "../../modes/interactive/theme/theme.ts";
 import {
@@ -129,7 +129,7 @@ const EMPTY_USAGE: Usage = {
 interface ActivityEvent {
 	ts: number;
 	type: string;
-	data: string; // compressed summary
+	data: string; // truncated for in-memory preview (max 256 chars)
 }
 
 interface WorkerState {
@@ -147,8 +147,8 @@ interface WorkerState {
 	errorMessage?: string;
 	lastActivity?: string;
 	lastTool?: string;
-	recentEvents: ActivityEvent[]; // ring buffer, max EVENTS_IN_MEMORY entries
-	pendingFlush: ActivityEvent[]; // events not yet written to disk
+	recentEvents: ActivityEvent[]; // ring buffer, max EVENTS_IN_MEMORY entries (truncated data)
+	pendingFlush: string[]; // full event JSON lines not yet written to disk
 	flushTimer?: ReturnType<typeof setInterval>;
 	outputTail: string; // capped to OUTPUT_TAIL_BYTES bytes
 	finalOutput?: string; // capped
@@ -383,10 +383,11 @@ function ensureLogDir(runId: string, cwd: string): string {
 	return base;
 }
 
-function appendNDJSON(filePath: string, events: ActivityEvent[]): void {
+function appendNDJSON(filePath: string, lines: string[]): void {
 	try {
-		const lines = events.map((e) => `${JSON.stringify({ ts: e.ts, type: e.type, data: e.data })}\n`).join("");
-		fs.appendFileSync(filePath, lines, "utf-8");
+		// Event logs can carry tool I/O and file contents — keep them owner-only
+		// (matches the 0o600 result files), not the default world-readable mode.
+		fs.appendFileSync(filePath, lines.join(""), { encoding: "utf-8", mode: 0o600 });
 	} catch {
 		// best-effort
 	}
@@ -1012,8 +1013,11 @@ function createWorkerState(workerId: string, task: string, cwd: string, logPath:
 }
 
 function pushEvent(ws: WorkerState, event: Record<string, unknown>): void {
+	// One timestamp shared by the in-memory preview and the on-disk record.
+	const ts = Date.now();
+	// Truncated in-memory preview (ring buffer, UI only).
 	const entry: ActivityEvent = {
-		ts: Date.now(),
+		ts,
 		type: (event.type as string) ?? "unknown",
 		data: JSON.stringify(event).slice(0, 256),
 	};
@@ -1046,8 +1050,9 @@ function pushEvent(ws: WorkerState, event: Record<string, unknown>): void {
 		}
 	}
 
-	// Incremental disk flush: buffer events and write every N events or on interval.
-	ws.pendingFlush.push(entry);
+	// Incremental disk flush: store full event JSON for forensic replay.
+	// Only the in-memory recentEvents ring buffer is truncated.
+	ws.pendingFlush.push(`${JSON.stringify({ ts, type: event.type ?? "unknown", data: event })}\n`);
 	if (ws.pendingFlush.length >= FLUSH_BATCH_SIZE) {
 		flushPendingEvents(ws);
 	}
@@ -1146,6 +1151,7 @@ async function executeSingleWorker(
 	workerModel?: string,
 	workerTools?: string[],
 	stepTimeoutMs?: number,
+	workerArtifact?: string,
 ): Promise<WorkerOutcome> {
 	const logPath = path.join(run.logDir, "workers", `${workerId}.events.ndjson`);
 	const resultPath = path.join(run.logDir, "workers", `${workerId}.final.md`);
@@ -1292,12 +1298,75 @@ async function executeSingleWorker(
 			return result;
 		}
 
+		// Require a non-empty final assistant text.  If the worker only produced
+		// thinking events (thinking_start / thinking_delta / thinking_end) but no
+		// final assistant message, treat it as a failure.
+		if (!result.text || result.text.trim().length === 0) {
+			ws.errorMessage = "Worker produced no final assistant text (only thinking events or empty response).";
+			ws.endedAt = Date.now();
+			flushWorkerLog(ws);
+			run.workers.set(workerId, ws);
+			transition(run, ws, "failed", ws.usage.totalTokens);
+			accumulateCost(run, ws.usage);
+			updateStatusWidget(ctx);
+			return {
+				status: "failed",
+				workerId,
+				task,
+				text: "",
+				error: ws.errorMessage,
+				validation: validateWorkerOutput(result, cwd),
+			};
+		}
+
+		// Validate artifact contract: if the task declares an output artifact path,
+		// the file must exist and be non-empty.
+		if (workerArtifact) {
+			const resolved = path.resolve(cwd, workerArtifact);
+			try {
+				if (!fs.existsSync(resolved)) {
+					const err = `Artifact contract not met: required output file "${workerArtifact}" does not exist.`;
+					ws.errorMessage = err;
+					ws.endedAt = Date.now();
+					flushWorkerLog(ws);
+					run.workers.set(workerId, ws);
+					transition(run, ws, "failed", ws.usage.totalTokens);
+					accumulateCost(run, ws.usage);
+					updateStatusWidget(ctx);
+					return { status: "failed", workerId, task, text: result.text, error: err };
+				}
+				if (fs.statSync(resolved).size === 0) {
+					const err = `Artifact contract not met: required output file "${workerArtifact}" is empty.`;
+					ws.errorMessage = err;
+					ws.endedAt = Date.now();
+					flushWorkerLog(ws);
+					run.workers.set(workerId, ws);
+					transition(run, ws, "failed", ws.usage.totalTokens);
+					accumulateCost(run, ws.usage);
+					updateStatusWidget(ctx);
+					return { status: "failed", workerId, task, text: result.text, error: err };
+				}
+			} catch (err) {
+				const errMsg = `Artifact contract check failed for "${workerArtifact}": ${err instanceof Error ? err.message : String(err)}`;
+				ws.errorMessage = errMsg;
+				ws.endedAt = Date.now();
+				flushWorkerLog(ws);
+				run.workers.set(workerId, ws);
+				transition(run, ws, "failed", ws.usage.totalTokens);
+				accumulateCost(run, ws.usage);
+				updateStatusWidget(ctx);
+				return { status: "failed", workerId, task, text: result.text, error: errMsg };
+			}
+		}
+
 		ws.usage = result.usage;
 		ws.estimatedUsage = result.estimatedUsage ?? false;
+		// In-memory preview stays capped (one per worker); the full output is
+		// persisted to resultPath on disk below.
 		ws.finalOutput = result.text.slice(0, OUTPUT_TAIL_BYTES);
 		ws.resultPath = resultPath;
 		try {
-			fs.writeFileSync(resultPath, result.text.slice(0, OUTPUT_TAIL_BYTES), { encoding: "utf-8", mode: 0o600 });
+			fs.writeFileSync(resultPath, result.text, { encoding: "utf-8", mode: 0o600 });
 		} catch {
 			/* best-effort */
 		}
@@ -1392,6 +1461,7 @@ async function executeTasks(
 				(item as any).model,
 				(item as any).tools,
 				stepTimeoutMs,
+				(item as any).artifact,
 			);
 		},
 		(done) => {
@@ -1494,6 +1564,7 @@ async function executeChain(
 				(item as any).model,
 				(item as any).tools,
 				stepTimeoutMs,
+				(item as any).artifact,
 			);
 		} finally {
 			// Always clean up the tool signal listener for this step.
@@ -1650,6 +1721,7 @@ async function executeStages(
 					(item as any).model,
 					(item as any).tools,
 					stepTimeoutMs,
+					(item as any).artifact,
 				);
 				allResults.push(result);
 
@@ -1694,6 +1766,12 @@ const TaskItem = Type.Object({
 	model: Type.Optional(Type.String({ description: "Model override for this worker (e.g. claude-haiku-4-5)." })),
 	tools: Type.Optional(
 		Type.Array(Type.String(), { description: 'Restrict tools for this worker (e.g. ["read", "grep"]).' }),
+	),
+	artifact: Type.Optional(
+		Type.String({
+			description:
+				"Path to an output file the worker must produce. The runner validates it exists and is non-empty after completion.",
+		}),
 	),
 });
 
@@ -1912,8 +1990,30 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 					let text = theme.fg("toolTitle", `${dMode} `) + theme.fg("accent", statusParts.join(", "));
 					if (aggLine) text += `\n${theme.fg("dim", aggLine)}`;
 					if (validationWarningsTotal > 0) {
-						const icon = validationHighCount > 0 ? "⚠" : "⚡";
-						text += `\n${theme.fg(validationHighCount > 0 ? "warning" : "muted", `${icon} ${validationWarningsTotal} output warning${validationWarningsTotal > 1 ? "s" : ""} (expand to review)`)}`;
+						if (validationHighCount > 0) {
+							// Surface high-severity warnings inline; don't hide behind Ctrl+O
+							const highWarnings: string[] = [];
+							for (const r of results) {
+								const v = (r as { validation?: ValidationResult }).validation;
+								if (v) {
+									for (const w of v.warnings) {
+										if (w.severity === "high") highWarnings.push(`[${r.workerId}] ${w.message}`);
+									}
+								}
+							}
+							text += `\n${theme.fg("warning", `⚠ ${validationHighCount} critical output warning${validationHighCount > 1 ? "s" : ""}:`)}`;
+							for (const hw of highWarnings.slice(0, 3)) {
+								text += `\n  ${theme.fg("warning", hw)}`;
+							}
+							if (highWarnings.length > 3) {
+								text += `\n  ${theme.fg("muted", `… +${highWarnings.length - 3} more (expand to review)`)}`;
+							}
+							if (validationWarningsTotal > validationHighCount) {
+								text += `\n  ${theme.fg("muted", `+${validationWarningsTotal - validationHighCount} lower-severity warnings (expand to review)`)}`;
+							}
+						} else {
+							text += `\n${theme.fg("muted", `⚡ ${validationWarningsTotal} output warning${validationWarningsTotal > 1 ? "s" : ""} (expand to review)`)}`;
+						}
 					}
 					text += `\n${theme.fg("muted", `logs: ${logDir}`)}`;
 					text += `\n${theme.fg("toolTitle", "▸ Press Ctrl+O to expand per-worker details")}`;
@@ -2117,10 +2217,14 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 				const childSessionId = `subagent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 				let spawnPointEntryId: string | undefined;
 				try {
+					// Use the shared session-dir encoder so the child session path matches
+					// exactly what the session manager persists (honoring a configured
+					// agent dir), letting the session tree cross-reference child sessions.
+					const childSessionPath = getDefaultSessionDirPath(ctx.cwd);
 					spawnPointEntryId = ctx.sessionManager.appendSpawnPoint(
 						childSessionId,
 						spawnPolicy,
-						undefined, // childSessionPath — child processes run detached for now
+						childSessionPath,
 						undefined, // runId — will be set below
 						"subagent swarm",
 					);
@@ -2329,6 +2433,9 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 							total: run.total,
 							done: run.done,
 							failed: run.failed,
+							aborted: run.aborted,
+							totalTokens: run.usage.totalTokens,
+							cost: run.usage.cost,
 						});
 					} catch {
 						// Best-effort: if merge fails, the tool result still contains
@@ -2368,7 +2475,16 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 						logDir,
 						results,
 					},
-					...(errors.length > 0 ? { isError: true } : {}),
+					// Mark as error if any explicit failures, or if ALL completed workers
+					// produced empty output (no final assistant text).
+					...(errors.length > 0 ||
+					(results.length > 0 &&
+						results.every((r) => {
+							const v = (r as { validation?: ValidationResult }).validation;
+							return v && v.warnings.some((w) => w.type === "empty_output");
+						}))
+						? { isError: true }
+						: {}),
 				};
 			},
 		}),
@@ -2409,3 +2525,12 @@ export function createHamrSubagentsExtension(
 	(factory as { [HAMR_SUBAGENTS_FACTORY]?: boolean })[HAMR_SUBAGENTS_FACTORY] = true;
 	return factory;
 }
+
+// ─── Test-only exports (not part of the public API) ──────────────────────────
+// Exposed so regression tests can verify correctness without spinning up
+// full child hamr processes.
+export const _testExports = {
+	pushEvent,
+	validateWorkerOutput,
+	createWorkerState,
+};
