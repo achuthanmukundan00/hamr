@@ -361,7 +361,9 @@ function modelToProviderModel(model, provider, providerId) {
         input: supportsVision ? ["text", "image"] : ["text"],
         cost: model.cost ?? builtin?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow,
-        maxTokens: modelMaxOutputTokens(model) ?? builtin?.maxTokens ?? (contextWindow > 0 ? Math.min(16384, contextWindow) : 16384),
+        maxTokens: modelMaxOutputTokens(model) ??
+            builtin?.maxTokens ??
+            (contextWindow > 0 ? Math.min(thinking ? 65536 : 16384, contextWindow) : thinking ? 65536 : 16384),
         compat: compatibility === "openai-compatible"
             ? {
                 supportsDeveloperRole: false,
