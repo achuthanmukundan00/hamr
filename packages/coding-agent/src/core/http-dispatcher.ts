@@ -80,6 +80,21 @@ export function warnProxyActive(proxy: string | undefined): void {
 	);
 }
 
+/**
+ * Exclude known provider hosts from the HTTP proxy so credentials and
+ * CF-Access headers are never forwarded to a proxy. Provider traffic
+ * to these hosts uses direct connections.
+ */
+export function excludeProvidersFromProxy(providerHosts: string[]): void {
+	if (providerHosts.length === 0) return;
+	const existing = process.env.NO_PROXY || process.env.no_proxy || "";
+	const hosts = providerHosts.join(",");
+	process.env.NO_PROXY = existing ? `${existing},${hosts}` : hosts;
+	if (process.env.no_proxy !== undefined) {
+		process.env.no_proxy = process.env.NO_PROXY;
+	}
+}
+
 export function applyHttpProxySettings(httpProxy: string | undefined): void {
 	const proxy = validateProxyUrl(httpProxy);
 	if (!proxy) return;

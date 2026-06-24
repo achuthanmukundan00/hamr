@@ -22,6 +22,14 @@ export interface PathGuardOptions {
 	enabled?: boolean;
 	/** Extra absolute paths (or globs anchored at home/cwd) to allow despite the denylist. */
 	allowedPaths?: string[];
+	/**
+	 * When true, enforce strict cwd-based sandboxing: all file operations are
+	 * confined to paths within the cwd. This is opt-in (default false) because
+	 * hamr agents legitimately operate across repo boundaries (dependencies,
+	 * system config, etc.). The denylist-based PathGuard remains the primary
+	 * security boundary.
+	 */
+	strictCwd?: string;
 }
 
 /**
@@ -92,6 +100,16 @@ const DENIED_READ_FILES = [
 	join(HOME, ".config", "hamr", "auth.json"),
 	join(HOME, ".hamr", "auth.json"),
 	join(HOME, ".netrc"),
+	join(HOME, ".bash_history"),
+	join(HOME, ".zsh_history"),
+	join(HOME, ".zhistory"),
+	join(HOME, ".mysql_history"),
+	join(HOME, ".psql_history"),
+	join(HOME, ".python_history"),
+	join(HOME, ".node_repl_history"),
+	join(HOME, ".npm", "_cacache"),
+	join(HOME, ".docker", "config.json"),
+	join(HOME, ".kube", "config"),
 ];
 
 /** Private-key basenames denied for reads anywhere under ~/.ssh. */
@@ -132,10 +150,21 @@ function normalizeForCompare(p: string): string {
 export class PathGuard {
 	readonly enabled: boolean;
 	private readonly allowed: string[];
+	private readonly strictCwd: string | undefined;
 
 	constructor(options?: PathGuardOptions) {
 		this.enabled = options?.enabled ?? true;
 		this.allowed = (options?.allowedPaths ?? []).map(normalizeForCompare);
+		this.strictCwd = options?.strictCwd ? normalizeForCompare(options.strictCwd) : undefined;
+	}
+
+	/**
+	 * Returns true if the candidate path is NOT within the strict cwd (if set).
+	 * When strictCwd is undefined, this always returns false (no restriction).
+	 */
+	private isOutsideStrictCwd(candidate: string): boolean {
+		if (!this.strictCwd) return false;
+		return !isInside(candidate, this.strictCwd);
 	}
 
 	private isExplicitlyAllowed(candidate: string): boolean {
@@ -207,12 +236,26 @@ export class PathGuard {
 
 	/** Assert a write target is allowed, throwing with a clear message if not. */
 	assertWritable(absolutePath: string): void {
+		if (this.isOutsideStrictCwd(absolutePath)) {
+			throw new PathGuardError(
+				`Path '${absolutePath}' is outside the sandbox cwd '${this.strictCwd}'. Strict path sandbox is enabled.`,
+				absolutePath,
+				"write",
+			);
+		}
 		const reason = this.deniedWriteReason(absolutePath);
 		if (reason) throw new PathGuardError(reason, absolutePath, "write");
 	}
 
 	/** Assert a read target is allowed, throwing with a clear message if not. */
 	assertReadable(absolutePath: string): void {
+		if (this.isOutsideStrictCwd(absolutePath)) {
+			throw new PathGuardError(
+				`Path '${absolutePath}' is outside the sandbox cwd '${this.strictCwd}'. Strict path sandbox is enabled.`,
+				absolutePath,
+				"read",
+			);
+		}
 		const reason = this.deniedReadReason(absolutePath);
 		if (reason) throw new PathGuardError(reason, absolutePath, "read");
 	}

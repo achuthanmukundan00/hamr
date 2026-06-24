@@ -18,11 +18,25 @@ export interface PathGuardOptions {
     enabled?: boolean;
     /** Extra absolute paths (or globs anchored at home/cwd) to allow despite the denylist. */
     allowedPaths?: string[];
+    /**
+     * When true, enforce strict cwd-based sandboxing: all file operations are
+     * confined to paths within the cwd. This is opt-in (default false) because
+     * hamr agents legitimately operate across repo boundaries (dependencies,
+     * system config, etc.). The denylist-based PathGuard remains the primary
+     * security boundary.
+     */
+    strictCwd?: string;
 }
 export declare class PathGuard {
     readonly enabled: boolean;
     private readonly allowed;
+    private readonly strictCwd;
     constructor(options?: PathGuardOptions);
+    /**
+     * Returns true if the candidate path is NOT within the strict cwd (if set).
+     * When strictCwd is undefined, this always returns false (no restriction).
+     */
+    private isOutsideStrictCwd;
     private isExplicitlyAllowed;
     /**
      * Returns a denial reason if the write/edit target is forbidden, or
