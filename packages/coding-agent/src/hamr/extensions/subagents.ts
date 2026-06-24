@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Usage } from "@hamr/ai";
-import { type Component, Container, Markdown, Spacer, Text, type TUI } from "@hamr/tui";
+import { type Component, Container, Markdown, Spacer, Text, type TUI, truncateToWidth } from "@hamr/tui";
 import { Type } from "typebox";
 import type { ExtensionContext, ExtensionFactory } from "../../core/extensions/types.ts";
 import { defineTool } from "../../core/extensions/types.ts";
@@ -40,7 +40,6 @@ import { isCloudProvider, loadHamrStartupConfig } from "../startup-config.ts";
 const ENV_MAX_TASKS = Number.parseInt(process.env.HAMR_SUBAGENT_MAX_TASKS ?? "64", 10) || 64;
 const ENV_HARD_MAX_TASKS = Number.parseInt(process.env.HAMR_SUBAGENT_HARD_MAX_TASKS ?? "256", 10) || 256;
 const ENV_MAX_CONCURRENCY = Number.parseInt(process.env.HAMR_SUBAGENT_MAX_CONCURRENCY ?? "64", 10) || 64;
-const ENV_MAX_LOCAL_CONCURRENCY = Number.parseInt(process.env.HAMR_SUBAGENT_MAX_LOCAL_CONCURRENCY ?? "1", 10) || 1;
 /** Global budget cap across the entire recursive subagent tree. */
 const ENV_TOTAL_BUDGET = Number.parseInt(process.env.HAMR_SUBAGENT_BUDGET ?? "1024", 10) || 1024;
 /** Env var passed to child processes with the remaining budget for their subtree. */
@@ -190,6 +189,15 @@ function formatTokens(tokens: number): string {
 	if (tokens >= 10_000) return `${Math.round(tokens / 1000)}K`;
 	if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
 	return `${tokens}`;
+}
+
+/** Deep-clone a value via JSON round-trip. Returns the original on failure (BigInt, circular refs). */
+function safeJsonClone<T>(value: T): T {
+	try {
+		return JSON.parse(JSON.stringify(value));
+	} catch {
+		return value;
+	}
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -349,9 +357,11 @@ class AgentStatusWidget implements Component {
 		}, 180);
 	}
 
-	render(): string[] {
+	render(width: number): string[] {
 		const line = renderStatusLine() ?? this.lastLine;
-		return line ? [` ${this.theme.fg("muted", line)}`] : [];
+		if (!line) return [];
+		const colored = ` ${this.theme.fg("muted", line)}`;
+		return [truncateToWidth(colored, width)];
 	}
 
 	invalidate(): void {}
@@ -1205,7 +1215,7 @@ async function executeSingleWorker(
 				modelCost: ctx.model.cost ? { ...ctx.model.cost } : undefined,
 				modelHeaders: ctx.model.headers ? { ...ctx.model.headers } : undefined,
 				modelThinkingLevelMap: ctx.model.thinkingLevelMap ? { ...ctx.model.thinkingLevelMap } : undefined,
-				modelCompat: ctx.model.compat ? JSON.parse(JSON.stringify(ctx.model.compat)) : undefined,
+				modelCompat: ctx.model.compat ? (safeJsonClone(ctx.model.compat) as Record<string, unknown>) : undefined,
 				toolNames: workerTools ?? [],
 				systemPrompt: ctx.getSystemPrompt(),
 				cwd: ctx.cwd,
@@ -1916,13 +1926,8 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 				for (let i = 0; i < displayCount; i++) {
 					const itemTools = (items[i] as Record<string, unknown>)?.tools as string[] | undefined;
 					const isFastPath = isBashFastPathTools(itemTools);
-					const modeIndicator =
-						itemTools !== undefined
-							? isFastPath
-								? theme.fg("success", " ⚡bash")
-								: theme.fg("muted", " 🤖agent")
-							: "";
-					const preview = items[i]!.task.length > 50 ? `${items[i]!.task.slice(0, 50)}…` : items[i]!.task;
+					const modeIndicator = isFastPath ? theme.fg("success", " ⚡bash") : "";
+					const preview = items[i]!.task.length > 80 ? `${items[i]!.task.slice(0, 80)}…` : items[i]!.task;
 					text += `\n  ${theme.fg("muted", `${i + 1}.`)} ${theme.fg("dim", preview)}${modeIndicator}`;
 				}
 				if (!context.expanded && items.length > 3) text += `\n  ${theme.fg("muted", `… +${items.length - 3} more`)}`;
@@ -2069,7 +2074,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 						const modelStr = done.model ? ` ${fg("muted", done.model)}` : "";
 						container.addChild(
 							new Text(
-								`  ${fg("success", "✓")} [${padWorkerId(idx, results.length)}] ${fg("dim", done.task.slice(0, 50))}${modelStr}${fg("muted", usageStr)}`,
+								`  ${fg("success", "✓")} [${padWorkerId(idx, results.length)}] ${fg("dim", done.task.slice(0, 80))}${modelStr}${fg("muted", usageStr)}`,
 								0,
 								0,
 							),
@@ -2156,7 +2161,27 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 				// Determine concurrency: cloud providers get ENV_MAX_CONCURRENCY (64), local/relay capped at 1
 				const config = loadHamrStartupConfig(ctx.cwd);
 				const isCloud = ctx.model?.provider ? isCloudProvider(config, ctx.model.provider) : true;
-				const maxConcurrency = isCloud ? ENV_MAX_CONCURRENCY : ENV_MAX_LOCAL_CONCURRENCY;
+
+				// Block non-cloud providers (relay, local endpoints) from dispatching subagents.
+				// Relay models cannot inherit the parent's model config because the child
+				// config serialization depends on cloud-provider auth flows, and relay
+				// endpoints serve dynamic model lists that may not include the parent's model.
+				if (!isCloud) {
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									`Relay/local provider "${ctx.model?.provider}" cannot dispatch subagents. ` +
+									"Switch to a cloud provider (Anthropic, OpenAI, etc.) or set `cloud = true` " +
+									"for this provider in your .hamr.toml to use delegate_subagents.",
+							},
+						],
+						details: {},
+					};
+				}
+
+				const maxConcurrency = ENV_MAX_CONCURRENCY;
 				const concurrency = clamp(params.concurrency ?? ENV_MAX_CONCURRENCY, 1, maxConcurrency);
 				const failFast = params.failFast ?? false;
 				const observe = (params.observe as string | undefined) ?? "compact";

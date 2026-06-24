@@ -1,5 +1,5 @@
 import type { Component, TUI } from "@hamr/tui";
-import { Key } from "@hamr/tui";
+import { Key, truncateToWidth, visibleWidth } from "@hamr/tui";
 import type { ExtensionAPI, ExtensionContext } from "../core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../core/footer-data-provider.ts";
 import type { Theme } from "../modes/interactive/theme/theme.ts";
@@ -52,7 +52,7 @@ class PersistentFooterComponent implements Component {
 				statsLine = `${modelColorAnsi}${modelName}${modelReset} ${th.fg("dim", `| ${pct}/${windowStr}`)}`;
 			}
 		} catch {}
-		lines.push(statsLine.length > visibleWidth(statsLine) ? statsLine.slice(0, width) : statsLine);
+		lines.push(truncateToWidth(statsLine, width));
 
 		const extensionStatuses = this.footerData.getExtensionStatuses();
 		if (extensionStatuses.size > 0) {
@@ -60,26 +60,11 @@ class PersistentFooterComponent implements Component {
 				.sort((a, b) => a[0].localeCompare(b[0]))
 				.map((entry) => entry[1]);
 			const statusLine = sortedStatuses.join(" ");
-			lines.push(statusLine.length > width ? statusLine.slice(0, width) : statusLine);
+			lines.push(truncateToWidth(statusLine, width));
 		}
 
 		return lines;
 	}
-}
-
-function visibleWidth(s: string): number {
-	let width = 0;
-	let inEscape = false;
-	for (let i = 0; i < s.length; i++) {
-		if (inEscape) {
-			if (s[i] === "m") inEscape = false;
-		} else if (s[i] === "\x1b") {
-			inEscape = true;
-		} else {
-			width++;
-		}
-	}
-	return width;
 }
 
 export function createPersistentEditorExtension(): (pi: ExtensionAPI) => void {

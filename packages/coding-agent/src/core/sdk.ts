@@ -267,7 +267,8 @@ async function createAgentSessionFromChildConfig(
 	const sessionManager = options.sessionManager ?? SessionManager.inMemory(cwd);
 
 	// ── Build the model from the parent config ────────────────────────────
-	const model: Model<any> | undefined = options.model ?? buildModelFromChildConfig(config);
+	const childModel = buildModelFromChildConfig(config);
+	const model: Model<any> | undefined = childModel ?? options.model;
 
 	// ── Thinking level ────────────────────────────────────────────────────
 	let thinkingLevel = options.thinkingLevel ?? DEFAULT_THINKING_LEVEL;

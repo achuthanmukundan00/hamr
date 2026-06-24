@@ -414,7 +414,7 @@ function buildSessionOptions(
 		}
 	}
 
-	if (!options.model && scopedModels.length > 0 && !hasExistingSession) {
+	if (!options.model && scopedModels.length > 0 && !hasExistingSession && !process.env.HAMR_CHILD_CONFIG) {
 		// Check if saved default is in scoped models - use it if so, otherwise first scoped model
 		const savedProvider = settingsManager.getDefaultProvider();
 		const savedModelId = settingsManager.getDefaultModel();

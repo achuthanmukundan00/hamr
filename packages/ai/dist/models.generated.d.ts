@@ -6092,6 +6092,26 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "Qwen/Qwen3.6-27B": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            compat: {
+                supportsDeveloperRole: false;
+            };
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "Qwen/Qwen3.6-35B-A3B": {
             id: string;
             name: string;
@@ -6113,6 +6133,26 @@ export declare const MODELS: {
             maxTokens: number;
         };
         readonly "XiaomiMiMo/MiMo-V2-Flash": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            compat: {
+                supportsDeveloperRole: false;
+            };
+            reasoning: true;
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "XiaomiMiMo/MiMo-V2.5-Pro": {
             id: string;
             name: string;
             api: "openai-completions";
@@ -6423,6 +6463,26 @@ export declare const MODELS: {
             };
             reasoning: true;
             input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "stepfun-ai/Step-3.7-Flash": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            compat: {
+                supportsDeveloperRole: false;
+            };
+            reasoning: true;
+            input: ("image" | "text")[];
             cost: {
                 input: number;
                 output: number;
