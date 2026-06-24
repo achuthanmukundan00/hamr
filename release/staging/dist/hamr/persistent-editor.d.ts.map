@@ -1,1 +1,1 @@
-{"version":3,"file":"persistent-editor.d.ts","sourceRoot":"","sources":["../../src/hamr/persistent-editor.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,YAAY,EAAoB,MAAM,6BAA6B,CAAC;AAkFlF,wBAAgB,+BAA+B,IAAI,CAAC,EAAE,EAAE,YAAY,KAAK,IAAI,CAwC5E"}
+{"version":3,"file":"persistent-editor.d.ts","sourceRoot":"","sources":["../../src/hamr/persistent-editor.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,YAAY,EAAoB,MAAM,6BAA6B,CAAC;AAmElF,wBAAgB,+BAA+B,IAAI,CAAC,EAAE,EAAE,YAAY,KAAK,IAAI,CAwC5E"}

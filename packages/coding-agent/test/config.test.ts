@@ -175,8 +175,8 @@ describe("detectInstallMethod", () => {
 		expect(detectInstallMethod()).toBe("npm");
 		expect(command).toEqual({
 			command: "npm",
-			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@hamr/coding-agent"],
-			display: `npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @hamr/coding-agent`,
+			args: ["--prefix", prefix, "install", "--ignore-scripts", "--min-release-age=0", "@hamr/coding-agent"],
+			display: `npm --prefix ${prefix} install --ignore-scripts --min-release-age=0 @hamr/coding-agent`,
 		});
 	});
 
@@ -187,8 +187,8 @@ describe("detectInstallMethod", () => {
 
 		expect(command).toEqual({
 			command: "npm",
-			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
-			display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent && npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/pi`,
+			args: ["--prefix", prefix, "install", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
+			display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent && npm --prefix ${prefix} install --ignore-scripts --min-release-age=0 @new-scope/pi`,
 			steps: [
 				{
 					command: "npm",
@@ -197,8 +197,8 @@ describe("detectInstallMethod", () => {
 				},
 				{
 					command: "npm",
-					args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
-					display: `npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/pi`,
+					args: ["--prefix", prefix, "install", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
+					display: `npm --prefix ${prefix} install --ignore-scripts --min-release-age=0 @new-scope/pi`,
 				},
 			],
 		});
@@ -225,7 +225,6 @@ describe("detectInstallMethod", () => {
 			"--prefix",
 			prefix,
 			"install",
-			"-g",
 			"--ignore-scripts",
 			"--min-release-age=0",
 			"@hamr/coding-agent",
@@ -238,7 +237,7 @@ describe("detectInstallMethod", () => {
 		const command = getSelfUpdateCommand("@hamr/coding-agent");
 
 		expect(command?.display).toBe(
-			`npm --prefix "${prefix}" install -g --ignore-scripts --min-release-age=0 @hamr/coding-agent`,
+			`npm --prefix "${prefix}" install --ignore-scripts --min-release-age=0 @hamr/coding-agent`,
 		);
 	});
 

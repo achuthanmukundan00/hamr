@@ -3017,7 +3017,7 @@ export class InteractiveMode {
             this.ui.stop();
         }
         catch { }
-        console.error("pi exiting due to uncaughtException:");
+        console.error("hamr exiting due to uncaughtException:");
         console.error(error);
         process.exit(1);
     }

@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.6.4] - 2026-06-24
+
+### Added
+
+- **3 new HuggingFace models in the registry.** Qwen3.6-27B, MiMo-V2.5-Pro, Step-3.7-Flash added with full capability descriptors (context window, reasoning, thinking levels, pricing).
+
+### Fixed
+
+- **Subagent model inheritance: child processes now use the parent's model instead of falling back to a relay default.** The root cause was a priority bug in `createAgentSessionFromChildConfig` where `options.model` (resolved from `scopedModels[0]` in `buildSessionOptions`) overrode the parent-serialized `HamrChildConfig` model. Every subagent spawned without an explicit `--model` flag would pick the first relay-discovered model regardless of what the parent was using. Fixed by (a) giving the child config model priority over `options.model` in `createAgentSessionFromChildConfig`, and (b) skipping default model resolution in `buildSessionOptions` when `HAMR_CHILD_CONFIG` is set.
+- **Non-cloud providers are now blocked from dispatching parallel subagents.** Relay and local endpoints cannot support child-process model inheritance yet, so `delegate_subagents` now returns a clear error ("Relay/local provider cannot dispatch subagents") instead of silently spawning workers that fall back to whatever model the relay endpoint discovers first.
+- **Robust `parentConfig` serialization.** The `modelCompat` field in the child config uses `safeJsonClone` (graceful fallback on BigInt/circular-ref serialization failures) instead of a bare `JSON.parse(JSON.stringify(...))` that could silently drop the entire parent config payload.
+- **Removed dead `ENV_MAX_LOCAL_CONCURRENCY`.** The non-cloud guard makes the per-provider concurrency cap redundant — cloud providers always use `ENV_MAX_CONCURRENCY` and non-cloud providers are blocked before reaching the concurrency limiter.
+- **Interactive mode: truncated status lines.** The subagent status widget and persistent editor footer now use `truncateToWidth` from `@hamr/tui` instead of naive `slice(0, width)` which could break ANSI sequences. Removed the local `visibleWidth` helper in `persistent-editor.ts`.
+
+### Changed
+
+- **Footer model display simplified.** The model name in the footer bar now always shows the parenthesized provider prefix (`(DeepSeek) deepseek-v4-pro`) instead of a compact provider-slash form. The "Working..." status text was shortened to "Working".
+- **Pricing and max-tokens adjustments.** Claude Opus 4.7 cache-read cost corrected from 0.49 to 0.182 and max-tokens to 4096 (OpenRouter's Chat Completions API returns short reasoning). Qwen3.5 7B tuned to 0.05 cache-read and 81,920 max-tokens. MiniMax M2 cache-read set to 0.6/MTok to match OpenRouter's current rates.
+- **Branding: pi→hamr in error/crash/log paths.** `PI_DEBUG_REDRAW` → `HAMR_DEBUG_REDRAW`, crash logs moved from `.pi/` to `.hamr/`, uncaught-exception message corrected from "pi exiting" to "hamr exiting".
+
 ## [0.6.3] - 2026-06-24
 
 ### Added

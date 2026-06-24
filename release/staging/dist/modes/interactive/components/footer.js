@@ -188,7 +188,7 @@ export class FooterComponent {
         this.animationTimer = undefined;
     }
     renderActivityText() {
-        const text = this.session.isStreaming ? "Working..." : "Idle";
+        const text = this.session.isStreaming ? "Working" : "Idle";
         if (!this.isAnimating())
             return theme.fg("dim", text);
         if (this.isMaxThinking()) {
@@ -274,11 +274,9 @@ export class FooterComponent {
         if ((usage.totalCacheRead > 0 || usage.totalCacheWrite > 0) && usage.latestCacheHitRate !== undefined) {
             parts.push(theme.fg("dim", `CH${usage.latestCacheHitRate.toFixed(1)}%`));
         }
-        // Model — compact: provider/ glyph name thinking
+        // Model
         if (state.model) {
-            const providerTag = compact
-                ? theme.fg("muted", `${state.model.provider}/`)
-                : theme.fg("muted", `(${providerDisplayName(state.model.provider)}) `);
+            const providerTag = theme.fg("muted", `(${providerDisplayName(state.model.provider)}) `);
             const glyph = theme.modelGlyph(state.model.provider, state.model.name ?? state.model.id);
             const modelName = state.model.name || state.model.id;
             const modelBrandAnsi = theme.modelColor(state.model.provider, modelName);
