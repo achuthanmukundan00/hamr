@@ -28,7 +28,7 @@ import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
 import { AuthStorage } from "./core/auth-storage.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { ExtensionFactory } from "./core/extensions/types.ts";
-import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
+import { applyHttpProxySettings, configureHttpDispatcher, excludeProvidersFromProxy } from "./core/http-dispatcher.ts";
 import type { ModelRegistry } from "./core/model-registry.ts";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
@@ -778,6 +778,26 @@ export async function main(args: string[], options?: MainOptions) {
 	time("createAgentSessionRuntime");
 	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRegistry, resourceLoader } = services;
+
+	// Exclude known provider hosts from the HTTP proxy so credentials and
+	// CF-Access headers are never forwarded to an intermediate proxy.
+	// Provider traffic always uses direct connections.
+	const providerHosts = [
+		...new Set(
+			modelRegistry
+				.getAll()
+				.map((m) => {
+					try {
+						return new URL(m.baseUrl).hostname;
+					} catch {
+						return undefined;
+					}
+				})
+				.filter(Boolean) as string[],
+		),
+	];
+	excludeProvidersFromProxy(providerHosts);
+
 	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
 
