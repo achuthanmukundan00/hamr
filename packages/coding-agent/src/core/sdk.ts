@@ -117,7 +117,10 @@ function buildModelFromChildConfig(config: HamrChildConfig): Model<any> | undefi
 		input: (config.modelInput as ("text" | "image")[]) ?? ["text"],
 		cost: config.modelCost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: config.modelContextWindow ?? 200000,
-		maxTokens: config.modelMaxTokens ?? 16384,
+		// Clamp the reasoning/non-reasoning default to the context window so a model
+		// with a small context never advertises a maxTokens larger than it accepts.
+		maxTokens:
+			config.modelMaxTokens ?? Math.min(config.modelReasoning ? 65536 : 16384, config.modelContextWindow ?? 200000),
 		headers: config.modelHeaders,
 		compat: config.modelCompat as Model<any>["compat"],
 	};
