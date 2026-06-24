@@ -115,7 +115,9 @@ function getSelfUpdateCommandForMethod(method, installedPackageName, updatePacka
             const installStep = makeSelfUpdateCommandStep(command, [
                 ...prefixArgs,
                 "install",
-                "-g",
+                // -g overrides --prefix in npm, so when --prefix is explicitly set
+                // for a specific prefix (Homebrew, custom), omit -g.
+                ...(inferred ? [] : ["-g"]),
                 "--ignore-scripts",
                 "--min-release-age=0",
                 updatePackageName,
