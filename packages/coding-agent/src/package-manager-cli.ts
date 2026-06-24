@@ -393,7 +393,9 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
  */
 function checkPostUpdateVersion(): void {
 	try {
-		const child = spawnProcess(process.execPath, ["--version"], { stdio: "pipe" });
+		const cliPath = process.argv[1];
+		if (!cliPath) return;
+		const child = spawnProcess(process.execPath, [cliPath, "--version"], { stdio: "pipe" });
 		let output = "";
 		child.stdout?.on("data", (data: Buffer) => {
 			output += data.toString();
