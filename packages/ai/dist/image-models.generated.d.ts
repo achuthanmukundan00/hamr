@@ -210,6 +210,51 @@ export declare const IMAGE_MODELS: {
                 cacheWrite: number;
             };
         };
+        readonly "openai/gpt-image-1": {
+            id: string;
+            name: string;
+            api: "openrouter-images";
+            provider: string;
+            baseUrl: string;
+            input: ("image" | "text")[];
+            output: "image"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+        };
+        readonly "openai/gpt-image-1-mini": {
+            id: string;
+            name: string;
+            api: "openrouter-images";
+            provider: string;
+            baseUrl: string;
+            input: ("image" | "text")[];
+            output: "image"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+        };
+        readonly "openai/gpt-image-2": {
+            id: string;
+            name: string;
+            api: "openrouter-images";
+            provider: string;
+            baseUrl: string;
+            input: ("image" | "text")[];
+            output: "image"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+        };
         readonly "openrouter/auto": {
             id: string;
             name: string;
