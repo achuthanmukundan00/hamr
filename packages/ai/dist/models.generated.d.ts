@@ -14284,6 +14284,23 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "sakana/fugu-ultra": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "sao10k/l3.1-euryale-70b": {
             id: string;
             name: string;
@@ -15499,7 +15516,7 @@ export declare const MODELS: {
             api: "anthropic-messages";
             provider: string;
             baseUrl: string;
-            reasoning: true;
+            reasoning: false;
             input: "text"[];
             cost: {
                 input: number;
@@ -15516,7 +15533,7 @@ export declare const MODELS: {
             api: "anthropic-messages";
             provider: string;
             baseUrl: string;
-            reasoning: true;
+            reasoning: false;
             input: "text"[];
             cost: {
                 input: number;
@@ -15533,7 +15550,7 @@ export declare const MODELS: {
             api: "anthropic-messages";
             provider: string;
             baseUrl: string;
-            reasoning: true;
+            reasoning: false;
             input: "text"[];
             cost: {
                 input: number;
@@ -15637,6 +15654,40 @@ export declare const MODELS: {
             baseUrl: string;
             reasoning: true;
             input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "alibaba/qwen3-vl-235b-a22b-instruct": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: false;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "alibaba/qwen3-vl-instruct": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: false;
+            input: ("image" | "text")[];
             cost: {
                 input: number;
                 output: number;
@@ -15755,6 +15806,74 @@ export declare const MODELS: {
             provider: string;
             baseUrl: string;
             reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "amazon/nova-2-lite": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "amazon/nova-lite": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: false;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "amazon/nova-micro": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: false;
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "amazon/nova-pro": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: false;
             input: ("image" | "text")[];
             cost: {
                 input: number;
@@ -16026,6 +16145,23 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "arcee-ai/trinity-mini": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: false;
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "bytedance/seed-1.6": {
             id: string;
             name: string;
@@ -16033,7 +16169,24 @@ export declare const MODELS: {
             provider: string;
             baseUrl: string;
             reasoning: true;
-            input: "text"[];
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "bytedance/seed-1.8": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
             cost: {
                 input: number;
                 output: number;
@@ -16134,8 +16287,8 @@ export declare const MODELS: {
             api: "anthropic-messages";
             provider: string;
             baseUrl: string;
-            reasoning: true;
-            input: ("image" | "text")[];
+            reasoning: false;
+            input: "text"[];
             cost: {
                 input: number;
                 output: number;
@@ -16152,7 +16305,7 @@ export declare const MODELS: {
             provider: string;
             baseUrl: string;
             reasoning: true;
-            input: ("image" | "text")[];
+            input: "text"[];
             cost: {
                 input: number;
                 output: number;
@@ -16169,7 +16322,7 @@ export declare const MODELS: {
             provider: string;
             baseUrl: string;
             reasoning: true;
-            input: ("image" | "text")[];
+            input: "text"[];
             cost: {
                 input: number;
                 output: number;
@@ -16372,7 +16525,7 @@ export declare const MODELS: {
             api: "anthropic-messages";
             provider: string;
             baseUrl: string;
-            reasoning: false;
+            reasoning: true;
             input: ("image" | "text")[];
             cost: {
                 input: number;
@@ -16417,6 +16570,40 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "interfaze/interfaze-beta": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "kwaipilot/kat-coder-pro-v1": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: false;
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "kwaipilot/kat-coder-pro-v2": {
             id: string;
             name: string;
@@ -16441,6 +16628,23 @@ export declare const MODELS: {
             provider: string;
             baseUrl: string;
             reasoning: false;
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "meituan/longcat-flash-thinking-2601": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
             input: "text"[];
             cost: {
                 input: number;
@@ -16764,7 +16968,58 @@ export declare const MODELS: {
             provider: string;
             baseUrl: string;
             reasoning: false;
-            input: "text"[];
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "mistral/magistral-medium": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "mistral/magistral-small": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "mistral/ministral-14b": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: false;
+            input: ("image" | "text")[];
             cost: {
                 input: number;
                 output: number;
@@ -16808,6 +17063,23 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "mistral/mistral-large-3": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: false;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "mistral/mistral-medium": {
             id: string;
             name: string;
@@ -16832,7 +17104,7 @@ export declare const MODELS: {
             provider: string;
             baseUrl: string;
             reasoning: true;
-            input: "text"[];
+            input: ("image" | "text")[];
             cost: {
                 input: number;
                 output: number;
@@ -17012,6 +17284,23 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "nvidia/nemotron-3-nano-30b-a3b": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "nvidia/nemotron-3-super-120b-a12b": {
             id: string;
             name: string;
@@ -17070,6 +17359,23 @@ export declare const MODELS: {
             provider: string;
             baseUrl: string;
             reasoning: true;
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "openai/gpt-3.5-turbo": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: false;
             input: "text"[];
             cost: {
                 input: number;
@@ -17205,7 +17511,7 @@ export declare const MODELS: {
             api: "anthropic-messages";
             provider: string;
             baseUrl: string;
-            reasoning: true;
+            reasoning: false;
             input: ("image" | "text")[];
             cost: {
                 input: number;
@@ -17341,7 +17647,7 @@ export declare const MODELS: {
             api: "anthropic-messages";
             provider: string;
             baseUrl: string;
-            reasoning: true;
+            reasoning: false;
             input: ("image" | "text")[];
             cost: {
                 input: number;
@@ -17395,7 +17701,7 @@ export declare const MODELS: {
             api: "anthropic-messages";
             provider: string;
             baseUrl: string;
-            reasoning: true;
+            reasoning: false;
             thinkingLevelMap: {
                 xhigh: string;
             };
@@ -17455,7 +17761,7 @@ export declare const MODELS: {
             api: "anthropic-messages";
             provider: string;
             baseUrl: string;
-            reasoning: true;
+            reasoning: false;
             thinkingLevelMap: {
                 xhigh: string;
             };
@@ -17765,40 +18071,6 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
-        readonly "perplexity/sonar": {
-            id: string;
-            name: string;
-            api: "anthropic-messages";
-            provider: string;
-            baseUrl: string;
-            reasoning: false;
-            input: ("image" | "text")[];
-            cost: {
-                input: number;
-                output: number;
-                cacheRead: number;
-                cacheWrite: number;
-            };
-            contextWindow: number;
-            maxTokens: number;
-        };
-        readonly "perplexity/sonar-pro": {
-            id: string;
-            name: string;
-            api: "anthropic-messages";
-            provider: string;
-            baseUrl: string;
-            reasoning: false;
-            input: ("image" | "text")[];
-            cost: {
-                input: number;
-                output: number;
-                cacheRead: number;
-                cacheWrite: number;
-            };
-            contextWindow: number;
-            maxTokens: number;
-        };
         readonly "sakana/fugu-ultra": {
             id: string;
             name: string;
@@ -18078,7 +18350,7 @@ export declare const MODELS: {
             provider: string;
             baseUrl: string;
             reasoning: true;
-            input: ("image" | "text")[];
+            input: "text"[];
             cost: {
                 input: number;
                 output: number;
@@ -18282,7 +18554,7 @@ export declare const MODELS: {
             provider: string;
             baseUrl: string;
             reasoning: true;
-            input: ("image" | "text")[];
+            input: "text"[];
             cost: {
                 input: number;
                 output: number;
@@ -18293,6 +18565,23 @@ export declare const MODELS: {
             maxTokens: number;
         };
         readonly "zai/glm-5.2": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "zai/glm-5.2-fast": {
             id: string;
             name: string;
             api: "anthropic-messages";
