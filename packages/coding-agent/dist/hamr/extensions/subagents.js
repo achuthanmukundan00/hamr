@@ -20,6 +20,7 @@ import * as path from "node:path";
 import { Container, Markdown, Spacer, Text } from "@hamr/tui";
 import { Type } from "typebox";
 import { defineTool } from "../../core/extensions/types.js";
+import { getDefaultSessionDirPath } from "../../core/session-manager.js";
 import { getMarkdownTheme } from "../../modes/interactive/theme/theme.js";
 import { killProcessTree, killTrackedDetachedChildren, trackDetachedChildPid, untrackDetachedChildPid, } from "../../utils/shell.js";
 import { isCloudProvider, loadHamrStartupConfig } from "../startup-config.js";
@@ -283,10 +284,11 @@ function ensureLogDir(runId, cwd) {
     }
     return base;
 }
-function appendNDJSON(filePath, events) {
+function appendNDJSON(filePath, lines) {
     try {
-        const lines = events.map((e) => `${JSON.stringify({ ts: e.ts, type: e.type, data: e.data })}\n`).join("");
-        fs.appendFileSync(filePath, lines, "utf-8");
+        // Event logs can carry tool I/O and file contents — keep them owner-only
+        // (matches the 0o600 result files), not the default world-readable mode.
+        fs.appendFileSync(filePath, lines.join(""), { encoding: "utf-8", mode: 0o600 });
     }
     catch {
         // best-effort
@@ -832,8 +834,11 @@ function createWorkerState(workerId, task, cwd, logPath) {
     };
 }
 function pushEvent(ws, event) {
+    // One timestamp shared by the in-memory preview and the on-disk record.
+    const ts = Date.now();
+    // Truncated in-memory preview (ring buffer, UI only).
     const entry = {
-        ts: Date.now(),
+        ts,
         type: event.type ?? "unknown",
         data: JSON.stringify(event).slice(0, 256),
     };
@@ -863,8 +868,9 @@ function pushEvent(ws, event) {
             }
         }
     }
-    // Incremental disk flush: buffer events and write every N events or on interval.
-    ws.pendingFlush.push(entry);
+    // Incremental disk flush: store full event JSON for forensic replay.
+    // Only the in-memory recentEvents ring buffer is truncated.
+    ws.pendingFlush.push(`${JSON.stringify({ ts, type: event.type ?? "unknown", data: event })}\n`);
     if (ws.pendingFlush.length >= FLUSH_BATCH_SIZE) {
         flushPendingEvents(ws);
     }
@@ -945,7 +951,7 @@ function accumulateCost(run, usage) {
     };
 }
 // ─── Core execution ──────────────────────────────────────────────────────────
-async function executeSingleWorker(run, workerId, task, cwd, signal, _onUpdate, ctx, workerModel, workerTools, stepTimeoutMs) {
+async function executeSingleWorker(run, workerId, task, cwd, signal, _onUpdate, ctx, workerModel, workerTools, stepTimeoutMs, workerArtifact) {
     const logPath = path.join(run.logDir, "workers", `${workerId}.events.ndjson`);
     const resultPath = path.join(run.logDir, "workers", `${workerId}.final.md`);
     let ws = run.workers.get(workerId) ?? createWorkerState(workerId, task, cwd, logPath);
@@ -1074,12 +1080,74 @@ async function executeSingleWorker(run, workerId, task, cwd, signal, _onUpdate, 
             updateStatusWidget(ctx);
             return result;
         }
+        // Require a non-empty final assistant text.  If the worker only produced
+        // thinking events (thinking_start / thinking_delta / thinking_end) but no
+        // final assistant message, treat it as a failure.
+        if (!result.text || result.text.trim().length === 0) {
+            ws.errorMessage = "Worker produced no final assistant text (only thinking events or empty response).";
+            ws.endedAt = Date.now();
+            flushWorkerLog(ws);
+            run.workers.set(workerId, ws);
+            transition(run, ws, "failed", ws.usage.totalTokens);
+            accumulateCost(run, ws.usage);
+            updateStatusWidget(ctx);
+            return {
+                status: "failed",
+                workerId,
+                task,
+                text: "",
+                error: ws.errorMessage,
+                validation: validateWorkerOutput(result, cwd),
+            };
+        }
+        // Validate artifact contract: if the task declares an output artifact path,
+        // the file must exist and be non-empty.
+        if (workerArtifact) {
+            const resolved = path.resolve(cwd, workerArtifact);
+            try {
+                if (!fs.existsSync(resolved)) {
+                    const err = `Artifact contract not met: required output file "${workerArtifact}" does not exist.`;
+                    ws.errorMessage = err;
+                    ws.endedAt = Date.now();
+                    flushWorkerLog(ws);
+                    run.workers.set(workerId, ws);
+                    transition(run, ws, "failed", ws.usage.totalTokens);
+                    accumulateCost(run, ws.usage);
+                    updateStatusWidget(ctx);
+                    return { status: "failed", workerId, task, text: result.text, error: err };
+                }
+                if (fs.statSync(resolved).size === 0) {
+                    const err = `Artifact contract not met: required output file "${workerArtifact}" is empty.`;
+                    ws.errorMessage = err;
+                    ws.endedAt = Date.now();
+                    flushWorkerLog(ws);
+                    run.workers.set(workerId, ws);
+                    transition(run, ws, "failed", ws.usage.totalTokens);
+                    accumulateCost(run, ws.usage);
+                    updateStatusWidget(ctx);
+                    return { status: "failed", workerId, task, text: result.text, error: err };
+                }
+            }
+            catch (err) {
+                const errMsg = `Artifact contract check failed for "${workerArtifact}": ${err instanceof Error ? err.message : String(err)}`;
+                ws.errorMessage = errMsg;
+                ws.endedAt = Date.now();
+                flushWorkerLog(ws);
+                run.workers.set(workerId, ws);
+                transition(run, ws, "failed", ws.usage.totalTokens);
+                accumulateCost(run, ws.usage);
+                updateStatusWidget(ctx);
+                return { status: "failed", workerId, task, text: result.text, error: errMsg };
+            }
+        }
         ws.usage = result.usage;
         ws.estimatedUsage = result.estimatedUsage ?? false;
+        // In-memory preview stays capped (one per worker); the full output is
+        // persisted to resultPath on disk below.
         ws.finalOutput = result.text.slice(0, OUTPUT_TAIL_BYTES);
         ws.resultPath = resultPath;
         try {
-            fs.writeFileSync(resultPath, result.text.slice(0, OUTPUT_TAIL_BYTES), { encoding: "utf-8", mode: 0o600 });
+            fs.writeFileSync(resultPath, result.text, { encoding: "utf-8", mode: 0o600 });
         }
         catch {
             /* best-effort */
@@ -1143,7 +1211,7 @@ async function executeTasks(run, taskItems, concurrency, failFast, signal, onUpd
                 transition(run, w, "aborted");
             return { status: "aborted", workerId: wid, task: item.task, reason: "parent" };
         }
-        return executeSingleWorker(run, padWorkerId(idx, N), item.task, item.cwd ?? ctx.cwd, signal, onUpdate, ctx, item.model, item.tools, stepTimeoutMs);
+        return executeSingleWorker(run, padWorkerId(idx, N), item.task, item.cwd ?? ctx.cwd, signal, onUpdate, ctx, item.model, item.tools, stepTimeoutMs, item.artifact);
     }, (done) => {
         if (onUpdate) {
             onUpdate({ text: `${done}/${N} tasks complete`, details: { mode: "tasks", runId: run.runId, done, total: N } });
@@ -1208,7 +1276,7 @@ async function executeChain(run, chainItems, failFast, signal, onUpdate, ctx, st
         }
         let result;
         try {
-            result = await executeSingleWorker(run, workerId, taskWithContext, item.cwd ?? ctx.cwd, stepController.signal, onUpdate, ctx, item.model, item.tools, stepTimeoutMs);
+            result = await executeSingleWorker(run, workerId, taskWithContext, item.cwd ?? ctx.cwd, stepController.signal, onUpdate, ctx, item.model, item.tools, stepTimeoutMs, item.artifact);
         }
         finally {
             // Always clean up the tool signal listener for this step.
@@ -1312,7 +1380,7 @@ async function executeStages(run, stages, concurrency, failFast, signal, onUpdat
                 const item = stage.tasks[i];
                 const taskWithContext = item.task.replace(/\{previous\}/g, previousOutput);
                 const workerId = padWorkerId(stageOffset + i, totalTasks);
-                const result = await executeSingleWorker(run, workerId, taskWithContext, item.cwd ?? ctx.cwd, signal, undefined, ctx, item.model, item.tools, stepTimeoutMs);
+                const result = await executeSingleWorker(run, workerId, taskWithContext, item.cwd ?? ctx.cwd, signal, undefined, ctx, item.model, item.tools, stepTimeoutMs, item.artifact);
                 allResults.push(result);
                 if (failFast && result.status === "failed") {
                     for (const ws of run.workers.values()) {
@@ -1349,6 +1417,9 @@ const TaskItem = Type.Object({
     cwd: Type.Optional(Type.String({ description: "Working directory for this worker." })),
     model: Type.Optional(Type.String({ description: "Model override for this worker (e.g. claude-haiku-4-5)." })),
     tools: Type.Optional(Type.Array(Type.String(), { description: 'Restrict tools for this worker (e.g. ["read", "grep"]).' })),
+    artifact: Type.Optional(Type.String({
+        description: "Path to an output file the worker must produce. The runner validates it exists and is non-empty after completion.",
+    })),
 });
 const SubagentParams = Type.Object({
     // Legacy: serial subtasks (kept for backward compatibility)
@@ -1523,8 +1594,32 @@ function registerSubagentTool(pi) {
                 if (aggLine)
                     text += `\n${theme.fg("dim", aggLine)}`;
                 if (validationWarningsTotal > 0) {
-                    const icon = validationHighCount > 0 ? "⚠" : "⚡";
-                    text += `\n${theme.fg(validationHighCount > 0 ? "warning" : "muted", `${icon} ${validationWarningsTotal} output warning${validationWarningsTotal > 1 ? "s" : ""} (expand to review)`)}`;
+                    if (validationHighCount > 0) {
+                        // Surface high-severity warnings inline; don't hide behind Ctrl+O
+                        const highWarnings = [];
+                        for (const r of results) {
+                            const v = r.validation;
+                            if (v) {
+                                for (const w of v.warnings) {
+                                    if (w.severity === "high")
+                                        highWarnings.push(`[${r.workerId}] ${w.message}`);
+                                }
+                            }
+                        }
+                        text += `\n${theme.fg("warning", `⚠ ${validationHighCount} critical output warning${validationHighCount > 1 ? "s" : ""}:`)}`;
+                        for (const hw of highWarnings.slice(0, 3)) {
+                            text += `\n  ${theme.fg("warning", hw)}`;
+                        }
+                        if (highWarnings.length > 3) {
+                            text += `\n  ${theme.fg("muted", `… +${highWarnings.length - 3} more (expand to review)`)}`;
+                        }
+                        if (validationWarningsTotal > validationHighCount) {
+                            text += `\n  ${theme.fg("muted", `+${validationWarningsTotal - validationHighCount} lower-severity warnings (expand to review)`)}`;
+                        }
+                    }
+                    else {
+                        text += `\n${theme.fg("muted", `⚡ ${validationWarningsTotal} output warning${validationWarningsTotal > 1 ? "s" : ""} (expand to review)`)}`;
+                    }
                 }
                 text += `\n${theme.fg("muted", `logs: ${logDir}`)}`;
                 text += `\n${theme.fg("toolTitle", "▸ Press Ctrl+O to expand per-worker details")}`;
@@ -1695,8 +1790,11 @@ function registerSubagentTool(pi) {
             const childSessionId = `subagent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
             let spawnPointEntryId;
             try {
-                spawnPointEntryId = ctx.sessionManager.appendSpawnPoint(childSessionId, spawnPolicy, undefined, // childSessionPath — child processes run detached for now
-                undefined, // runId — will be set below
+                // Use the shared session-dir encoder so the child session path matches
+                // exactly what the session manager persists (honoring a configured
+                // agent dir), letting the session tree cross-reference child sessions.
+                const childSessionPath = getDefaultSessionDirPath(ctx.cwd);
+                spawnPointEntryId = ctx.sessionManager.appendSpawnPoint(childSessionId, spawnPolicy, childSessionPath, undefined, // runId — will be set below
                 "subagent swarm");
             }
             catch {
@@ -1853,6 +1951,9 @@ function registerSubagentTool(pi) {
                         total: run.total,
                         done: run.done,
                         failed: run.failed,
+                        aborted: run.aborted,
+                        totalTokens: run.usage.totalTokens,
+                        cost: run.usage.cost,
                     });
                 }
                 catch {
@@ -1892,7 +1993,16 @@ function registerSubagentTool(pi) {
                     logDir,
                     results,
                 },
-                ...(errors.length > 0 ? { isError: true } : {}),
+                // Mark as error if any explicit failures, or if ALL completed workers
+                // produced empty output (no final assistant text).
+                ...(errors.length > 0 ||
+                    (results.length > 0 &&
+                        results.every((r) => {
+                            const v = r.validation;
+                            return v && v.warnings.some((w) => w.type === "empty_output");
+                        }))
+                    ? { isError: true }
+                    : {}),
             };
         },
     }));
@@ -1927,4 +2037,12 @@ export function createHamrSubagentsExtension(_getChildExtensions, depth = 0) {
     factory[HAMR_SUBAGENTS_FACTORY] = true;
     return factory;
 }
+// ─── Test-only exports (not part of the public API) ──────────────────────────
+// Exposed so regression tests can verify correctness without spinning up
+// full child hamr processes.
+export const _testExports = {
+    pushEvent,
+    validateWorkerOutput,
+    createWorkerState,
+};
 //# sourceMappingURL=subagents.js.map
