@@ -1,21 +1,43 @@
 # Changelog
 
-## [0.6.1] - 2026-06-23
-
-### Fixed
-
-- **Relay providers authenticated with `models.json` creds were probed unauthenticated at startup.** The startup discovery path (`GET /v1/models`) and the request-time registration historically sourced credentials only from `.hamr.toml`. Relay providers that keep their real credentials in the agent layer — API key in `auth.json`, CF-Access headers in `models.json` — were probed with no auth headers, got a 401, and silently registered zero models (or registered with the `"not-needed"` fallback key). Both paths now resolve credentials from the agent layer via the same `getApiKeyAndHeaders`-equivalent chain the chat path uses: `models.json` headers/`apiKey` resolved against `auth.json`'s provider `env`. The relay endpoint base URL also falls back to the agent layer, so a `.hamr.toml` `[providers.relay]` block is no longer required — the file can stay TUI-only. Plain LM Studio / keyless local endpoints are unaffected (agent-layer resolution returns undefined, falls back to `.hamr.toml`).
-- **Custom endpoint discovery passed env-var references unexpanded.** When saving a custom endpoint via `/login`, `$VAR` / `${VAR}` references in `apiKey` and headers were sent raw to `GET /v1/models` during auto-discovery, silently failing for endpoints behind bearer-auth or Cloudflare Access. Discovery now resolves credentials through the full `ModelRegistry.getApiKeyAndHeaders()` chain — same as chat and startup.
-- **better-sqlite3 silent breakage after `hamr self-update`.** Self-update uses `--ignore-scripts` to skip package lifecycle scripts (avoids postinstall failures during tarball staging). This meant better-sqlite3's native addon was never compiled after an update, causing FTS5 memory persistence to silently stop working. Self-update now explicitly rebuilds the better-sqlite3 native addon after installation.
+## [0.6.2] - 2026-06-24
 
 ### Added
 
-- **Relay preset in endpoint configuration.** The `/login` → custom endpoint form now lists Relay as the first preset. It also pre-populates from any existing `models.json` entry when re-editing.
+- **`node:sqlite` adapter for FTS5 memory.** A pure-JS fallback for `better-sqlite3` backed by Node's built-in `node:sqlite` (stable since Node 24). Provides FTS5-enabled `Database` when the native better-sqlite3 addon has no prebuilt binary for the running Node ABI — no native compilation needed. Transparent at runtime; `better-sqlite3` is still preferred when available.
+- **Subagent artifact contract.** `TaskItem` now accepts an optional `artifact` field — a path to an output file the worker must produce. After completion, the runner validates the file exists and is non-empty; failures are treated as worker errors.
+- **Empty-output detection for subagent workers.** Workers that produce only thinking events (no final assistant text) are now treated as failed. The aggregate result is marked `isError: true` when all completed workers produced empty output — previously these were silently counted as succeeded.
+- **Strict CWD sandboxing in PathGuard.** Opt-in `strictCwd` option confines all file read/write operations to the working directory. Off by default (agents legitimately operate across repo boundaries); the denylist-based PathGuard remains the primary security boundary.
+- **Provider proxy exclusion.** Known provider hosts are auto-added to `NO_PROXY` at startup, so credentials and CF-Access headers are never forwarded to a configured HTTP proxy. Provider traffic always uses direct connections.
+- **Extended security denylist.** Added 9 new paths to the read/write denylist: `.bash_history`, `.zsh_history`, `.zhistory`, `.mysql_history`, `.psql_history`, `.python_history`, `.node_repl_history`, `.npm/_cacache`, `.docker/config.json`, `.kube/config`.
+- **Inline high-severity validation warnings in subagent results.** High-severity output warnings are now surfaced directly in the aggregate card (up to 3 shown inline, with a count of remaining), instead of being hidden behind the Ctrl+O expand.
+- **18 new text models in the registry.** OpenRouter: `sakana/fugu-ultra`, `alibaba/qwen3-vl-235b-a22b-instruct`, `alibaba/qwen3-vl-instruct`, `amazon/nova-2-lite`, `amazon/nova-lite`, `amazon/nova-micro`, `amazon/nova-pro`, `arcee-ai/trinity-mini`, `bytedance/seed-1.8`, `interfaze/interfaze-beta`, `kwaipilot/kat-coder-pro-v1`, `meituan/longcat-flash-thinking-2601`, `mistral/magistral-medium`, `mistral/magistral-small`, `mistral/ministral-14b`, `mistral/mistral-large-3`, `nvidia/nemotron-3-nano-30b-a3b`, `openai/gpt-3.5-turbo`, `zai/glm-5.2-fast`.
+- **3 new image models.** OpenRouter: `openai/gpt-image-1`, `openai/gpt-image-1-mini`, `openai/gpt-image-2`.
+
+### Fixed
+
+- **`maxTokens` default for reasoning models: 65536 (was 16384).** Reasoning models now get a higher default max output tokens (65K vs 16K), clamped to the model's context window. Applied in both `startup-config` (model registry layer) and `sdk` (child-process layer).
+- **Zero-usage context estimation for relay/local providers.** Providers that return all-zero usage in streaming chunks now fall back to char-count heuristics for context estimation, so the footer shows a useful percentage instead of 0%.
+- **Full event JSON persisted to subagent disk logs.** `events.ndjson` now stores complete event payloads for forensic replay. Only the in-memory `recentEvents` ring buffer (shown in the UI) is truncated to 256 chars. Disk writes use `0o600` permissions.
+- **Subagent result files write full output.** Worker final output is now written to disk in full — previously it was capped at `OUTPUT_TAIL_BYTES` alongside the in-memory preview.
+- **Child session path matches parent encoding.** Spawn points now use the shared `getDefaultSessionDirPath` encoder, honoring any configured agent directory so the session tree can cross-reference child sessions.
 
 ### Changed
 
-- **Hamr theme: gapless cards enabled.** Card surfaces in the default "hamr" theme now use the compact gapless layout.
-- **Docs repositioned as "Relay-first."** Getting-started and provider docs now present Relay as the recommended inference gateway, with clearer guidance for other local endpoints.
+- **Model pricing and capabilities updated.** MiniMax M2, Claude Opus 4.7, DeepSeek V4 Pro, DeepSeek V4 Flash, Xiaomi Mimo, and GLM-5 reflect current OpenRouter pricing and revised max output tokens.
+- **Supply-chain hardening.** `.npmrc` enforces `save-exact=true` and `min-release-age=2`. Pre-commit hook blocks accidental `package-lock.json` commits unless `HAMR_ALLOW_LOCKFILE_CHANGE=1` is set.
+
+## [0.6.1] - 2026-06-23
+
+### Added
+
+- **Custom endpoint form in /login for local providers.** The login page now offers a form to configure custom/self-hosted inference endpoints (LM Studio, llama.cpp, Ollama, vLLM, Custom) without going through the full /login flow. Saves to `~/.hamr/agent/models.json`, auto-discovers models, and switches provider immediately — no restart needed.
+- **Agent-layer relay auth resolution.** Providers now resolve credentials from `models.json`/`auth.json` in the agent layer, falling back to `hamr.toml` and then local defaults. Relay endpoints whose credentials live in the agent layer are now probed and registered with the correct auth instead of falling back to an unauthenticated placeholder.
+
+### Fixed
+
+- **Unified endpoint discovery auth with chat path.** Endpoint discovery now uses the same auth flow as the chat path, ensuring credentials are applied consistently whether the provider is discovered via /login or registered dynamically.
+- **Stale model-loading indicator cleared on response.** The model-loading status text is now cleared when an assistant response arrives, so the indicator no longer sticks after the model has responded.
 
 ## [0.6.0] - 2026-06-22
 

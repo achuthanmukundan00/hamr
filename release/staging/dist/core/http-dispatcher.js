@@ -71,6 +71,21 @@ export function warnProxyActive(proxy) {
     }
     console.warn(`[hamr] HTTP proxy is active (${host}). All LLM provider requests, including API key and provider credential headers, will be routed through this proxy. Verify the proxy is trusted.`);
 }
+/**
+ * Exclude known provider hosts from the HTTP proxy so credentials and
+ * CF-Access headers are never forwarded to a proxy. Provider traffic
+ * to these hosts uses direct connections.
+ */
+export function excludeProvidersFromProxy(providerHosts) {
+    if (providerHosts.length === 0)
+        return;
+    const existing = process.env.NO_PROXY || process.env.no_proxy || "";
+    const hosts = providerHosts.join(",");
+    process.env.NO_PROXY = existing ? `${existing},${hosts}` : hosts;
+    if (process.env.no_proxy !== undefined) {
+        process.env.no_proxy = process.env.NO_PROXY;
+    }
+}
 export function applyHttpProxySettings(httpProxy) {
     const proxy = validateProxyUrl(httpProxy);
     if (!proxy)

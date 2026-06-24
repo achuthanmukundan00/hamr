@@ -67,6 +67,16 @@ const DENIED_READ_FILES = [
     join(HOME, ".config", "hamr", "auth.json"),
     join(HOME, ".hamr", "auth.json"),
     join(HOME, ".netrc"),
+    join(HOME, ".bash_history"),
+    join(HOME, ".zsh_history"),
+    join(HOME, ".zhistory"),
+    join(HOME, ".mysql_history"),
+    join(HOME, ".psql_history"),
+    join(HOME, ".python_history"),
+    join(HOME, ".node_repl_history"),
+    join(HOME, ".npm", "_cacache"),
+    join(HOME, ".docker", "config.json"),
+    join(HOME, ".kube", "config"),
 ];
 /** Private-key basenames denied for reads anywhere under ~/.ssh. */
 const DENIED_READ_KEY_BASENAMES = new Set([
@@ -103,6 +113,16 @@ export class PathGuard {
     constructor(options) {
         this.enabled = options?.enabled ?? true;
         this.allowed = (options?.allowedPaths ?? []).map(normalizeForCompare);
+        this.strictCwd = options?.strictCwd ? normalizeForCompare(options.strictCwd) : undefined;
+    }
+    /**
+     * Returns true if the candidate path is NOT within the strict cwd (if set).
+     * When strictCwd is undefined, this always returns false (no restriction).
+     */
+    isOutsideStrictCwd(candidate) {
+        if (!this.strictCwd)
+            return false;
+        return !isInside(candidate, this.strictCwd);
     }
     isExplicitlyAllowed(candidate) {
         for (const a of this.allowed) {
@@ -172,12 +192,18 @@ export class PathGuard {
     }
     /** Assert a write target is allowed, throwing with a clear message if not. */
     assertWritable(absolutePath) {
+        if (this.isOutsideStrictCwd(absolutePath)) {
+            throw new PathGuardError(`Path '${absolutePath}' is outside the sandbox cwd '${this.strictCwd}'. Strict path sandbox is enabled.`, absolutePath, "write");
+        }
         const reason = this.deniedWriteReason(absolutePath);
         if (reason)
             throw new PathGuardError(reason, absolutePath, "write");
     }
     /** Assert a read target is allowed, throwing with a clear message if not. */
     assertReadable(absolutePath) {
+        if (this.isOutsideStrictCwd(absolutePath)) {
+            throw new PathGuardError(`Path '${absolutePath}' is outside the sandbox cwd '${this.strictCwd}'. Strict path sandbox is enabled.`, absolutePath, "read");
+        }
         const reason = this.deniedReadReason(absolutePath);
         if (reason)
             throw new PathGuardError(reason, absolutePath, "read");
