@@ -85,3 +85,16 @@ npm install -g @skaft/hamr && hamr --version
   npm hoists them and the vendored libs resolve.
 - Cross-platform: this is a plain Node package, so the same tarball runs on Linux
   (x64/arm64) and macOS — no per-arch builds needed.
+
+## Supply-chain hardening
+
+- **Exact pinning**: `.npmrc` sets `save-exact=true` and `min-release-age=2` so new
+  deps are pinned and same-day releases are excluded from resolution.
+- **Lockfile gate**: `.githooks/pre-commit` blocks accidental `package-lock.json`
+  commits unless `HAMR_ALLOW_LOCKFILE_CHANGE=1` is set. Review lockfile changes
+  before committing.
+- **No lifecycle scripts**: always install with `npm install --ignore-scripts` or
+  `npm ci --ignore-scripts`. The release build scripts run only the controlled
+  toolchain, not arbitrary package scripts.
+- **Shrinkwrap**: the published tarball includes an `npm-shrinkwrap.json` that
+  pins transitive dependencies for end users.

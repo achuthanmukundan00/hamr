@@ -13,6 +13,15 @@ trap 'rm -f "$tmp"' EXIT
 git diff --cached --name-only --diff-filter=ACMR -z >"$tmp"
 [ -s "$tmp" ] || exit 0
 
+# Block lockfile commits unless HAMR_ALLOW_LOCKFILE_CHANGE=1 is set.
+if [ "${HAMR_ALLOW_LOCKFILE_CHANGE:-}" != "1" ]; then
+	if xargs -0 printf '%s\n' <"$tmp" | grep -qx 'package-lock.json'; then
+		echo "✗ pre-commit: package-lock.json is staged but HAMR_ALLOW_LOCKFILE_CHANGE=1 is not set"
+		echo "  Review the lockfile change, then retry with: HAMR_ALLOW_LOCKFILE_CHANGE=1 git commit"
+		exit 1
+	fi
+fi
+
 # Apply safe fixes + formatting to the staged files. Non-blocking: unfixable
 # lint findings must not stop the commit (the pre-push hook runs the strict gate).
 xargs -0 npx biome check --write --no-errors-on-unmatched <"$tmp" || true
