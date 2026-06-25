@@ -464,6 +464,113 @@ function isBashFastPathTools(tools: string[] | undefined): boolean {
 	);
 }
 
+/** Heuristic: does the task text look like a shell command rather
+ * than natural-language instructions?  Used to decide whether the
+ * bash fast-path should be taken. */
+function taskLooksLikeBashCommand(task: string): boolean {
+	const trimmed = task.trim();
+
+	// Multi-line prose blocks are almost certainly not shell commands.
+	const newlineCount = (trimmed.match(/\n/g) || []).length;
+	if (newlineCount > 2) return false;
+
+	const firstLine = trimmed.split("\n")[0]!.trim();
+	const words = firstLine.split(/\s+/).filter(Boolean);
+	const firstWord = words[0] ?? "";
+
+	// Known shell commands / common script starters.
+	const shellStarters = new Set([
+		"bash",
+		"sh",
+		"zsh",
+		"curl",
+		"wget",
+		"cat",
+		"ls",
+		"grep",
+		"find",
+		"sed",
+		"awk",
+		"python3",
+		"python",
+		"node",
+		"npm",
+		"npx",
+		"yarn",
+		"pnpm",
+		"cargo",
+		"go",
+		"rustc",
+		"make",
+		"cmake",
+		"docker",
+		"podman",
+		"git",
+		"ssh",
+		"scp",
+		"rsync",
+		"tar",
+		"unzip",
+		"mkdir",
+		"rm",
+		"cp",
+		"mv",
+		"chmod",
+		"chown",
+		"sudo",
+		"brew",
+		"apt",
+		"dnf",
+		"systemctl",
+		"launchctl",
+		"kill",
+		"killall",
+		"ps",
+		"top",
+		"df",
+		"du",
+		"mount",
+		"export",
+		"source",
+		".",
+		"echo",
+		"printf",
+		"env",
+		"which",
+		"type",
+		"test",
+		"[",
+		"true",
+		"false",
+		"exit",
+		"exec",
+		"xargs",
+		"tee",
+		"head",
+		"tail",
+		"sort",
+		"uniq",
+		"wc",
+		"cut",
+		"tr",
+		"jq",
+	]);
+
+	if (shellStarters.has(firstWord)) return true;
+
+	// Paths: ./script.sh  /usr/bin/foo  ../bin/bar
+	if (firstWord.startsWith("./") || firstWord.startsWith("/") || firstWord.startsWith("../")) {
+		return true;
+	}
+
+	// If the task starts with a capital letter and has multiple words,
+	// it's almost certainly natural language.
+	if (/^[A-Z]/.test(firstWord) && words.length >= 3) return false;
+
+	// Default: assume it could be a command (single-word small task).
+	return words.length <= 2;
+}
+
 // ─── Worker execution (child hamr process) ───────────────────────────────────
 
 // ─── Output validation ───────────────────────────────────────────────────────
@@ -782,7 +889,9 @@ async function runWorkerChildProcess(
 	parentConfig?: HamrChildConfig,
 ): Promise<WorkerOutcome> {
 	// ─── Bash-only fast path ───────────────────────────────────────────────
-	if (isBashFastPathTools(workerTools)) {
+	// Only take the fast path when the task text looks like a shell command
+	// rather than natural-language instructions for an agent.
+	if (isBashFastPathTools(workerTools) && taskLooksLikeBashCommand(task)) {
 		return runBashFastPath(workerId, task, cwd, signal, onEvent);
 	}
 
@@ -1880,6 +1989,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 				"Use {previous} in chain/stages tasks to reference the prior worker's output.",
 				"Parallel concurrency is bounded — do not worry about overloading, the system caps it safely.",
 				"Delegate only as many tasks as the work genuinely warrants.",
+				"When all subtask tools are restricted to 'bash' (or 'bash'+'read'), the task text is executed directly as a shell command. Write valid bash, not English instructions. Omit the tools parameter to use the full agent path for natural-language tasks.",
 			],
 			parameters: SubagentParams,
 			renderCall: (args, theme, context) => {
