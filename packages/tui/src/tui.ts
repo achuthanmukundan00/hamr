@@ -113,7 +113,7 @@ export function isFocusable(component: Component | null): component is Component
  */
 export const CURSOR_MARKER = "\x1b_pi:c\x07";
 
-export { visibleWidth };
+export { sliceWithWidth, visibleWidth };
 
 /**
  * Anchor position for overlays

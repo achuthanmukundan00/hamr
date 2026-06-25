@@ -261,13 +261,13 @@ export class FooterComponent {
         if (usage.totalCost > 0 || usingSubscription) {
             parts.push(theme.fg("dim", `$${usage.totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`));
         }
-        // Token counts — compact: ↑10k ↓5k
+        // Token counts — compact: ^10k v5k (arrows adapt to terminal glyph tier)
         if (usage.totalInput > 0 || usage.totalOutput > 0) {
             const tokens = [];
             if (usage.totalInput > 0)
-                tokens.push(`↑${formatTokens(usage.totalInput)}`);
+                tokens.push(`${theme.glyph("arrowUp")} ${formatTokens(usage.totalInput)}`);
             if (usage.totalOutput > 0)
-                tokens.push(`↓${formatTokens(usage.totalOutput)}`);
+                tokens.push(`${theme.glyph("arrowDown")} ${formatTokens(usage.totalOutput)}`);
             parts.push(theme.fg("dim", tokens.join(" ")));
         }
         // Cache hit rate — always show when cache has been used

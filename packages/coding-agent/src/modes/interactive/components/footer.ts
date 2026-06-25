@@ -287,11 +287,11 @@ export class FooterComponent implements Component {
 			parts.push(theme.fg("dim", `$${usage.totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`));
 		}
 
-		// Token counts — compact: ^10k v5k (arrows adapt to terminal glyph tier)
-		if (usage.totalInput > 0 || usage.totalOutput > 0) {
+		// Token counts — hidden below 80 cols to save space
+		if (width >= 80 && (usage.totalInput > 0 || usage.totalOutput > 0)) {
 			const tokens: string[] = [];
-			if (usage.totalInput > 0) tokens.push(`${theme.glyph("arrowUp")}${formatTokens(usage.totalInput)}`);
-			if (usage.totalOutput > 0) tokens.push(`${theme.glyph("arrowDown")}${formatTokens(usage.totalOutput)}`);
+			if (usage.totalInput > 0) tokens.push(`${theme.glyph("arrowUp")} ${formatTokens(usage.totalInput)}`);
+			if (usage.totalOutput > 0) tokens.push(`${theme.glyph("arrowDown")} ${formatTokens(usage.totalOutput)}`);
 			parts.push(theme.fg("dim", tokens.join(" ")));
 		}
 

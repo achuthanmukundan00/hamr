@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Usage } from "@hamr/ai";
-import { type Component, Container, Markdown, Spacer, Text, type TUI } from "@hamr/tui";
+import { type Component, Container, Markdown, Spacer, sliceWithWidth, Text, type TUI } from "@hamr/tui";
 import { Type } from "typebox";
 import type { ExtensionContext, ExtensionFactory } from "../../core/extensions/types.ts";
 import { defineTool } from "../../core/extensions/types.ts";
@@ -192,6 +192,15 @@ function formatTokens(tokens: number): string {
 	return `${tokens}`;
 }
 
+/** Deep-clone a value via JSON round-trip. Returns the original on failure (BigInt, circular refs). */
+function safeJsonClone<T>(value: T): T {
+	try {
+		return JSON.parse(JSON.stringify(value));
+	} catch {
+		return value;
+	}
+}
+
 function clamp(value: number, min: number, max: number): number {
 	return Math.max(min, Math.min(max, value));
 }
@@ -349,9 +358,11 @@ class AgentStatusWidget implements Component {
 		}, 180);
 	}
 
-	render(): string[] {
+	render(width: number): string[] {
 		const line = renderStatusLine() ?? this.lastLine;
-		return line ? [` ${this.theme.fg("muted", line)}`] : [];
+		if (!line) return [];
+		const colored = ` ${this.theme.fg("muted", line)}`;
+		return [sliceWithWidth(colored, 0, width, true).text];
 	}
 
 	invalidate(): void {}
@@ -1092,8 +1103,8 @@ async function executeSingleWorker(
 				modelCost: ctx.model.cost ? { ...ctx.model.cost } : undefined,
 				modelHeaders: ctx.model.headers ? { ...ctx.model.headers } : undefined,
 				modelThinkingLevelMap: ctx.model.thinkingLevelMap ? { ...ctx.model.thinkingLevelMap } : undefined,
-				modelCompat: ctx.model.compat ? JSON.parse(JSON.stringify(ctx.model.compat)) : undefined,
-				toolNames: workerTools ?? [],
+				modelCompat: ctx.model.compat ? (safeJsonClone(ctx.model.compat) as Record<string, unknown>) : undefined,
+				toolNames: workerTools ?? ["read", "bash", "edit", "write"],
 				systemPrompt: ctx.getSystemPrompt(),
 				cwd: ctx.cwd,
 				treeBudgetRemaining,
@@ -2362,7 +2373,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 					(results.length > 0 &&
 						results.every((r) => {
 							const v = (r as { validation?: ValidationResult }).validation;
-							return v && v.warnings.some((w) => w.type === "empty_output");
+							return v?.warnings?.some((w) => w.type === "empty_output");
 						}))
 						? { isError: true }
 						: {}),
