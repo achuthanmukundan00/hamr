@@ -426,7 +426,7 @@ function getGlyphTier(): "emoji" | "nerd" | "unicode" | "ascii" {
 }
 
 /** Common TUI glyphs mapped to each rendering tier. */
-const TIERED_GLYPHS: Record<string, { emoji: string; nerd: string; unicode: string; ascii: string }> = {
+const TIERED_GLYPHS = {
 	arrowUp: { emoji: "⬆", nerd: "⬆", unicode: "↑", ascii: "^" },
 	arrowDown: { emoji: "⬇", nerd: "⬇", unicode: "↓", ascii: "v" },
 	arrowRight: { emoji: "➡", nerd: "➡", unicode: "→", ascii: ">" },
