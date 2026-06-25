@@ -1,3 +1,4 @@
+// biome-ignore lint/correctness/noUnusedImports: false positive
 import { Key, truncateToWidth } from "@hamr/tui";
 class PersistentFooterComponent {
     constructor(ctx, theme, footerData) {

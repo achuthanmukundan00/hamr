@@ -33,18 +33,189 @@ function isTruthy(value: string | undefined): boolean {
 	return value === "1" || value === "true";
 }
 
-/** Track sessions that have already received their one-shot context injection. */
-const injectedSessions = new Set<string>();
-
-function clearInjectedSession(sessionId: string): void {
-	injectedSessions.delete(sessionId);
-}
-
 /** Track the last injected context hash per session for de-duplication. */
 const contextHashState = new Map<string, string>();
 
 function clearContextHashState(sessionId: string): void {
 	contextHashState.delete(sessionId);
+}
+
+// ─── Message-based search term extraction ────────────────────────────────────
+
+/**
+ * Common greeting/acknowledgment words that should never trigger memory search.
+ */
+const GENERIC_WORDS = new Set([
+	"hi",
+	"hello",
+	"hey",
+	"ok",
+	"okay",
+	"yes",
+	"no",
+	"thanks",
+	"thank",
+	"bye",
+	"goodbye",
+	"great",
+	"cool",
+	"nice",
+	"sure",
+	"fine",
+	"alright",
+	"right",
+	"got",
+	"yep",
+	"nope",
+	"maybe",
+	"hmm",
+	"ah",
+	"oh",
+	"uh",
+	"please",
+	"well",
+	"so",
+	"just",
+	"also",
+	"then",
+	"now",
+	"actually",
+	"basically",
+	"anyway",
+	"anyways",
+	"um",
+	"like",
+	"really",
+	"very",
+	"yeah",
+	"yup",
+	"nah",
+	"true",
+	"false",
+	"null",
+	"undefined",
+]);
+
+/** Stop words to filter out of search terms (FTS5 already handles these, but
+ *  pre-filtering avoids noisy single-term searches). */
+const STOP_WORDS = new Set([
+	"the",
+	"is",
+	"at",
+	"which",
+	"on",
+	"a",
+	"an",
+	"and",
+	"or",
+	"but",
+	"in",
+	"with",
+	"to",
+	"for",
+	"of",
+	"this",
+	"that",
+	"it",
+	"be",
+	"was",
+	"are",
+	"can",
+	"you",
+	"we",
+	"will",
+	"would",
+	"should",
+	"could",
+	"do",
+	"does",
+	"did",
+	"has",
+	"have",
+	"had",
+	"not",
+	"from",
+	"by",
+	"as",
+	"all",
+	"been",
+	"its",
+	"about",
+	"into",
+	"than",
+	"them",
+	"these",
+	"those",
+	"what",
+	"when",
+	"where",
+	"how",
+	"who",
+	"why",
+	"get",
+	"go",
+	"i",
+	"me",
+	"my",
+	"your",
+	"let",
+	"our",
+	"there",
+	"here",
+	"more",
+	"some",
+	"any",
+	"back",
+	"up",
+	"out",
+	"other",
+	"each",
+	"every",
+	"only",
+	"own",
+	"same",
+]);
+
+/**
+ * Extract meaningful search terms from a user message for FTS5 retrieval.
+ *
+ * Filters out greetings, stop words, and very short tokens so that generic
+ * messages like "hi" produce no terms — preventing irrelevant past context
+ * from hijacking the current turn. Longer, topical messages naturally yield
+ * terms that match stored memory entries.
+ *
+ * Returns an empty array when the message is too short or entirely generic.
+ */
+export function extractMessageSearchTerms(message: string): string[] {
+	const trimmed = message.trim();
+	if (!trimmed) return [];
+
+	// If the entire message is a single generic word, skip.
+	const lower = trimmed.toLowerCase();
+	if (GENERIC_WORDS.has(lower)) return [];
+
+	// Tokenize: split on non-alphanumeric, keep tokens with substance
+	const tokens = trimmed
+		.toLowerCase()
+		.split(/[^a-z0-9._\-/]+/i)
+		.filter((t) => {
+			if (t.length < 3) return false;
+			if (STOP_WORDS.has(t)) return false;
+			if (GENERIC_WORDS.has(t)) return false;
+			return true;
+		});
+
+	// Deduplicate while preserving order
+	const seen = new Set<string>();
+	const terms: string[] = [];
+	for (const token of tokens) {
+		if (!seen.has(token)) {
+			seen.add(token);
+			terms.push(token);
+		}
+	}
+
+	return terms;
 }
 
 /**
@@ -134,6 +305,96 @@ function hashContext(autoResults: string[], index: string, survivalManifest?: st
 		.slice(0, 16);
 }
 
+// ─── Core injection computation (testable) ────────────────────────────────────
+
+/** Pure inputs for computeMemoryInjection — no external state or side effects. */
+export interface MemoryInjectionInput {
+	memory: HolographicMemory;
+	messages: AgentMessage[];
+	survivalManifest: string | null;
+	/** Policy overrides (derived from selectCompactionPolicy in the handler). */
+	searchTermLimit: number;
+	resultsPerTerm: number;
+	snippetChars: number;
+	/** Token budget cap for auto-results (character count). Passed explicitly for testability. */
+	charBudget: number;
+	/** Optional fact-store status line appended to content and included in hash. */
+	factStoreLine?: string;
+}
+
+/** Result of a successful memory injection computation. */
+export interface MemoryInjectionResult {
+	message: { role: "user"; content: string; timestamp: number };
+	/** Content hash for de-duplication tracking by the caller. */
+	contextHash: string;
+}
+
+/**
+ * Compute whether memory context should be injected for the current turn.
+ *
+ * Pure function — no side effects. The caller manages session state
+ * (hashes, one-shot flags, etc.).
+ *
+ * Query-triggered recall: search terms are derived from the current user
+ * message, not from past-entry word frequency. Generic messages like "hi"
+ * produce no terms → null. Topical messages produce terms → FTS5 search
+ * → injection. A survival manifest is always surfaced when present.
+ *
+ * Returns null when there is nothing worth injecting.
+ */
+export function computeMemoryInjection(input: MemoryInjectionInput): MemoryInjectionResult | null {
+	const { memory, messages, survivalManifest, searchTermLimit, resultsPerTerm, snippetChars } = input;
+
+	// ── Build memory index (cross-session) ──
+	const index = memory.buildMemoryIndex();
+	if (!index && !survivalManifest) return null;
+
+	// ── Extract search terms from the current user message ──
+	const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
+	const userText = lastUserMessage ? contentText((lastUserMessage as { content: unknown }).content).trim() : "";
+	const messageTerms = extractMessageSearchTerms(userText);
+
+	// If no message-derived terms AND no survival manifest, nothing to inject.
+	if (messageTerms.length === 0 && !survivalManifest) return null;
+
+	// ── Search FTS5 with message-derived terms ──
+	const autoResults: string[] = [];
+	if (messageTerms.length > 0) {
+		for (const term of messageTerms.slice(0, searchTermLimit)) {
+			const results = memory.searchWithSnippets(term, resultsPerTerm);
+			if (results.length > 0) {
+				autoResults.push(
+					`// Search "${term}": ${results.length} results`,
+					...results.map(
+						(r) =>
+							`//   turn ${r.turnId} ${r.role}${r.toolName ? `/${r.toolName}` : ""}: ${sanitizeMemoryTranscriptText(
+								r.snippet || r.content.slice(0, snippetChars),
+							)}`,
+					),
+				);
+			}
+		}
+	}
+
+	// ── De-duplicate against existing context messages ──
+	const deduped = deduplicateResults(autoResults, messages as unknown[]);
+
+	// ── Apply token budget cap ──
+	const budgeted = applyTokenBudget(deduped, input.charBudget);
+
+	// ── Build the result ──
+	const message = buildMemoryContextMessage(budgeted, index ?? "", { survivalManifest });
+	if (!message) return null;
+
+	// ── Append fact-store status line (before hash so count changes are reflected) ──
+	if (input.factStoreLine) {
+		message.content += input.factStoreLine;
+	}
+
+	const contextHash = hashContext(budgeted, index ?? "", `${survivalManifest ?? ""}${input.factStoreLine ?? ""}`);
+	return { message, contextHash };
+}
+
 /**
  * Builds the user message injected into context from FTS5 auto-retrieval.
  *
@@ -156,7 +417,7 @@ export function buildMemoryContextMessage(
 		);
 	}
 	if (autoResults.length > 0) {
-		sections.push(`\nAuto-retrieved context from prior sessions:\n${autoResults.join("\n")}`);
+		sections.push(`\nYou may have prior context on this:\n${autoResults.join("\n")}`);
 	}
 	sections.push(`\n${index}`);
 	return { role: "user", content: sections.join("\n"), timestamp };
@@ -558,13 +819,16 @@ export const hamrMemoryExtension: ExtensionFactory = async (pi) => {
 		};
 	});
 
-	// Context injection: auto-search memory and append retrieved context for
-	// resumed/handoff sessions. Gated behind HAMR_MEMORY_AUTO_INJECT.
+	// Context injection: query-triggered recall from FTS5 memory.
+	// Gated behind HAMR_MEMORY_AUTO_INJECT.
 	//
-	// When disabled (default), the model must explicitly call search_memory.
-	// When enabled, injected ONCE per session on the first turn that has prior
-	// session entries — not every turn. Includes a token budget cap and
-	// de-duplication against existing context.
+	// Search terms are derived from the CURRENT user message, not from
+	// past-entry word frequency. Generic messages like "hi" produce no terms
+	// → self-silencing → no injection. Topical messages produce terms →
+	// FTS5 search → relevant cross-session context appended.
+	//
+	// Content-hash de-duplication prevents re-injecting identical context
+	// across turns. Different queries naturally get different injections.
 	//
 	// Memory context is APPENDED (not prepended) to preserve Anthropic's
 	// longest-prefix prompt caching.
@@ -577,30 +841,11 @@ export const hamrMemoryExtension: ExtensionFactory = async (pi) => {
 
 		const sessionId = ctx.sessionManager.getSessionId();
 
-		// ── Only inject on resumed/handoff sessions (sessions with prior entries) ──
-		if (!memory.hasSessionEntries(sessionId)) return;
-
-		// ── One-shot: inject only once per session, never on every turn ──
-		if (injectedSessions.has(sessionId)) return;
-
-		let index = memory.buildMemoryIndex();
-
-		// Append fact store status to the memory index
-		const factStore = getFactStore(ctx);
-		if (factStore?.isAvailable) {
-			const fc = factStore.getFactCount();
-			const fsLine =
-				fc > 0
-					? `\n[FactStore: ${fc} durable facts with entity resolution & trust scoring. Use fact_store to query, fact_feedback to rate.]`
-					: `\n[FactStore: active, empty. Use fact_store(action='add') to persist cross-session knowledge.]`;
-			index = index ? `${index}${fsLine}` : fsLine;
-		}
-		if (!index) return;
+		const provider = ctx.model?.provider;
+		const cloud = !provider || isCloudProvider(config, provider);
 
 		const survival = memory.getLatestByDomainTag("survival", sessionId);
 		const survivalManifest = survival?.content ?? null;
-		const provider = ctx.model?.provider;
-		const cloud = !provider || isCloudProvider(config, provider);
 
 		// Cloud providers: skip auto-injection entirely unless a survival
 		// manifest from a prior local compaction exists. Cloud models rely on
@@ -609,43 +854,38 @@ export const hamrMemoryExtension: ExtensionFactory = async (pi) => {
 
 		const policy = selectCompactionPolicy({ cloud, contextWindow: ctx.model?.contextWindow });
 
-		const terms = memory.getSuggestedSearchTerms();
-		const autoResults: string[] = [];
-		for (const term of terms.slice(0, policy.searchTermLimit)) {
-			const results = memory.searchWithSnippets(term, policy.resultsPerTerm);
-			if (results.length > 0) {
-				autoResults.push(
-					`// Search "${term}": ${results.length} results`,
-					...results.map(
-						(r) =>
-							`//   turn ${r.turnId} ${r.role}${r.toolName ? `/${r.toolName}` : ""}: ${sanitizeMemoryTranscriptText(
-								r.snippet || r.content.slice(0, policy.snippetChars),
-							)}`,
-					),
-				);
-			}
+		// ── Build fact-store status line (computed before injection so hash reflects it) ──
+		let factStoreLine: string | undefined;
+		const factStore = getFactStore(ctx);
+		if (factStore?.isAvailable) {
+			const fc = factStore.getFactCount();
+			factStoreLine =
+				fc > 0
+					? `\n[FactStore: ${fc} durable facts with entity resolution & trust scoring. Use fact_store to query, fact_feedback to rate.]`
+					: `\n[FactStore: active, empty. Use fact_store(action='add') to persist cross-session knowledge.]`;
 		}
 
-		// ── De-duplicate against existing context messages ──
-		const deduped = deduplicateResults(autoResults, event.messages as unknown[]);
+		// ── Compute injection (pure, no side effects) ──
+		const result = computeMemoryInjection({
+			memory,
+			messages: event.messages,
+			survivalManifest,
+			searchTermLimit: policy.searchTermLimit,
+			resultsPerTerm: policy.resultsPerTerm,
+			snippetChars: policy.snippetChars,
+			charBudget: AUTO_INJECT_CHAR_BUDGET,
+			factStoreLine,
+		});
+		if (!result) return;
 
-		// ── Apply token budget cap ──
-		const budgeted = applyTokenBudget(deduped, AUTO_INJECT_CHAR_BUDGET);
-
-		// ── De-duplicate by content hash (skip if same content was already injected) ──
-		const contextHash = hashContext(budgeted, index, survivalManifest);
+		// ── Content-hash de-duplication: skip if same content was already
+		//    injected this session. Allows different queries through.
 		const prior = contextHashState.get(sessionId);
-		if (prior === contextHash) return;
-		contextHashState.set(sessionId, contextHash);
-
-		const message = buildMemoryContextMessage(budgeted, index, { survivalManifest });
-		if (!message) return;
-
-		// Mark session as injected — one-shot only
-		injectedSessions.add(sessionId);
+		if (prior === result.contextHash) return;
+		contextHashState.set(sessionId, result.contextHash);
 
 		// APPEND memory context after existing messages to preserve prefix cache.
-		return { messages: [...event.messages, message] };
+		return { messages: [...event.messages, result.message] };
 	});
 
 	// Advance the memory turn counter at the end of each turn.
@@ -653,10 +893,9 @@ export const hamrMemoryExtension: ExtensionFactory = async (pi) => {
 		setCurrentTurnId(event.turnIndex + 1);
 	});
 
-	// Clean up context injection state when session shuts down.
+	// Clean up context hash state when session shuts down.
 	pi.on("session_shutdown", (_, ctx) => {
 		const sid = ctx.sessionManager.getSessionId();
-		clearInjectedSession(sid);
 		clearContextHashState(sid);
 	});
 };

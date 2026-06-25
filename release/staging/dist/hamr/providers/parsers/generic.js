@@ -1,21 +1,18 @@
 /**
  * Generic tool-call parser (fallback).
  *
- * This is Hamr's existing content-based tool-call parsing, preserved as
- * the "generic" parser. It tries multiple strategies:
+ * Handles both JSON and XML tool-call formats so unrecognised model families
+ * (Apodex, Qwen derivatives, …) are not silently broken.
  *
- * 1. <tool_call>{"name":"...","arguments":{...}}</tool_call> blocks (Hermes-style)
+ * Strategies (tried in order):
+ * 1. <tool_call> blocks → JSON first (Hermes-style), then XML (Qwen3-style)
  * 2. ```json fenced code blocks
  * 3. Bare JSON objects (last resort)
- *
- * This parser is the safe default when no specific parser is configured
- * or auto-detected.
- *
- * It also supports the Qwen3 XML format via alias ('qwen3_coder' maps to 'qwen3_xml').
  */
+import { toolCallParserRegistry } from "./registry.js";
 import { extractDelimitedBlocks, generateCallId, safeJsonParse, sanitizeReasoningTags } from "./utils.js";
 const PARSER_ID = "generic";
-const DESCRIPTION = "Generic multi-strategy fallback: tries Hermes-style, fenced JSON, and bare JSON";
+const DESCRIPTION = "Generic multi-strategy fallback: handles JSON (Hermes-style) and XML (Qwen3-style) tool calls";
 const FAMILIES = ["Any", "Unknown", "Generic"];
 export const genericParser = {
     id: PARSER_ID,
@@ -177,30 +174,56 @@ export const genericParser = {
                 }
             }
         }
-        // If we saw malformed blocks but found no calls, check if the content
-        // is actually a standalone tool-call response (not inside prose/code blocks).
-        // Only flag as error if the malformed blocks appear to be intentional tool calls.
-        if (sawMalformedBlock && calls.length === 0 && toolCallBlocks.blocks.length > 0) {
-            if (isStandaloneToolCallContent(sanitized, toolCallBlocks)) {
+        // Strategy 1b: If <tool_call> blocks contained non-JSON content,
+        // try the Qwen3 XML parser as a fallback.  This catches Qwen-family
+        // models (including unrecognised derivatives like Apodex) that emit
+        // <function=…><parameter=…>…</parameter></function> XML.
+        // Guarded by isStandaloneToolCallContent so example blocks inside
+        // fenced-code prose aren't parsed as real tool calls.
+        let xmlNonToolContent;
+        if (sawMalformedBlock && calls.length === 0 && toolCallBlocks.blocks.length > 0 && isStandaloneToolCallContent(sanitized, toolCallBlocks)) {
+            const xmlResult = toolCallParserRegistry.parse("qwen3_xml", sanitized);
+            if (xmlResult.ok && xmlResult.calls.length > 0) {
+                for (const call of xmlResult.calls) {
+                    call.parserId = PARSER_ID;
+                    call.warnings = [...(call.warnings ?? []), "parsed via qwen3_xml fallback in generic parser"];
+                }
+                calls.push(...xmlResult.calls);
+                sawMalformedBlock = false;
+                xmlNonToolContent = xmlResult.content || undefined;
+            }
+            else {
+                // Neither JSON nor XML could parse the blocks and they look
+                // intentional → signal failure so the repair cascade can try.
                 return {
                     ok: false,
                     parserId: PARSER_ID,
                     calls: [],
                     content: sanitized,
-                    error: "tool_call block contained malformed JSON",
+                    error: "tool_call block contained malformed content (not valid JSON or Qwen XML)",
                 };
             }
         }
-        // Compute non-tool content
-        let nonToolContent = sanitized;
-        if (toolCallBlocks.blocks.length > 0) {
+        // Compute non-tool content: prefer the XML parser's extraction
+        // (which understands <function=…> blocks), then fall back to the
+        // generic delimiter-based approach.
+        let nonToolContent;
+        if (xmlNonToolContent) {
+            nonToolContent = xmlNonToolContent;
+        }
+        else if (sawMalformedBlock === false && calls.length > 0 && toolCallBlocks.blocks.length > 0) {
             nonToolContent = [toolCallBlocks.before, ...toolCallBlocks.between, toolCallBlocks.after]
                 .filter(Boolean)
                 .join("\n")
                 .trim();
         }
         else {
-            nonToolContent = sanitized;
+            // Blocks couldn't be parsed (not JSON, not Qwen XML), and they're
+            // interleaved with prose — strip blocks so the model sees clean content.
+            nonToolContent = [toolCallBlocks.before, ...toolCallBlocks.between, toolCallBlocks.after]
+                .filter(Boolean)
+                .join("\n")
+                .trim();
         }
         return {
             ok: true,

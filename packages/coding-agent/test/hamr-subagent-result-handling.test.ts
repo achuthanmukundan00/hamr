@@ -231,7 +231,7 @@ describe("aggregate error detection", () => {
 			results.length > 0 &&
 			results.every((r) => {
 				const v = r.validation;
-				return v && v.warnings.some((w) => w.type === "empty_output");
+				return v?.warnings?.some((w) => w.type === "empty_output");
 			});
 
 		expect(allEmpty).toBe(true);
@@ -267,7 +267,7 @@ describe("aggregate error detection", () => {
 			results.length > 0 &&
 			results.every((r) => {
 				const v = r.validation;
-				return v && v.warnings.some((w) => w.type === "empty_output");
+				return v?.warnings?.some((w) => w.type === "empty_output");
 			});
 
 		expect(allEmpty).toBe(false);

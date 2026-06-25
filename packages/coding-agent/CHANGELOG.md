@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.7] - 2026-06-24
+
+### Fixed
+
+- **npm self-update `--prefix` used the wrong directory.** The v0.6.5 fix correctly omitted `-g` when `--prefix` was set, but passed the npm global prefix (`/opt/homebrew`) instead of the `node_modules` parent (`/opt/homebrew/lib`). Without `-g`, npm installs to `{--prefix}/node_modules/` rather than `{--prefix}/lib/node_modules/`, so the updated binary landed one directory level too high and the old binary remained on `PATH`. Fixed by using `dirname(root)` (the `node_modules` parent directory) as the `--prefix` value.
+- **Bumped `undici` from 8.3.0 to 8.5.0** to address 7 high-severity advisories (TLS bypass, header injection, cache disclosure, DoS vectors).
+
+## [0.6.6] - 2026-06-24
+
+### Changed
+
+- **Memory context injection: query-triggered recall replaces one-shot injection.** Previously, memory context was injected once per session based on suggested search terms derived from word frequency in stored entries. Now `extractMessageSearchTerms()` derives terms from the *current* user message. Generic greetings and acknowledgments ("hi", "ok", "thanks") produce no terms and self-silence, preventing irrelevant past context from hijacking the turn. Topical queries naturally yield search terms that retrieve relevant cross-session entries via FTS5. Content-hash de-duplication remains but now allows different queries through on the same session. The "Auto-retrieved context" heading is changed to "You may have prior context on this:" to better signal the model. `computeMemoryInjection()` is extracted as a pure function for testability. Removed the `injectedSessions` one-shot gate — injection is now gated purely by message-derived terms and content-hash change detection.
+- **DeepSeek V4 Flash pricing and max-tokens updated** to match current OpenRouter rates: input 0.089/MTok (was 0.09), output 0.224/MTok (was 0.18), cache-read 0.0266/MTok (was 0.02), max output tokens 4,096 (was 65,536).
+- **Generic parser now falls back to Qwen3 XML for unrecognized model families.** When `<tool_call>` blocks contain non-JSON content, the generic parser delegates to the Qwen3 XML parser. This catches Qwen derivatives (Apodex and other unrecognized families) that emit `<function=…><parameter=…>…</parameter></function>` XML, preventing silent tool-call failures.
+- **Subagents: empty `toolNames` default now includes core tools.** Child workers no longer start with an empty tool list when the user omits explicit `tools`. Defaults to `["read", "bash", "edit", "write"]`.
+- **Subagents: empty_output validation hardened.** The `v.warnings.some(...)` check now uses optional chaining (`v?.warnings?.some(...)`) to guard against undefined warnings arrays, preventing a potential crash on malformed validation payloads.
+
 ## [0.6.5] - 2026-06-24
 
 ### Fixed

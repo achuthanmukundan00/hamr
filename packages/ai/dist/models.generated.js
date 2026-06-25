@@ -10416,13 +10416,13 @@ export const MODELS = {
             thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", xhigh: "xhigh" },
             input: ["text"],
             cost: {
-                input: 0.09,
-                output: 0.18,
-                cacheRead: 0.02,
+                input: 0.089,
+                output: 0.224,
+                cacheRead: 0.0266,
                 cacheWrite: 0,
             },
             contextWindow: 1048576,
-            maxTokens: 65536,
+            maxTokens: 4096,
         },
         "deepseek/deepseek-v4-pro": {
             id: "deepseek/deepseek-v4-pro",

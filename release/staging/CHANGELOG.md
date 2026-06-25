@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.5] - 2026-06-24
+
+### Fixed
+
+- **npm self-update on Homebrew macOS.** `-g` overrides `--prefix` in npm, so `npm --prefix /opt/homebrew install -g` silently installed to npm's global prefix instead of the inferred Homebrew prefix. The `-g` flag is now omitted when `--prefix` is explicitly set from the inferred install prefix.
+
 ## [0.6.4] - 2026-06-24
 
 ### Added

@@ -1,1 +1,1 @@
-{"version":3,"file":"generic.d.ts","sourceRoot":"","sources":["../../../../src/hamr/providers/parsers/generic.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;;;;;GAcG;AAEH,OAAO,KAAK,EAAuC,cAAc,EAAE,MAAM,YAAY,CAAC;AAOtF,eAAO,MAAM,aAAa,EAAE,cA4M3B,CAAC;AAoDF,wBAAgB,mBAAmB,IAAI,cAAc,CAEpD"}
+{"version":3,"file":"generic.d.ts","sourceRoot":"","sources":["../../../../src/hamr/providers/parsers/generic.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;GAUG;AAGH,OAAO,KAAK,EAAuC,cAAc,EAAE,MAAM,YAAY,CAAC;AAOtF,eAAO,MAAM,aAAa,EAAE,cAyO3B,CAAC;AAoDF,wBAAgB,mBAAmB,IAAI,cAAc,CAEpD"}

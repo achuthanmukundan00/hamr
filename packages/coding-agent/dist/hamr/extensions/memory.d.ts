@@ -1,5 +1,17 @@
 import type { AgentMessage } from "@hamr/agent";
 import type { ExtensionFactory } from "../../core/extensions/types.ts";
+import type { HolographicMemory } from "../memory/HolographicMemory.ts";
+/**
+ * Extract meaningful search terms from a user message for FTS5 retrieval.
+ *
+ * Filters out greetings, stop words, and very short tokens so that generic
+ * messages like "hi" produce no terms — preventing irrelevant past context
+ * from hijacking the current turn. Longer, topical messages naturally yield
+ * terms that match stored memory entries.
+ *
+ * Returns an empty array when the message is too short or entirely generic.
+ */
+export declare function extractMessageSearchTerms(message: string): string[];
 /**
  * De-duplicate auto-results against existing context messages.
  * Removes result lines whose core content already appears in any existing message.
@@ -11,6 +23,44 @@ export declare function deduplicateResults(autoResults: string[], existingMessag
  * Preserves search header lines.
  */
 export declare function applyTokenBudget(autoResults: string[], charBudget: number): string[];
+/** Pure inputs for computeMemoryInjection — no external state or side effects. */
+export interface MemoryInjectionInput {
+    memory: HolographicMemory;
+    messages: AgentMessage[];
+    survivalManifest: string | null;
+    /** Policy overrides (derived from selectCompactionPolicy in the handler). */
+    searchTermLimit: number;
+    resultsPerTerm: number;
+    snippetChars: number;
+    /** Token budget cap for auto-results (character count). Passed explicitly for testability. */
+    charBudget: number;
+    /** Optional fact-store status line appended to content and included in hash. */
+    factStoreLine?: string;
+}
+/** Result of a successful memory injection computation. */
+export interface MemoryInjectionResult {
+    message: {
+        role: "user";
+        content: string;
+        timestamp: number;
+    };
+    /** Content hash for de-duplication tracking by the caller. */
+    contextHash: string;
+}
+/**
+ * Compute whether memory context should be injected for the current turn.
+ *
+ * Pure function — no side effects. The caller manages session state
+ * (hashes, one-shot flags, etc.).
+ *
+ * Query-triggered recall: search terms are derived from the current user
+ * message, not from past-entry word frequency. Generic messages like "hi"
+ * produce no terms → null. Topical messages produce terms → FTS5 search
+ * → injection. A survival manifest is always surfaced when present.
+ *
+ * Returns null when there is nothing worth injecting.
+ */
+export declare function computeMemoryInjection(input: MemoryInjectionInput): MemoryInjectionResult | null;
 /**
  * Builds the user message injected into context from FTS5 auto-retrieval.
  *

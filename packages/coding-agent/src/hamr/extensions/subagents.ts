@@ -1216,7 +1216,8 @@ async function executeSingleWorker(
 				modelHeaders: ctx.model.headers ? { ...ctx.model.headers } : undefined,
 				modelThinkingLevelMap: ctx.model.thinkingLevelMap ? { ...ctx.model.thinkingLevelMap } : undefined,
 				modelCompat: ctx.model.compat ? (safeJsonClone(ctx.model.compat) as Record<string, unknown>) : undefined,
-				toolNames: workerTools ?? [],
+				// Default to parent's default active tool list if not explicitly specified by user
+				toolNames: workerTools ?? ["read", "bash", "edit", "write"],
 				systemPrompt: ctx.getSystemPrompt(),
 				cwd: ctx.cwd,
 				treeBudgetRemaining,
@@ -2506,7 +2507,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 					(results.length > 0 &&
 						results.every((r) => {
 							const v = (r as { validation?: ValidationResult }).validation;
-							return v && v.warnings.some((w) => w.type === "empty_output");
+							return v?.warnings?.some((w) => w.type === "empty_output");
 						}))
 						? { isError: true }
 						: {}),

@@ -1,4 +1,5 @@
 import type { Component, TUI } from "@hamr/tui";
+// biome-ignore lint/correctness/noUnusedImports: false positive
 import { Key, truncateToWidth, visibleWidth } from "@hamr/tui";
 import type { ExtensionAPI, ExtensionContext } from "../core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../core/footer-data-provider.ts";
