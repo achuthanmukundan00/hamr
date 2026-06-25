@@ -451,126 +451,6 @@ function restoreRunsFromDisk(cwd: string, sessionId: string): void {
 	}
 }
 
-// ─── Bash-only fast path helper ──────────────────────────────────────────────
-
-/** Returns true if the tools list qualifies for the bash-only fast path. */
-function isBashFastPathTools(tools: string[] | undefined): boolean {
-	return (
-		tools !== undefined &&
-		tools.length > 0 &&
-		tools.length <= 2 &&
-		tools.every((t) => t === "bash" || t === "read") &&
-		tools.includes("bash")
-	);
-}
-
-/** Heuristic: does the task text look like a shell command rather
- * than natural-language instructions?  Used to decide whether the
- * bash fast-path should be taken. */
-function taskLooksLikeBashCommand(task: string): boolean {
-	const trimmed = task.trim();
-
-	// Multi-line prose blocks are almost certainly not shell commands.
-	const newlineCount = (trimmed.match(/\n/g) || []).length;
-	if (newlineCount > 2) return false;
-
-	const firstLine = trimmed.split("\n")[0]!.trim();
-	const words = firstLine.split(/\s+/).filter(Boolean);
-	const firstWord = words[0] ?? "";
-
-	// Known shell commands / common script starters.
-	const shellStarters = new Set([
-		"bash",
-		"sh",
-		"zsh",
-		"curl",
-		"wget",
-		"cat",
-		"ls",
-		"grep",
-		"find",
-		"sed",
-		"awk",
-		"python3",
-		"python",
-		"node",
-		"npm",
-		"npx",
-		"yarn",
-		"pnpm",
-		"cargo",
-		"go",
-		"rustc",
-		"make",
-		"cmake",
-		"docker",
-		"podman",
-		"git",
-		"ssh",
-		"scp",
-		"rsync",
-		"tar",
-		"unzip",
-		"mkdir",
-		"rm",
-		"cp",
-		"mv",
-		"chmod",
-		"chown",
-		"sudo",
-		"brew",
-		"apt",
-		"dnf",
-		"systemctl",
-		"launchctl",
-		"kill",
-		"killall",
-		"ps",
-		"top",
-		"df",
-		"du",
-		"mount",
-		"export",
-		"source",
-		".",
-		"echo",
-		"printf",
-		"env",
-		"which",
-		"type",
-		"test",
-		"[",
-		"true",
-		"false",
-		"exit",
-		"exec",
-		"xargs",
-		"tee",
-		"head",
-		"tail",
-		"sort",
-		"uniq",
-		"wc",
-		"cut",
-		"tr",
-		"jq",
-	]);
-
-	if (shellStarters.has(firstWord)) return true;
-
-	// Paths: ./script.sh  /usr/bin/foo  ../bin/bar
-	if (firstWord.startsWith("./") || firstWord.startsWith("/") || firstWord.startsWith("../")) {
-		return true;
-	}
-
-	// If the task starts with a capital letter and has multiple words,
-	// it's almost certainly natural language.
-	if (/^[A-Z]/.test(firstWord) && words.length >= 3) return false;
-
-	// Default: assume it could be a command (single-word small task).
-	return words.length <= 2;
-}
-
 // ─── Worker execution (child hamr process) ───────────────────────────────────
 
 // ─── Output validation ───────────────────────────────────────────────────────
@@ -783,101 +663,6 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "hamr", args };
 }
 
-/**
- * Bash-only fast path: spawn /bin/bash -c <task> directly.
- * No agent loop, no locks, no model calls. ~50ms startup.
- */
-async function runBashFastPath(
-	workerId: string,
-	task: string,
-	cwd: string,
-	signal: AbortSignal | undefined,
-	onEvent: (event: Record<string, unknown>) => void,
-): Promise<WorkerOutcome> {
-	onEvent({ type: "bash_fast_path_start", task });
-
-	let wasAborted = false;
-	let stdout = "";
-	let stderr = "";
-
-	const exitCode = await new Promise<number>((resolve) => {
-		const proc = spawn("/bin/bash", ["-c", task], {
-			cwd,
-			shell: false,
-			stdio: ["ignore", "pipe", "pipe"],
-			env: { ...process.env },
-			detached: process.platform !== "win32",
-		});
-		if (proc.pid) trackDetachedChildPid(proc.pid);
-
-		proc.stdout!.on("data", (data: Buffer) => {
-			stdout += data.toString();
-		});
-
-		proc.stderr!.on("data", (data: Buffer) => {
-			stderr += data.toString();
-		});
-
-		proc.on("close", (code) => {
-			if (proc.pid) untrackDetachedChildPid(proc.pid);
-			resolve(code ?? 0);
-		});
-
-		proc.on("error", () => resolve(1));
-
-		if (signal) {
-			const killProc = () => {
-				wasAborted = true;
-				if (proc.pid) killProcessTree(proc.pid);
-				setTimeout(() => {
-					if (!proc.killed) proc.kill("SIGKILL");
-				}, 5000);
-			};
-			if (signal.aborted) {
-				killProc();
-			} else {
-				signal.addEventListener("abort", killProc, { once: true });
-				proc.on("close", () => {
-					if (proc.pid) untrackDetachedChildPid(proc.pid);
-					signal.removeEventListener("abort", killProc);
-				});
-			}
-		}
-	});
-
-	if (wasAborted) {
-		return { status: "aborted", workerId, task, reason: "user" };
-	}
-
-	onEvent({ type: "bash_fast_path_end", exitCode, stdoutPreview: stdout.slice(0, 1024) });
-
-	if (exitCode !== 0) {
-		const outcome: WorkerOutcome = {
-			status: "failed",
-			workerId,
-			task,
-			error: stderr || `exit code ${exitCode}`,
-			text: stdout,
-		};
-		const validation = validateWorkerOutput(outcome, cwd);
-		return { ...outcome, validation };
-	}
-
-	const validation = validateWorkerOutput(
-		{ status: "done", workerId, task, text: stdout, usage: { ...EMPTY_USAGE } },
-		cwd,
-	);
-	return {
-		status: "done",
-		workerId,
-		task,
-		text: stdout,
-		usage: { ...EMPTY_USAGE },
-		estimatedUsage: true,
-		validation,
-	};
-}
-
 async function runWorkerChildProcess(
 	workerId: string,
 	task: string,
@@ -888,13 +673,6 @@ async function runWorkerChildProcess(
 	workerTools?: string[],
 	parentConfig?: HamrChildConfig,
 ): Promise<WorkerOutcome> {
-	// ─── Bash-only fast path ───────────────────────────────────────────────
-	// Only take the fast path when the task text looks like a shell command
-	// rather than natural-language instructions for an agent.
-	if (isBashFastPathTools(workerTools) && taskLooksLikeBashCommand(task)) {
-		return runBashFastPath(workerId, task, cwd, signal, onEvent);
-	}
-
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (workerModel) args.push("--model", workerModel);
 	if (workerTools && workerTools.length > 0) args.push("--tools", workerTools.join(","));
@@ -1989,7 +1767,6 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 				"Use {previous} in chain/stages tasks to reference the prior worker's output.",
 				"Parallel concurrency is bounded — do not worry about overloading, the system caps it safely.",
 				"Delegate only as many tasks as the work genuinely warrants.",
-				"When all subtask tools are restricted to 'bash' (or 'bash'+'read'), the task text is executed directly as a shell command. Write valid bash, not English instructions. Omit the tools parameter to use the full agent path for natural-language tasks.",
 			],
 			parameters: SubagentParams,
 			renderCall: (args, theme, context) => {
@@ -2025,13 +1802,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 				let text = theme.fg("toolTitle", theme.bold("delegate_subagents ")) + theme.fg("accent", modeLabel);
 				for (let i = 0; i < displayCount; i++) {
 					const itemTools = (items[i] as Record<string, unknown>)?.tools as string[] | undefined;
-					const isFastPath = isBashFastPathTools(itemTools);
-					const modeIndicator =
-						itemTools !== undefined
-							? isFastPath
-								? theme.fg("success", " ⚡bash")
-								: theme.fg("muted", " 🤖agent")
-							: "";
+					const modeIndicator = itemTools !== undefined ? theme.fg("muted", " 🤖agent") : "";
 					const preview = items[i]!.task.length > 50 ? `${items[i]!.task.slice(0, 50)}…` : items[i]!.task;
 					text += `\n  ${theme.fg("muted", `${i + 1}.`)} ${theme.fg("dim", preview)}${modeIndicator}`;
 				}
