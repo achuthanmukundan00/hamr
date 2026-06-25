@@ -1,0 +1,56 @@
+[package]
+name = "hamr-ai"
+description = "Unified LLM API with provider abstraction, streaming, model registry, and type system"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["providers-all"]
+# Provider feature flags — compile only what you need
+providers-all = [
+    "anthropic",
+    "openai-completions",
+    "openai-responses",
+    "openai-codex",
+    "google",
+    "google-vertex",
+    "mistral",
+    "bedrock",
+    "cloudflare",
+]
+anthropic = []
+openai-completions = []
+openai-responses = []
+openai-codex = []
+azure-openai-responses = []
+google = []
+google-vertex = []
+mistral = []
+bedrock = []
+cloudflare = []
+# Image generation
+images-openrouter = []
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+bytes.workspace = true
+pin-project-lite.workspace = true
+reqwest.workspace = true
+schemars.workspace = true
+json5.workspace = true
+
+# Optional provider SDKs — uncomment as provider modules are implemented
+# async-openai = { workspace = true, optional = true }
+# aws-sdk-bedrockruntime = { workspace = true, optional = true }
+# aws-types = { workspace = true, optional = true }
+# aws-config = { workspace = true, optional = true }

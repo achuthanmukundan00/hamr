@@ -1,0 +1,66 @@
+[package]
+name = "hamr-agent"
+description = "Coding agent CLI with tools, extensions, TUI, and session management"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "hamr"
+path = "src/cli/main.rs"
+
+[features]
+default = ["hamr-extensions-all", "tui"]
+# TUI is optional — benchmark mode doesn't need it
+tui = ["dep:crossterm", "dep:unicode-width"]
+# Hamr built-in extensions
+hamr-extensions-all = ["hamr-memory", "hamr-subagents", "hamr-providers", "hamr-cards", "hamr-context", "hamr-read-loop-guard", "hamr-persistent-editor"]
+hamr-memory = ["dep:rusqlite"]
+hamr-subagents = []
+hamr-providers = []
+hamr-cards = []
+hamr-context = []
+hamr-read-loop-guard = []
+hamr-persistent-editor = []
+# Rhai scripting for agent-authored extensions
+rhai-extensions = ["dep:rhai"]
+
+[dependencies]
+hamr-ai = { path = "../hamr-ai" }
+hamr-harness = { path = "../hamr-harness" }
+
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+regex.workspace = true
+glob.workspace = true
+ignore.workspace = true
+similar.workspace = true
+tempfile.workspace = true
+schemars.workspace = true
+pin-project-lite.workspace = true
+
+# TUI
+crossterm = { workspace = true, optional = true }
+unicode-width = { workspace = true, optional = true }
+
+# Storage
+rusqlite = { workspace = true, optional = true }
+
+# Scripting
+rhai = { workspace = true, optional = true }
+
+# --- Markdown parsing (for TUI) ---
+# TODO: bring in a Rust markdown parser
+# pulldown-cmark = "0.12"
+
+[dev-dependencies]
+tokio-test.workspace = true

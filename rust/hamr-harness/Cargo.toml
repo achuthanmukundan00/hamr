@@ -1,0 +1,27 @@
+[package]
+name = "hamr-harness"
+description = "Core agent loop, compaction, session management, and extension infrastructure"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hamr-ai = { path = "../hamr-ai" }
+
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+regex.workspace = true
+glob.workspace = true
+ignore.workspace = true
+tempfile.workspace = true
+schemars.workspace = true
+pin-project-lite.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "hamr-support"
+description = "Documentation, release tooling, scripts, and build support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+# This crate may be empty or hold build-time utilities.
+# The actual docs, scripts, and release tooling live in the workspace root.
