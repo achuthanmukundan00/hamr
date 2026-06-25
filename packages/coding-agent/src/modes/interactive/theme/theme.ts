@@ -421,9 +421,29 @@ function detectGlyphTier(): "emoji" | "nerd" | "unicode" | "ascii" {
 	return "unicode";
 }
 
-function getGlyphTier(): "emoji" | "nerd" | "unicode" {
-	const tier = detectGlyphTier();
-	return tier === "ascii" ? "unicode" : tier;
+function getGlyphTier(): "emoji" | "nerd" | "unicode" | "ascii" {
+	return detectGlyphTier();
+}
+
+/** Common TUI glyphs mapped to each rendering tier. */
+const TIERED_GLYPHS: Record<string, { emoji: string; nerd: string; unicode: string; ascii: string }> = {
+	arrowUp: { emoji: "⬆", nerd: "⬆", unicode: "↑", ascii: "^" },
+	arrowDown: { emoji: "⬇", nerd: "⬇", unicode: "↓", ascii: "v" },
+	arrowRight: { emoji: "➡", nerd: "➡", unicode: "→", ascii: ">" },
+	arrowLeft: { emoji: "⬅", nerd: "⬅", unicode: "←", ascii: "<" },
+	checkmark: { emoji: "✅", nerd: "✅", unicode: "✓", ascii: "+" },
+	crossmark: { emoji: "❌", nerd: "❌", unicode: "✗", ascii: "x" },
+	ellipsis: { emoji: "…", nerd: "…", unicode: "…", ascii: "..." },
+};
+
+/** Return the tier-appropriate version of a common TUI glyph. */
+function getTieredGlyph(key: keyof typeof TIERED_GLYPHS): string {
+	const tier = getGlyphTier();
+	const g = TIERED_GLYPHS[key];
+	if (tier === "emoji") return g.emoji;
+	if (tier === "nerd") return g.nerd;
+	if (tier === "ascii") return g.ascii;
+	return g.unicode;
 }
 
 // ============================================================================
@@ -804,11 +824,17 @@ export class Theme {
 		return modelBrandFor(provider, modelLabel);
 	}
 
+	/** Return a tier-appropriate common TUI glyph (arrows, checkmarks, etc.). */
+	glyph(key: keyof typeof TIERED_GLYPHS): string {
+		return getTieredGlyph(key);
+	}
+
 	modelGlyph(provider: string, modelLabel?: string): string {
 		const brand = this.modelBrand(provider, modelLabel);
 		const tier = getGlyphTier();
 		if (tier === "emoji") return brand.emoji;
 		if (tier === "nerd") return brand.nerd;
+		if (tier === "ascii") return brand.ascii;
 		return brand.unicode;
 	}
 

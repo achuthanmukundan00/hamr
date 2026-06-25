@@ -49,8 +49,8 @@ const ENV_TREE_REMAINING = "HAMR_SUBAGENT_TREE_REMAINING";
 /** Env var passed to child processes pointing to the serialized parent config. */
 const ENV_CHILD_CONFIG = "HAMR_CHILD_CONFIG";
 
-/** Per-worker step timeout in ms (default: 5 min). */
-const ENV_STEP_TIMEOUT_MS = Number.parseInt(process.env.HAMR_SUBAGENT_STEP_TIMEOUT_MS ?? "300000", 10) || 300000;
+/** Per-worker step timeout in ms (default: 15 min). */
+const ENV_STEP_TIMEOUT_MS = Number.parseInt(process.env.HAMR_SUBAGENT_STEP_TIMEOUT_MS ?? "900000", 10) || 900000;
 /** Per-run total timeout in ms (default: 30 min). */
 const ENV_TOTAL_TIMEOUT_MS = Number.parseInt(process.env.HAMR_SUBAGENT_TOTAL_TIMEOUT_MS ?? "1800000", 10) || 1800000;
 
