@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.7.0] - 2026-06-25
+
+### Breaking
+
+- **Subagent bash fast-path removed.** Workers with `tools: ["bash"]` or `tools: ["bash", "read"]` no longer take a ~50ms native bash fast path — all workers now run as full agent processes. This eliminates the risk of natural-language tasks being silently executed as shell commands. The `⚡bash` indicator in subagent task previews is removed, replaced by `🤖agent`. (#52)
+
+### Changed
+
+- **PathGuard: unblock skill file writes.** Replaced blanket `~/.hamr/` denial in `DENIED_WRITE_DIRS` with a specific `~/.hamr/auth.json` entry in `DENIED_WRITE_FILES`, so `write` and `edit` tools can create files under `~/.hamr/agent/skills/`. (#51)
+- **Subagent step timeout increased.** Default per-worker time-out raised from 5 minutes to 15 minutes (`HAMR_SUBAGENT_STEP_TIMEOUT_MS` env var).
+- **Tiered terminal glyph system.** Added `Theme.glyph()` method returning tier-appropriate common glyphs (arrows, checkmarks, ellipsis) mapped across emoji, nerd, unicode, and ascii tiers via `TIERED_GLYPHS`.
+- **ASCII glyph tier for model glyphs.** `modelGlyph()` now handles the ascii tier (returning `brand.ascii` instead of `brand.unicode`), preventing tofu/box characters on dumb/ascii terminals.
+- **Footer token arrows use theme glyphs.** Hardcoded `↑`/`↓` replaced with `theme.glyph("arrowUp")`/`theme.glyph("arrowDown")`, adapting to the terminal's glyph tier.
+- **`Record<>` type annotation dropped on `TIERED_GLYPHS`.** Using plain `const` with `satisfies` for exact `keyof` inference, enabling strict type narrowing.
+
+### Fixed
+
+- **Skill file creation blocked by PathGuard.** The blanket `~/.hamr/` write denial was preventing legitimate skill authoring in `~/.hamr/agent/skills/`. Now only `~/.hamr/auth.json` is blocked, allowing skill files to be written while still protecting credentials. (#51)
+- **Bash fast-path executed natural-language tasks unguarded.** Workers dispatched with `tools: ["bash"]` or `tools: ["bash", "read"]` bypassed the agent loop, running the task string directly in `/bin/bash -c` with no tool-call parsing or safety interposition. All workers now go through the agent loop with proper guardrails. (#52)
+- **Terminal glyphs rendered as tofu on ascii/dumb terminals.** `getGlyphTier()` previously fell back to unicode for ascii terminals, producing unrenderable box characters. Now returns `"ascii"` with simple ASCII replacements (e.g. `^`/`v` for arrows, `+`/`x` for check/cross).
+
 ## [0.6.3] - 2026-06-24
 
 ### Added
