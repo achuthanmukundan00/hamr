@@ -58,6 +58,51 @@ export interface ModelBrand {
     unicode: string;
     ascii: string;
 }
+/** Common TUI glyphs mapped to each rendering tier. */
+declare const TIERED_GLYPHS: {
+    arrowUp: {
+        emoji: string;
+        nerd: string;
+        unicode: string;
+        ascii: string;
+    };
+    arrowDown: {
+        emoji: string;
+        nerd: string;
+        unicode: string;
+        ascii: string;
+    };
+    arrowRight: {
+        emoji: string;
+        nerd: string;
+        unicode: string;
+        ascii: string;
+    };
+    arrowLeft: {
+        emoji: string;
+        nerd: string;
+        unicode: string;
+        ascii: string;
+    };
+    checkmark: {
+        emoji: string;
+        nerd: string;
+        unicode: string;
+        ascii: string;
+    };
+    crossmark: {
+        emoji: string;
+        nerd: string;
+        unicode: string;
+        ascii: string;
+    };
+    ellipsis: {
+        emoji: string;
+        nerd: string;
+        unicode: string;
+        ascii: string;
+    };
+};
 export declare class Theme {
     readonly name?: string;
     readonly sourcePath?: string;
@@ -90,6 +135,8 @@ export declare class Theme {
     getThinkingBorderColor(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): (str: string) => string;
     getBashModeBorderColor(): (str: string) => string;
     modelBrand(provider: string, modelLabel?: string): ModelBrand;
+    /** Return a tier-appropriate common TUI glyph (arrows, checkmarks, etc.). */
+    glyph(key: keyof typeof TIERED_GLYPHS): string;
     modelGlyph(provider: string, modelLabel?: string): string;
     /**
      * Editor border color derived from model brand hex × thinking brightness.

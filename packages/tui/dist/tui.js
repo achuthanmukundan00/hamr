@@ -54,7 +54,7 @@ export function isFocusable(component) {
  * TUI finds and strips this marker, then positions the hardware cursor there.
  */
 export const CURSOR_MARKER = "\x1b_pi:c\x07";
-export { visibleWidth };
+export { sliceWithWidth, visibleWidth };
 /** Parse a SizeValue into absolute value given a reference size */
 function parseSizeValue(value, referenceSize) {
     if (value === undefined)

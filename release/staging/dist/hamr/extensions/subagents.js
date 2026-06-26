@@ -17,7 +17,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Container, Markdown, Spacer, Text } from "@hamr/tui";
+import { Container, Markdown, Spacer, sliceWithWidth, Text } from "@hamr/tui";
 import { Type } from "typebox";
 import { defineTool } from "../../core/extensions/types.js";
 import { getDefaultSessionDirPath } from "../../core/session-manager.js";
@@ -35,8 +35,8 @@ const ENV_TOTAL_BUDGET = Number.parseInt(process.env.HAMR_SUBAGENT_BUDGET ?? "10
 const ENV_TREE_REMAINING = "HAMR_SUBAGENT_TREE_REMAINING";
 /** Env var passed to child processes pointing to the serialized parent config. */
 const ENV_CHILD_CONFIG = "HAMR_CHILD_CONFIG";
-/** Per-worker step timeout in ms (default: 5 min). */
-const ENV_STEP_TIMEOUT_MS = Number.parseInt(process.env.HAMR_SUBAGENT_STEP_TIMEOUT_MS ?? "300000", 10) || 300000;
+/** Per-worker step timeout in ms (default: 15 min). */
+const ENV_STEP_TIMEOUT_MS = Number.parseInt(process.env.HAMR_SUBAGENT_STEP_TIMEOUT_MS ?? "900000", 10) || 900000;
 /** Per-run total timeout in ms (default: 30 min). */
 const ENV_TOTAL_TIMEOUT_MS = Number.parseInt(process.env.HAMR_SUBAGENT_TOTAL_TIMEOUT_MS ?? "1800000", 10) || 1800000;
 /**
@@ -117,6 +117,15 @@ function formatTokens(tokens) {
     if (tokens >= 1000)
         return `${(tokens / 1000).toFixed(1)}K`;
     return `${tokens}`;
+}
+/** Deep-clone a value via JSON round-trip. Returns the original on failure (BigInt, circular refs). */
+function safeJsonClone(value) {
+    try {
+        return JSON.parse(JSON.stringify(value));
+    }
+    catch {
+        return value;
+    }
 }
 function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -254,9 +263,12 @@ class AgentStatusWidget {
             }
         }, 180);
     }
-    render() {
+    render(width) {
         const line = renderStatusLine() ?? this.lastLine;
-        return line ? [` ${this.theme.fg("muted", line)}`] : [];
+        if (!line)
+            return [];
+        const colored = ` ${this.theme.fg("muted", line)}`;
+        return [sliceWithWidth(colored, 0, width, true).text];
     }
     invalidate() { }
     dispose() {
@@ -356,15 +368,6 @@ function restoreRunsFromDisk(cwd, sessionId) {
     catch {
         // best-effort
     }
-}
-// ─── Bash-only fast path helper ──────────────────────────────────────────────
-/** Returns true if the tools list qualifies for the bash-only fast path. */
-function isBashFastPathTools(tools) {
-    return (tools !== undefined &&
-        tools.length > 0 &&
-        tools.length <= 2 &&
-        tools.every((t) => t === "bash" || t === "read") &&
-        tools.includes("bash"));
 }
 /** Heuristic: does a string look like a file-system path (not a URL, version, etc.)? */
 function looksLikeFilePath(s) {
@@ -530,91 +533,7 @@ function getPiInvocation(args) {
     }
     return { command: "hamr", args };
 }
-/**
- * Bash-only fast path: spawn /bin/bash -c <task> directly.
- * No agent loop, no locks, no model calls. ~50ms startup.
- */
-async function runBashFastPath(workerId, task, cwd, signal, onEvent) {
-    onEvent({ type: "bash_fast_path_start", task });
-    let wasAborted = false;
-    let stdout = "";
-    let stderr = "";
-    const exitCode = await new Promise((resolve) => {
-        const proc = spawn("/bin/bash", ["-c", task], {
-            cwd,
-            shell: false,
-            stdio: ["ignore", "pipe", "pipe"],
-            env: { ...process.env },
-            detached: process.platform !== "win32",
-        });
-        if (proc.pid)
-            trackDetachedChildPid(proc.pid);
-        proc.stdout.on("data", (data) => {
-            stdout += data.toString();
-        });
-        proc.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-        proc.on("close", (code) => {
-            if (proc.pid)
-                untrackDetachedChildPid(proc.pid);
-            resolve(code ?? 0);
-        });
-        proc.on("error", () => resolve(1));
-        if (signal) {
-            const killProc = () => {
-                wasAborted = true;
-                if (proc.pid)
-                    killProcessTree(proc.pid);
-                setTimeout(() => {
-                    if (!proc.killed)
-                        proc.kill("SIGKILL");
-                }, 5000);
-            };
-            if (signal.aborted) {
-                killProc();
-            }
-            else {
-                signal.addEventListener("abort", killProc, { once: true });
-                proc.on("close", () => {
-                    if (proc.pid)
-                        untrackDetachedChildPid(proc.pid);
-                    signal.removeEventListener("abort", killProc);
-                });
-            }
-        }
-    });
-    if (wasAborted) {
-        return { status: "aborted", workerId, task, reason: "user" };
-    }
-    onEvent({ type: "bash_fast_path_end", exitCode, stdoutPreview: stdout.slice(0, 1024) });
-    if (exitCode !== 0) {
-        const outcome = {
-            status: "failed",
-            workerId,
-            task,
-            error: stderr || `exit code ${exitCode}`,
-            text: stdout,
-        };
-        const validation = validateWorkerOutput(outcome, cwd);
-        return { ...outcome, validation };
-    }
-    const validation = validateWorkerOutput({ status: "done", workerId, task, text: stdout, usage: { ...EMPTY_USAGE } }, cwd);
-    return {
-        status: "done",
-        workerId,
-        task,
-        text: stdout,
-        usage: { ...EMPTY_USAGE },
-        estimatedUsage: true,
-        validation,
-    };
-}
 async function runWorkerChildProcess(workerId, task, cwd, signal, onEvent, workerModel, workerTools, parentConfig) {
-    // ─── Bash-only fast path ───────────────────────────────────────────────
-    if (isBashFastPathTools(workerTools)) {
-        return runBashFastPath(workerId, task, cwd, signal, onEvent);
-    }
     const args = ["--mode", "json", "-p", "--no-session"];
     if (workerModel)
         args.push("--model", workerModel);
@@ -1002,8 +921,8 @@ async function executeSingleWorker(run, workerId, task, cwd, signal, _onUpdate, 
                 modelCost: ctx.model.cost ? { ...ctx.model.cost } : undefined,
                 modelHeaders: ctx.model.headers ? { ...ctx.model.headers } : undefined,
                 modelThinkingLevelMap: ctx.model.thinkingLevelMap ? { ...ctx.model.thinkingLevelMap } : undefined,
-                modelCompat: ctx.model.compat ? JSON.parse(JSON.stringify(ctx.model.compat)) : undefined,
-                toolNames: workerTools ?? [],
+                modelCompat: ctx.model.compat ? safeJsonClone(ctx.model.compat) : undefined,
+                toolNames: workerTools ?? ["read", "bash", "edit", "write"],
                 systemPrompt: ctx.getSystemPrompt(),
                 cwd: ctx.cwd,
                 treeBudgetRemaining,
@@ -1533,12 +1452,7 @@ function registerSubagentTool(pi) {
             let text = theme.fg("toolTitle", theme.bold("delegate_subagents ")) + theme.fg("accent", modeLabel);
             for (let i = 0; i < displayCount; i++) {
                 const itemTools = items[i]?.tools;
-                const isFastPath = isBashFastPathTools(itemTools);
-                const modeIndicator = itemTools !== undefined
-                    ? isFastPath
-                        ? theme.fg("success", " ⚡bash")
-                        : theme.fg("muted", " 🤖agent")
-                    : "";
+                const modeIndicator = itemTools !== undefined ? theme.fg("muted", " 🤖agent") : "";
                 const preview = items[i].task.length > 50 ? `${items[i].task.slice(0, 50)}…` : items[i].task;
                 text += `\n  ${theme.fg("muted", `${i + 1}.`)} ${theme.fg("dim", preview)}${modeIndicator}`;
             }
@@ -1999,7 +1913,7 @@ function registerSubagentTool(pi) {
                     (results.length > 0 &&
                         results.every((r) => {
                             const v = r.validation;
-                            return v && v.warnings.some((w) => w.type === "empty_output");
+                            return v?.warnings?.some((w) => w.type === "empty_output");
                         }))
                     ? { isError: true }
                     : {}),

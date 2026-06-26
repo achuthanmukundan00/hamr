@@ -153,11 +153,17 @@ function getSelfUpdateCommandForMethod(
 		case "npm": {
 			const [command = "npm", ...npmArgs] = npmCommand ?? [];
 			const inferred = npmCommand?.length ? undefined : getInferredNpmInstall();
-			const prefixArgs = [...npmArgs, ...(inferred ? ["--prefix", inferred.prefix] : [])];
+			// When an inferred prefix is available, install without -g so npm
+			// doesn't fall back to its configured global prefix. The --prefix
+			// value is the parent of node_modules (e.g. /opt/homebrew/lib),
+			// NOT the npm prefix (/opt/homebrew), because without -g, npm
+			// installs to {--prefix}/node_modules/ rather than
+			// {--prefix}/lib/node_modules/.
+			const prefixArgs = [...npmArgs, ...(inferred ? ["--prefix", dirname(inferred.root)] : [])];
 			const installStep = makeSelfUpdateCommandStep(command, [
 				...prefixArgs,
 				"install",
-				"-g",
+				...(inferred ? [] : ["-g"]),
 				"--ignore-scripts",
 				"--min-release-age=0",
 				updatePackageName,

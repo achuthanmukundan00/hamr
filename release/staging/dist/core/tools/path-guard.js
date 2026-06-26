@@ -22,7 +22,8 @@ const DENIED_WRITE_DIRS = [
     join(HOME, ".aws"),
     join(HOME, ".gnupg"),
     join(HOME, ".config", "hamr"),
-    join(HOME, ".hamr"),
+    // ~/.hamr/auth.json is covered by DENIED_WRITE_FILES.
+    // ~/.hamr/agent/skills/ is intentionally allowed (skill authoring).
     "/etc",
     // cron/at persistence spools (NOT all of /var — macOS uses /var/folders for temp)
     "/var/spool/cron",
@@ -48,6 +49,8 @@ const DENIED_WRITE_FILES = [
     join(HOME, ".npmrc"),
     join(HOME, ".netrc"),
     join(HOME, ".gitconfig"),
+    // hamr's own auth file — prevent credential overwrite.
+    join(HOME, ".hamr", "auth.json"),
 ];
 /**
  * Filenames that are denied for writes anywhere on the path (these are

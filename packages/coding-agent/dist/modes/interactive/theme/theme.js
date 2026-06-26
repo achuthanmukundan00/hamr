@@ -273,8 +273,29 @@ function detectGlyphTier() {
     return "unicode";
 }
 function getGlyphTier() {
-    const tier = detectGlyphTier();
-    return tier === "ascii" ? "unicode" : tier;
+    return detectGlyphTier();
+}
+/** Common TUI glyphs mapped to each rendering tier. */
+const TIERED_GLYPHS = {
+    arrowUp: { emoji: "⬆", nerd: "⬆", unicode: "↑", ascii: "^" },
+    arrowDown: { emoji: "⬇", nerd: "⬇", unicode: "↓", ascii: "v" },
+    arrowRight: { emoji: "➡", nerd: "➡", unicode: "→", ascii: ">" },
+    arrowLeft: { emoji: "⬅", nerd: "⬅", unicode: "←", ascii: "<" },
+    checkmark: { emoji: "✅", nerd: "✅", unicode: "✓", ascii: "+" },
+    crossmark: { emoji: "❌", nerd: "❌", unicode: "✗", ascii: "x" },
+    ellipsis: { emoji: "…", nerd: "…", unicode: "…", ascii: "..." },
+};
+/** Return the tier-appropriate version of a common TUI glyph. */
+function getTieredGlyph(key) {
+    const tier = getGlyphTier();
+    const g = TIERED_GLYPHS[key];
+    if (tier === "emoji")
+        return g.emoji;
+    if (tier === "nerd")
+        return g.nerd;
+    if (tier === "ascii")
+        return g.ascii;
+    return g.unicode;
 }
 // ============================================================================
 // Color Utilities
@@ -592,6 +613,10 @@ export class Theme {
     modelBrand(provider, modelLabel) {
         return modelBrandFor(provider, modelLabel);
     }
+    /** Return a tier-appropriate common TUI glyph (arrows, checkmarks, etc.). */
+    glyph(key) {
+        return getTieredGlyph(key);
+    }
     modelGlyph(provider, modelLabel) {
         const brand = this.modelBrand(provider, modelLabel);
         const tier = getGlyphTier();
@@ -599,6 +624,8 @@ export class Theme {
             return brand.emoji;
         if (tier === "nerd")
             return brand.nerd;
+        if (tier === "ascii")
+            return brand.ascii;
         return brand.unicode;
     }
     /**

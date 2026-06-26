@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Usage } from "@hamr/ai";
-import { type Component, Container, Markdown, Spacer, Text, type TUI } from "@hamr/tui";
+import { type Component, Container, Markdown, Spacer, sliceWithWidth, Text, type TUI } from "@hamr/tui";
 import { Type } from "typebox";
 import type { ExtensionContext, ExtensionFactory } from "../../core/extensions/types.ts";
 import { defineTool } from "../../core/extensions/types.ts";
@@ -49,8 +49,8 @@ const ENV_TREE_REMAINING = "HAMR_SUBAGENT_TREE_REMAINING";
 /** Env var passed to child processes pointing to the serialized parent config. */
 const ENV_CHILD_CONFIG = "HAMR_CHILD_CONFIG";
 
-/** Per-worker step timeout in ms (default: 5 min). */
-const ENV_STEP_TIMEOUT_MS = Number.parseInt(process.env.HAMR_SUBAGENT_STEP_TIMEOUT_MS ?? "300000", 10) || 300000;
+/** Per-worker step timeout in ms (default: 15 min). */
+const ENV_STEP_TIMEOUT_MS = Number.parseInt(process.env.HAMR_SUBAGENT_STEP_TIMEOUT_MS ?? "900000", 10) || 900000;
 /** Per-run total timeout in ms (default: 30 min). */
 const ENV_TOTAL_TIMEOUT_MS = Number.parseInt(process.env.HAMR_SUBAGENT_TOTAL_TIMEOUT_MS ?? "1800000", 10) || 1800000;
 
@@ -190,6 +190,15 @@ function formatTokens(tokens: number): string {
 	if (tokens >= 10_000) return `${Math.round(tokens / 1000)}K`;
 	if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
 	return `${tokens}`;
+}
+
+/** Deep-clone a value via JSON round-trip. Returns the original on failure (BigInt, circular refs). */
+function safeJsonClone<T>(value: T): T {
+	try {
+		return JSON.parse(JSON.stringify(value));
+	} catch {
+		return value;
+	}
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -349,9 +358,11 @@ class AgentStatusWidget implements Component {
 		}, 180);
 	}
 
-	render(): string[] {
+	render(width: number): string[] {
 		const line = renderStatusLine() ?? this.lastLine;
-		return line ? [` ${this.theme.fg("muted", line)}`] : [];
+		if (!line) return [];
+		const colored = ` ${this.theme.fg("muted", line)}`;
+		return [sliceWithWidth(colored, 0, width, true).text];
 	}
 
 	invalidate(): void {}
@@ -449,19 +460,6 @@ function restoreRunsFromDisk(cwd: string, sessionId: string): void {
 	} catch {
 		// best-effort
 	}
-}
-
-// ─── Bash-only fast path helper ──────────────────────────────────────────────
-
-/** Returns true if the tools list qualifies for the bash-only fast path. */
-function isBashFastPathTools(tools: string[] | undefined): boolean {
-	return (
-		tools !== undefined &&
-		tools.length > 0 &&
-		tools.length <= 2 &&
-		tools.every((t) => t === "bash" || t === "read") &&
-		tools.includes("bash")
-	);
 }
 
 // ─── Worker execution (child hamr process) ───────────────────────────────────
@@ -676,101 +674,6 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "hamr", args };
 }
 
-/**
- * Bash-only fast path: spawn /bin/bash -c <task> directly.
- * No agent loop, no locks, no model calls. ~50ms startup.
- */
-async function runBashFastPath(
-	workerId: string,
-	task: string,
-	cwd: string,
-	signal: AbortSignal | undefined,
-	onEvent: (event: Record<string, unknown>) => void,
-): Promise<WorkerOutcome> {
-	onEvent({ type: "bash_fast_path_start", task });
-
-	let wasAborted = false;
-	let stdout = "";
-	let stderr = "";
-
-	const exitCode = await new Promise<number>((resolve) => {
-		const proc = spawn("/bin/bash", ["-c", task], {
-			cwd,
-			shell: false,
-			stdio: ["ignore", "pipe", "pipe"],
-			env: { ...process.env },
-			detached: process.platform !== "win32",
-		});
-		if (proc.pid) trackDetachedChildPid(proc.pid);
-
-		proc.stdout!.on("data", (data: Buffer) => {
-			stdout += data.toString();
-		});
-
-		proc.stderr!.on("data", (data: Buffer) => {
-			stderr += data.toString();
-		});
-
-		proc.on("close", (code) => {
-			if (proc.pid) untrackDetachedChildPid(proc.pid);
-			resolve(code ?? 0);
-		});
-
-		proc.on("error", () => resolve(1));
-
-		if (signal) {
-			const killProc = () => {
-				wasAborted = true;
-				if (proc.pid) killProcessTree(proc.pid);
-				setTimeout(() => {
-					if (!proc.killed) proc.kill("SIGKILL");
-				}, 5000);
-			};
-			if (signal.aborted) {
-				killProc();
-			} else {
-				signal.addEventListener("abort", killProc, { once: true });
-				proc.on("close", () => {
-					if (proc.pid) untrackDetachedChildPid(proc.pid);
-					signal.removeEventListener("abort", killProc);
-				});
-			}
-		}
-	});
-
-	if (wasAborted) {
-		return { status: "aborted", workerId, task, reason: "user" };
-	}
-
-	onEvent({ type: "bash_fast_path_end", exitCode, stdoutPreview: stdout.slice(0, 1024) });
-
-	if (exitCode !== 0) {
-		const outcome: WorkerOutcome = {
-			status: "failed",
-			workerId,
-			task,
-			error: stderr || `exit code ${exitCode}`,
-			text: stdout,
-		};
-		const validation = validateWorkerOutput(outcome, cwd);
-		return { ...outcome, validation };
-	}
-
-	const validation = validateWorkerOutput(
-		{ status: "done", workerId, task, text: stdout, usage: { ...EMPTY_USAGE } },
-		cwd,
-	);
-	return {
-		status: "done",
-		workerId,
-		task,
-		text: stdout,
-		usage: { ...EMPTY_USAGE },
-		estimatedUsage: true,
-		validation,
-	};
-}
-
 async function runWorkerChildProcess(
 	workerId: string,
 	task: string,
@@ -781,11 +684,6 @@ async function runWorkerChildProcess(
 	workerTools?: string[],
 	parentConfig?: HamrChildConfig,
 ): Promise<WorkerOutcome> {
-	// ─── Bash-only fast path ───────────────────────────────────────────────
-	if (isBashFastPathTools(workerTools)) {
-		return runBashFastPath(workerId, task, cwd, signal, onEvent);
-	}
-
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (workerModel) args.push("--model", workerModel);
 	if (workerTools && workerTools.length > 0) args.push("--tools", workerTools.join(","));
@@ -1205,8 +1103,8 @@ async function executeSingleWorker(
 				modelCost: ctx.model.cost ? { ...ctx.model.cost } : undefined,
 				modelHeaders: ctx.model.headers ? { ...ctx.model.headers } : undefined,
 				modelThinkingLevelMap: ctx.model.thinkingLevelMap ? { ...ctx.model.thinkingLevelMap } : undefined,
-				modelCompat: ctx.model.compat ? JSON.parse(JSON.stringify(ctx.model.compat)) : undefined,
-				toolNames: workerTools ?? [],
+				modelCompat: ctx.model.compat ? (safeJsonClone(ctx.model.compat) as Record<string, unknown>) : undefined,
+				toolNames: workerTools ?? ["read", "bash", "edit", "write"],
 				systemPrompt: ctx.getSystemPrompt(),
 				cwd: ctx.cwd,
 				treeBudgetRemaining,
@@ -1915,13 +1813,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 				let text = theme.fg("toolTitle", theme.bold("delegate_subagents ")) + theme.fg("accent", modeLabel);
 				for (let i = 0; i < displayCount; i++) {
 					const itemTools = (items[i] as Record<string, unknown>)?.tools as string[] | undefined;
-					const isFastPath = isBashFastPathTools(itemTools);
-					const modeIndicator =
-						itemTools !== undefined
-							? isFastPath
-								? theme.fg("success", " ⚡bash")
-								: theme.fg("muted", " 🤖agent")
-							: "";
+					const modeIndicator = itemTools !== undefined ? theme.fg("muted", " 🤖agent") : "";
 					const preview = items[i]!.task.length > 50 ? `${items[i]!.task.slice(0, 50)}…` : items[i]!.task;
 					text += `\n  ${theme.fg("muted", `${i + 1}.`)} ${theme.fg("dim", preview)}${modeIndicator}`;
 				}
@@ -2481,7 +2373,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 					(results.length > 0 &&
 						results.every((r) => {
 							const v = (r as { validation?: ValidationResult }).validation;
-							return v && v.warnings.some((w) => w.type === "empty_output");
+							return v?.warnings?.some((w) => w.type === "empty_output");
 						}))
 						? { isError: true }
 						: {}),

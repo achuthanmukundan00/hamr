@@ -30,5 +30,5 @@ export { parseOsc11BackgroundColor } from "./terminal-colors.js";
 export { allocateImageId, calculateImageRows, deleteAllKittyImages, deleteKittyImage, detectCapabilities, encodeITerm2, encodeKitty, getCapabilities, getCellDimensions, getGifDimensions, getImageDimensions, getJpegDimensions, getPngDimensions, getWebpDimensions, hyperlink, imageFallback, renderImage, resetCapabilitiesCache, setCapabilities, setCellDimensions, } from "./terminal-image.js";
 export { Container, CURSOR_MARKER, isFocusable, TUI, } from "./tui.js";
 // Utilities
-export { applyBackgroundToLine, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.js";
+export { applyBackgroundToLine, sliceByColumn, sliceWithWidth, truncateToWidth, visibleWidth, wrapTextWithAnsi, } from "./utils.js";
 //# sourceMappingURL=index.js.map

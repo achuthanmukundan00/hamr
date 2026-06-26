@@ -3,7 +3,7 @@
  */
 import type { Terminal } from "./terminal.ts";
 import { type RgbColor } from "./terminal-colors.ts";
-import { visibleWidth } from "./utils.ts";
+import { sliceWithWidth, visibleWidth } from "./utils.ts";
 /**
  * Component interface - all components must implement this
  */
@@ -53,7 +53,7 @@ export declare function isFocusable(component: Component | null): component is C
  * TUI finds and strips this marker, then positions the hardware cursor there.
  */
 export declare const CURSOR_MARKER = "\u001B_pi:c\u0007";
-export { visibleWidth };
+export { sliceWithWidth, visibleWidth };
 /**
  * Anchor position for overlays
  */

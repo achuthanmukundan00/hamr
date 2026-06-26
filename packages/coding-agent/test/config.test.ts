@@ -169,36 +169,38 @@ describe("detectInstallMethod", () => {
 
 	test("self-updates npm installs from custom prefixes", () => {
 		const { prefix } = createNpmPrefixInstall();
+		const libPrefix = join(prefix, "lib");
 
 		const command = getSelfUpdateCommand("@hamr/coding-agent");
 
 		expect(detectInstallMethod()).toBe("npm");
 		expect(command).toEqual({
 			command: "npm",
-			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@hamr/coding-agent"],
-			display: `npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @hamr/coding-agent`,
+			args: ["--prefix", libPrefix, "install", "--ignore-scripts", "--min-release-age=0", "@hamr/coding-agent"],
+			display: `npm --prefix ${libPrefix} install --ignore-scripts --min-release-age=0 @hamr/coding-agent`,
 		});
 	});
 
 	test("self-updates renamed packages from the current install prefix", () => {
 		const { prefix } = createNpmPrefixInstall();
+		const libPrefix = join(prefix, "lib");
 
 		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
 
 		expect(command).toEqual({
 			command: "npm",
-			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
-			display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent && npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/pi`,
+			args: ["--prefix", libPrefix, "install", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
+			display: `npm --prefix ${libPrefix} uninstall -g @mariozechner/pi-coding-agent && npm --prefix ${libPrefix} install --ignore-scripts --min-release-age=0 @new-scope/pi`,
 			steps: [
 				{
 					command: "npm",
-					args: ["--prefix", prefix, "uninstall", "-g", "@mariozechner/pi-coding-agent"],
-					display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent`,
+					args: ["--prefix", libPrefix, "uninstall", "-g", "@mariozechner/pi-coding-agent"],
+					display: `npm --prefix ${libPrefix} uninstall -g @mariozechner/pi-coding-agent`,
 				},
 				{
 					command: "npm",
-					args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
-					display: `npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/pi`,
+					args: ["--prefix", libPrefix, "install", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
+					display: `npm --prefix ${libPrefix} install --ignore-scripts --min-release-age=0 @new-scope/pi`,
 				},
 			],
 		});
@@ -223,9 +225,8 @@ describe("detectInstallMethod", () => {
 
 		expect(command?.args).toEqual([
 			"--prefix",
-			prefix,
+			join(prefix, "lib"),
 			"install",
-			"-g",
 			"--ignore-scripts",
 			"--min-release-age=0",
 			"@hamr/coding-agent",
@@ -234,11 +235,12 @@ describe("detectInstallMethod", () => {
 
 	test("quotes npm self-update display paths", () => {
 		const { prefix } = createNpmPrefixInstall("pi prefix ");
+		const libPrefix = join(prefix, "lib");
 
 		const command = getSelfUpdateCommand("@hamr/coding-agent");
 
 		expect(command?.display).toBe(
-			`npm --prefix "${prefix}" install -g --ignore-scripts --min-release-age=0 @hamr/coding-agent`,
+			`npm --prefix "${libPrefix}" install --ignore-scripts --min-release-age=0 @hamr/coding-agent`,
 		);
 	});
 

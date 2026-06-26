@@ -20,5 +20,5 @@ export { ProcessTerminal, type Terminal } from "./terminal.ts";
 export { parseOsc11BackgroundColor, type RgbColor } from "./terminal-colors.ts";
 export { allocateImageId, type CellDimensions, calculateImageRows, deleteAllKittyImages, deleteKittyImage, detectCapabilities, encodeITerm2, encodeKitty, getCapabilities, getCellDimensions, getGifDimensions, getImageDimensions, getJpegDimensions, getPngDimensions, getWebpDimensions, hyperlink, type ImageDimensions, type ImageProtocol, type ImageRenderOptions, imageFallback, renderImage, resetCapabilitiesCache, setCapabilities, setCellDimensions, type TerminalCapabilities, } from "./terminal-image.ts";
 export { type Component, Container, CURSOR_MARKER, type Focusable, isFocusable, type OverlayAnchor, type OverlayHandle, type OverlayMargin, type OverlayOptions, type OverlayUnfocusOptions, type SizeValue, TUI, } from "./tui.ts";
-export { applyBackgroundToLine, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";
+export { applyBackgroundToLine, sliceByColumn, sliceWithWidth, truncateToWidth, visibleWidth, wrapTextWithAnsi, } from "./utils.ts";
 //# sourceMappingURL=index.d.ts.map

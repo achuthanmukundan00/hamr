@@ -1,4 +1,4 @@
-import { Key } from "@hamr/tui";
+import { Key, sliceWithWidth } from "@hamr/tui";
 class PersistentFooterComponent {
     constructor(ctx, theme, footerData) {
         this.ctx = ctx;
@@ -37,34 +37,17 @@ class PersistentFooterComponent {
             }
         }
         catch { }
-        lines.push(statsLine.length > visibleWidth(statsLine) ? statsLine.slice(0, width) : statsLine);
+        lines.push(sliceWithWidth(statsLine, 0, width, true).text);
         const extensionStatuses = this.footerData.getExtensionStatuses();
         if (extensionStatuses.size > 0) {
             const sortedStatuses = Array.from(extensionStatuses.entries())
                 .sort((a, b) => a[0].localeCompare(b[0]))
                 .map((entry) => entry[1]);
             const statusLine = sortedStatuses.join(" ");
-            lines.push(statusLine.length > width ? statusLine.slice(0, width) : statusLine);
+            lines.push(sliceWithWidth(statusLine, 0, width, true).text);
         }
         return lines;
     }
-}
-function visibleWidth(s) {
-    let width = 0;
-    let inEscape = false;
-    for (let i = 0; i < s.length; i++) {
-        if (inEscape) {
-            if (s[i] === "m")
-                inEscape = false;
-        }
-        else if (s[i] === "\x1b") {
-            inEscape = true;
-        }
-        else {
-            width++;
-        }
-    }
-    return width;
 }
 export function createPersistentEditorExtension() {
     let persistentEnabled = false;
