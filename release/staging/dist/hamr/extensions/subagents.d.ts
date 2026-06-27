@@ -36,6 +36,15 @@ interface WorkerState {
     errorMessage?: string;
     lastActivity?: string;
     lastTool?: string;
+    /** Fresh activity summary extracted from worker output or tool activity. */
+    lastSummary?: string;
+    /** Summary currently shown in the TUI. It rotates slowly to avoid log-like churn. */
+    displaySummary?: string;
+    displaySummaryUpdatedAt?: number;
+    /** Last N tool calls for loop detection. */
+    toolCallHistory: string[];
+    /** Set when the worker appears to be in a repeated-tool-call loop. */
+    looping?: boolean;
     recentEvents: ActivityEvent[];
     pendingFlush: string[];
     flushTimer?: ReturnType<typeof setInterval>;
@@ -43,6 +52,29 @@ interface WorkerState {
     finalOutput?: string;
     logPath: string;
     resultPath?: string;
+    /** Live workers from a nested delegate_subagents call (recursive). */
+    nestedWorkers?: LiveWorkerView[];
+    /** Header text for nested subagent swarm (e.g. "parallel 2/5 · 3 active"). */
+    nestedHeader?: string;
+}
+interface LiveWorkerView {
+    workerId: string;
+    task: string;
+    status: WorkerState["status"] | "timeout";
+    model?: string;
+    displaySummary?: string;
+    lastSummary?: string;
+    lastTool?: string;
+    looping?: boolean;
+    usage: Usage;
+    /** Worker has output validation warnings (yellow dot on final). */
+    hasWarnings?: boolean;
+    /** Worker has high-severity output warnings (red dot on final). */
+    hasHighWarnings?: boolean;
+    /** Nested sub-worker views when this worker spawns its own subagents. */
+    nestedWorkers?: LiveWorkerView[];
+    /** Header text for nested swarm (e.g. "parallel 2/5 · 3 active · ↓45K tok"). */
+    nestedHeader?: string;
 }
 interface ValidationWarning {
     type: "missing_file" | "empty_output" | "truncated_output" | "self_contradiction" | "suspicious_pattern";
@@ -98,10 +130,42 @@ declare function validateWorkerOutput(outcome: WorkerOutcome, cwd: string): Vali
 declare function createWorkerState(workerId: string, task: string, cwd: string, logPath: string): WorkerState;
 declare function pushEvent(ws: WorkerState, event: Record<string, unknown>): void;
 export declare function createHamrSubagentsExtension(_getChildExtensions: () => ExtensionFactory[], depth?: number): ExtensionFactory;
+interface WorkerProcessSummary {
+    exitCode: number;
+    exitSignal?: NodeJS.Signals | null;
+    wasAborted: boolean;
+    stderr: string;
+    outputText: string;
+    usage: Usage;
+    model?: string;
+    estimatedUsage: boolean;
+    stopReason?: string;
+    errorMessage?: string;
+    stdoutParseErrors: number;
+    invalidStdout: string;
+    spawnError?: string;
+}
+interface WorkerProcessEventState {
+    outputText: string;
+    usage: Usage;
+    model?: string;
+    estimatedUsage: boolean;
+    stopReason?: string;
+    errorMessage?: string;
+    assistantMessageEndCount: number;
+    stdoutParseErrors: number;
+    invalidStdout: string;
+}
+declare function createWorkerProcessEventState(): WorkerProcessEventState;
+declare function recordWorkerProcessEvent(state: WorkerProcessEventState, event: Record<string, unknown>): void;
+declare function buildWorkerOutcomeFromChildSummary(workerId: string, task: string, summary: WorkerProcessSummary): WorkerOutcome;
 export declare const _testExports: {
     pushEvent: typeof pushEvent;
     validateWorkerOutput: typeof validateWorkerOutput;
     createWorkerState: typeof createWorkerState;
+    createWorkerProcessEventState: typeof createWorkerProcessEventState;
+    recordWorkerProcessEvent: typeof recordWorkerProcessEvent;
+    buildWorkerOutcomeFromChildSummary: typeof buildWorkerOutcomeFromChildSummary;
 };
 export {};
 //# sourceMappingURL=subagents.d.ts.map

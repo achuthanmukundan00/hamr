@@ -63,7 +63,7 @@ export class HandoffManager {
 	 * with session-level metadata.
 	 */
 	createHandoff(sessionId: string, memory: HolographicMemory | undefined, options: HandoffOptions): StructuredHandoff {
-		const memoryManifest: HandoffManifest | undefined = memory?.handoff();
+		const memoryManifest: HandoffManifest | undefined = memory?.handoff(sessionId);
 		const handoffId = `handoff-${Date.now()}-${this.depth}`;
 
 		// Merge memory-derived findings with caller-supplied context

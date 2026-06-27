@@ -1800,40 +1800,6 @@ export declare const MODELS: {
         };
     };
     readonly anthropic: {
-        readonly "claude-3-5-haiku-20241022": {
-            id: string;
-            name: string;
-            api: "anthropic-messages";
-            provider: string;
-            baseUrl: string;
-            reasoning: false;
-            input: ("image" | "text")[];
-            cost: {
-                input: number;
-                output: number;
-                cacheRead: number;
-                cacheWrite: number;
-            };
-            contextWindow: number;
-            maxTokens: number;
-        };
-        readonly "claude-3-5-haiku-latest": {
-            id: string;
-            name: string;
-            api: "anthropic-messages";
-            provider: string;
-            baseUrl: string;
-            reasoning: false;
-            input: ("image" | "text")[];
-            cost: {
-                input: number;
-                output: number;
-                cacheRead: number;
-                cacheWrite: number;
-            };
-            contextWindow: number;
-            maxTokens: number;
-        };
         readonly "claude-3-5-sonnet-20240620": {
             id: string;
             name: string;
@@ -4369,6 +4335,29 @@ export declare const MODELS: {
             maxTokens: number;
         };
         readonly "accounts/fireworks/routers/glm-5p1-fast": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            compat: {
+                sendSessionAffinityHeaders: true;
+                supportsEagerToolInputStreaming: false;
+                supportsCacheControlOnTools: false;
+                supportsLongCacheRetention: false;
+            };
+            reasoning: true;
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "accounts/fireworks/routers/glm-5p2-fast": {
             id: string;
             name: string;
             api: "anthropic-messages";
@@ -10436,12 +10425,9 @@ export declare const MODELS: {
         readonly "qwen3.7-max": {
             id: string;
             name: string;
-            api: "openai-completions";
+            api: "anthropic-messages";
             provider: string;
             baseUrl: string;
-            compat: {
-                maxTokensField: "max_tokens";
-            };
             reasoning: true;
             input: "text"[];
             cost: {
@@ -10456,12 +10442,9 @@ export declare const MODELS: {
         readonly "qwen3.7-plus": {
             id: string;
             name: string;
-            api: "openai-completions";
+            api: "anthropic-messages";
             provider: string;
             baseUrl: string;
-            compat: {
-                maxTokensField: "max_tokens";
-            };
             reasoning: true;
             input: ("image" | "text")[];
             cost: {
@@ -15442,6 +15425,37 @@ export declare const MODELS: {
             maxTokens: number;
         };
         readonly "zai-org/GLM-5.1": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            compat: {
+                supportsStore: false;
+                supportsDeveloperRole: false;
+                supportsReasoningEffort: false;
+                maxTokensField: "max_tokens";
+                supportsStrictMode: false;
+                supportsLongCacheRetention: false;
+                thinkingFormat: "together";
+            };
+            reasoning: true;
+            thinkingLevelMap: {
+                minimal: null;
+                low: null;
+                medium: null;
+            };
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "zai-org/GLM-5.2": {
             id: string;
             name: string;
             api: "openai-completions";

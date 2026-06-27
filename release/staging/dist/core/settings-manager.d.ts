@@ -190,6 +190,8 @@ export declare class SettingsManager {
     getTransport(): TransportSetting;
     setTransport(transport: TransportSetting): void;
     getCompactionEnabled(): boolean;
+    /** Whether the user explicitly set compaction.enabled (vs. inheriting the default). */
+    isCompactionEnabledExplicitlySet(): boolean;
     setCompactionEnabled(enabled: boolean): void;
     getCompactionReserveTokens(): number;
     getCompactionKeepRecentTokens(): number;

@@ -21,7 +21,7 @@ import { Container, Markdown, Spacer, sliceWithWidth, Text } from "@hamr/tui";
 import { Type } from "typebox";
 import { defineTool } from "../../core/extensions/types.js";
 import { getDefaultSessionDirPath } from "../../core/session-manager.js";
-import { getMarkdownTheme } from "../../modes/interactive/theme/theme.js";
+import { theme as defaultTheme, getMarkdownTheme } from "../../modes/interactive/theme/theme.js";
 import { killProcessTree, killTrackedDetachedChildren, trackDetachedChildPid, untrackDetachedChildPid, } from "../../utils/shell.js";
 import { isCloudProvider, loadHamrStartupConfig } from "../startup-config.js";
 // ─── Environment configuration ───────────────────────────────────────────────
@@ -133,6 +133,10 @@ function clamp(value, min, max) {
 function padWorkerId(idx, total) {
     const width = String(total).length;
     return String(idx).padStart(width, "0");
+}
+function workerLabel(workerId) {
+    const num = Number.parseInt(workerId, 10);
+    return Number.isNaN(num) ? `Worker ${workerId}` : `Worker ${num + 1}`;
 }
 // ─── Tool call formatting (mirrors built-in tool renderers) ──────────────────
 function shortenHome(p) {
@@ -277,6 +281,175 @@ class AgentStatusWidget {
             this.interval = undefined;
         }
     }
+}
+const LIVE_UPDATE_INTERVAL_MS = 1000;
+const SUMMARY_ROTATE_MS = 4500;
+const MAX_LIVE_WORKER_ROWS = 8;
+function oneLine(text) {
+    return text.replace(/\s+/g, " ").trim();
+}
+function extractActivitySummary(text) {
+    const cleaned = oneLine(text
+        .replace(/```[\s\S]*?```/g, " ")
+        .replace(/`([^`]+)`/g, "$1")
+        .replace(/[*_#>\-[\]|]/g, " ")
+        .replace(/\{[^}]*\}/g, " ")
+        .replace(/(?:https?|ftp):\/\/[^\s]+/g, " ")
+        .replace(/\s{2,}/g, " ")
+        .trim());
+    if (cleaned.length < 8)
+        return undefined;
+    const sentences = cleaned
+        .match(/[^.!?]+[.!?]?/g)
+        ?.map((s) => oneLine(s))
+        .filter((s) => s.length > 8) ?? [];
+    return sentences[0]?.slice(0, 140) ?? cleaned.slice(0, 140);
+}
+function truncateActivityText(text, maxLen = 120) {
+    const clean = text.replace(/\s+/g, " ").trim();
+    return clean.length > maxLen ? `${clean.slice(0, maxLen - 1)}…` : clean;
+}
+function maybeRotateDisplaySummary(ws, candidate, now = Date.now(), force = false) {
+    const summary = oneLine(candidate ?? "");
+    if (!summary)
+        return;
+    if (force ||
+        !ws.displaySummary ||
+        summary === ws.displaySummary ||
+        now - (ws.displaySummaryUpdatedAt ?? 0) >= SUMMARY_ROTATE_MS) {
+        ws.displaySummary = summary;
+        ws.displaySummaryUpdatedAt = now;
+    }
+}
+class SubagentLiveCard {
+    constructor(header, workers, logDir, theme) {
+        this.header = header;
+        this.workers = workers;
+        this.logDir = logDir;
+        this.theme = theme;
+    }
+    clip(text, width) {
+        return sliceWithWidth(text, 0, Math.max(1, width), true).text;
+    }
+    render(width) {
+        const fg = this.theme.fg.bind(this.theme);
+        const headerLine = this.clip(`${fg("toolTitle", this.theme.bold("subagents"))} ${fg("accent", this.header)}`, width);
+        const workerLines = this._renderWorkers(this.workers, width, fg, "", MAX_LIVE_WORKER_ROWS);
+        const logLine = this.clip(fg("muted", `logs: ${this.logDir}`), width);
+        const all = [headerLine, ...workerLines, logLine];
+        return all;
+    }
+    _renderWorkers(workers, width, fg, indent, remainingSlots) {
+        if (remainingSlots <= 0)
+            return [];
+        const lines = [];
+        for (const w of workers) {
+            if (remainingSlots <= 0)
+                break;
+            let icon;
+            if (w.looping) {
+                icon = fg("warning", "↻");
+            }
+            else if (w.status === "running") {
+                icon = fg("accent", "●");
+            }
+            else if (w.status === "done") {
+                if (w.hasHighWarnings) {
+                    icon = fg("warning", "⚠");
+                }
+                else if (w.hasWarnings) {
+                    icon = fg("warning", "⚡");
+                }
+                else {
+                    icon = fg("success", "✓");
+                }
+            }
+            else if (w.status === "failed") {
+                icon = fg("error", "✕");
+            }
+            else if (w.status === "timeout") {
+                icon = fg("warning", "⏱");
+            }
+            else if (w.status === "aborted") {
+                icon = fg("muted", "⊘");
+            }
+            else {
+                icon = fg("muted", "·");
+            }
+            const label = fg("muted", workerLabel(w.workerId));
+            const activity = w.status === "running"
+                ? w.task
+                : (w.displaySummary ?? w.lastSummary ?? (w.lastTool ? `using ${w.lastTool}` : w.task));
+            const tok = w.usage?.totalTokens ? fg("muted", ` ↓${formatTokens(w.usage.totalTokens)} tok`) : "";
+            const loop = w.looping ? fg("warning", " loop?") : "";
+            const cleanActivity = activity
+                .replace(/```[\s\S]*?```/g, "[code]")
+                .replace(/`([^`]+)`/g, "$1")
+                .replace(/[*_#>\-[\]]/g, " ")
+                .replace(/\s{2,}/g, " ")
+                .trim();
+            lines.push(this.clip(`${indent}  ${icon} ${label}  ${fg("dim", truncateActivityText(cleanActivity))}${tok}${loop}`, width));
+            remainingSlots--;
+            if (w.nestedWorkers && w.nestedWorkers.length > 0 && remainingSlots > 0) {
+                const nestedHeader = w.nestedHeader ? fg("accent", `subagents ${w.nestedHeader}`) : fg("dim", "subagents …");
+                lines.push(this.clip(`${indent}    ${nestedHeader}`, width));
+                const nestedLines = this._renderWorkers(w.nestedWorkers, width, fg, `${indent}  `, remainingSlots);
+                lines.push(...nestedLines);
+                remainingSlots -= 1 + nestedLines.length;
+            }
+        }
+        return lines;
+    }
+    invalidate() { }
+}
+function scheduleLiveUpdate(run) {
+    if (!run?.onLiveUpdate)
+        return;
+    if (run.emitLiveUpdate) {
+        run.emitLiveUpdate();
+        return;
+    }
+    run.emitLiveUpdate = () => {
+        const sorted = [...run.workers.values()].sort((a, b) => a.workerId.localeCompare(b.workerId));
+        const liveWorkers = sorted.map((w) => ({
+            workerId: w.workerId,
+            task: w.taskPreview,
+            status: w.status,
+            model: w.model,
+            displaySummary: w.displaySummary,
+            lastSummary: w.lastSummary,
+            lastTool: w.lastTool,
+            looping: w.looping,
+            usage: w.usage,
+            nestedWorkers: w.nestedWorkers,
+            nestedHeader: w.nestedHeader,
+        }));
+        const active = run.running + run.queued;
+        const parts = [`${run.done + run.failed + run.aborted}/${run.total}`];
+        if (active > 0)
+            parts.push(`${active} active`);
+        if (run.failed > 0)
+            parts.push(`${run.failed} failed`);
+        if (run.aborted > 0)
+            parts.push(`${run.aborted} aborted`);
+        if (run.usage.totalTokens)
+            parts.push(`↓${formatTokens(run.usage.totalTokens)} tok`);
+        run._lastLiveUpdate = Date.now();
+        run.onLiveUpdate?.({
+            content: [{ type: "text", text: `${run.mode} ${parts.join(" · ")}` }],
+            details: {
+                mode: run.mode,
+                runId: run.runId,
+                total: run.total,
+                done: run.done,
+                failed: run.failed,
+                aborted: run.aborted,
+                workers: liveWorkers,
+                logDir: run.logDir,
+            },
+        });
+    };
+    run.emitLiveUpdate();
 }
 function updateStatusWidget(ctx) {
     if (ctx.mode !== "tui")
@@ -750,6 +923,7 @@ function createWorkerState(workerId, task, cwd, logPath) {
         pendingFlush: [],
         outputTail: "",
         logPath,
+        toolCallHistory: [],
     };
 }
 function pushEvent(ws, event) {
@@ -1465,6 +1639,10 @@ function registerSubagentTool(pi) {
         },
         renderResult: (result, options, theme) => {
             const details = result.details;
+            // Background runs: hide the result card — the live widget
+            // above the editor shows real-time SubagentLiveCard.
+            if (details?.pending)
+                return new Text("", 0, 0);
             if (!details?.results) {
                 const text = result.content?.[0];
                 return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
@@ -1773,6 +1951,179 @@ function registerSubagentTool(pi) {
                 }
             }
             let results;
+            // ─── Background execution path (fire-and-forget) ──────
+            const backgroundMode = process.env.HAMR_SUBAGENT_BACKGROUND !== "false";
+            if (backgroundMode) {
+                // Wire live card updates through the widget system so the
+                // SubagentLiveCard stays visible after the tool returns.
+                // (tool_execution_update events are suppressed post-return.)
+                const updateLiveWidget = () => {
+                    const sorted = [...run.workers.values()].sort((a, b) => a.workerId.localeCompare(b.workerId));
+                    const liveWorkers = sorted.map((w) => ({
+                        workerId: w.workerId,
+                        task: w.taskPreview,
+                        status: w.status,
+                        model: w.model,
+                        displaySummary: w.displaySummary,
+                        lastSummary: w.lastSummary,
+                        lastTool: w.lastTool,
+                        looping: w.looping,
+                        usage: w.usage,
+                        nestedWorkers: w.nestedWorkers,
+                        nestedHeader: w.nestedHeader,
+                    }));
+                    const active = run.running + run.queued;
+                    const parts = [`${run.done + run.failed + run.aborted}/${run.total}`];
+                    if (active > 0)
+                        parts.push(`${active} active`);
+                    if (run.failed > 0)
+                        parts.push(`${run.failed} failed`);
+                    if (run.aborted > 0)
+                        parts.push(`${run.aborted} aborted`);
+                    if (run.usage.totalTokens)
+                        parts.push(`↓${formatTokens(run.usage.totalTokens)} tok`);
+                    const header = `${run.mode} ${parts.join(" · ")}`;
+                    if (ctx.mode === "tui") {
+                        ctx.ui.setWidget("hamr.subagents.live", (_tui, _theme) => new SubagentLiveCard(header, liveWorkers, logDir, defaultTheme), { placement: "aboveEditor" });
+                    }
+                };
+                // Hook into the existing live-update machinery.
+                run.onLiveUpdate = () => updateLiveWidget();
+                run._backgroundCtx = ctx;
+                // Fire the swarm without awaiting — the agent loop continues.
+                // Completion injects results via pi.sendMessage().
+                const swarmPromise = (async () => {
+                    if (hasStages) {
+                        const stageSpecs = params.stages.map((s) => ({
+                            mode: s.mode,
+                            tasks: s.tasks,
+                        }));
+                        return executeStages(run, stageSpecs, concurrency, failFast, totalAbortController.signal, onUpdateWrapper, ctx);
+                    }
+                    if (hasTasks) {
+                        const tasks = params.tasks;
+                        return executeTasks(run, tasks, concurrency, failFast, totalAbortController.signal, onUpdateWrapper, ctx);
+                    }
+                    if (hasChain) {
+                        const chain = params.chain;
+                        return executeChain(run, chain, failFast, totalAbortController.signal, onUpdateWrapper, ctx);
+                    }
+                    const subtasks = params.subtasks;
+                    return executeChain(run, subtasks, failFast, totalAbortController.signal, onUpdateWrapper, ctx);
+                })();
+                // When the swarm settles, inject results via pi.sendMessage().
+                swarmPromise
+                    .then((swarmResults) => {
+                    clearTimeout(totalTimer);
+                    if (signal)
+                        signal.removeEventListener("abort", forwardToolSignal);
+                    const errors = swarmResults.filter((r) => r.status === "failed");
+                    const aborted = swarmResults.filter((r) => r.status === "aborted");
+                    const timedOut = swarmResults.filter((r) => r.status === "timeout");
+                    const successCount = swarmResults.filter((r) => r.status === "done").length;
+                    if (spawnPointEntryId) {
+                        try {
+                            const mergeParts = [];
+                            mergeParts.push(`## Subagent swarm ${runId} results`);
+                            mergeParts.push(`Mode: ${run.mode}, ${successCount}/${swarmResults.length} succeeded`);
+                            for (const r of swarmResults) {
+                                if (r.status === "done") {
+                                    const done = r;
+                                    mergeParts.push(`### [${r.workerId}] ✓ ${done.task.slice(0, 80)}`);
+                                    if (done.text)
+                                        mergeParts.push(done.text.slice(0, 4096));
+                                }
+                                else if (r.status === "failed") {
+                                    const failed = r;
+                                    mergeParts.push(`### [${r.workerId}] ✕ ${failed.task.slice(0, 80)}`);
+                                    mergeParts.push(`Error: ${failed.error.slice(0, 500)}`);
+                                }
+                            }
+                            ctx.sessionManager.mergeHandoff(spawnPointEntryId, "subagent_handoff", mergeParts.join("\n\n"), {
+                                runId,
+                                mode: run.mode,
+                                total: swarmResults.length,
+                                done: successCount,
+                                failed: errors.length,
+                                aborted: aborted.length,
+                                totalTokens: run.usage.totalTokens,
+                                cost: run.usage.cost,
+                            });
+                        }
+                        catch {
+                            /* best-effort */
+                        }
+                    }
+                    const summaryParts = [];
+                    summaryParts.push(`Swarm ${runId} complete: ${successCount}/${swarmResults.length} succeeded`);
+                    if (errors.length > 0)
+                        summaryParts.push(`${errors.length} failed`);
+                    if (aborted.length > 0)
+                        summaryParts.push(`${aborted.length} aborted`);
+                    if (timedOut.length > 0)
+                        summaryParts.push(`${timedOut.length} timed out`);
+                    summaryParts.push(`\nFull logs: ${logDir}`);
+                    pi.sendMessage({
+                        customType: "subagent_handoff",
+                        content: summaryParts.join(". "),
+                        display: true,
+                        details: {
+                            mode: run.mode,
+                            runId,
+                            total: swarmResults.length,
+                            done: successCount,
+                            failed: errors.length,
+                            aborted: aborted.length,
+                            timedOut: timedOut.length,
+                            logDir,
+                            results: swarmResults,
+                        },
+                    }, { triggerTurn: true });
+                    run.endedAt = Date.now();
+                    try {
+                        fs.writeFileSync(path.join(logDir, "run.json"), JSON.stringify({
+                            runId,
+                            mode: run.mode,
+                            total: swarmResults.length,
+                            done: successCount,
+                            failed: errors.length,
+                            aborted: aborted.length,
+                            startedAt: new Date(run.startedAt).toISOString(),
+                            endedAt: new Date().toISOString(),
+                            usage: run.usage,
+                            cwd: ctx.cwd,
+                            parentSessionId: ctx.sessionManager.getSessionId(),
+                        }, null, 2), { encoding: "utf-8", mode: 0o600 });
+                    }
+                    catch {
+                        /* best-effort */
+                    }
+                    evictOldRuns();
+                })
+                    .catch((err) => {
+                    clearTimeout(totalTimer);
+                    if (signal)
+                        signal.removeEventListener("abort", forwardToolSignal);
+                    pi.sendMessage({
+                        customType: "subagent_handoff",
+                        content: `Subagent swarm ${runId} failed: ${err instanceof Error ? err.message : String(err)}`,
+                        display: true,
+                    }, { triggerTurn: true });
+                    run.endedAt = Date.now();
+                    evictOldRuns();
+                    if (ctx.mode === "tui")
+                        ctx.ui.setWidget("hamr.subagents.live", undefined);
+                });
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: `Dispatched ${taskCount} worker${taskCount === 1 ? "" : "s"} in background (${runId}). Results arrive automatically — no need to check on them. Continue with other work while they run.`,
+                        },
+                    ],
+                    details: { mode: run.mode, runId, total: taskCount, pending: true, logDir },
+                };
+            }
             try {
                 if (hasStages) {
                     const stageSpecs = params.stages.map((s) => ({
@@ -1951,6 +2302,124 @@ export function createHamrSubagentsExtension(_getChildExtensions, depth = 0) {
     factory[HAMR_SUBAGENTS_FACTORY] = true;
     return factory;
 }
+function formatWorkerProcessFailure(summary) {
+    const parts = [];
+    if (summary.spawnError)
+        parts.push(`spawn error: ${summary.spawnError}`);
+    if (summary.exitCode !== 0)
+        parts.push(`exit code ${summary.exitCode}`);
+    if (summary.exitSignal)
+        parts.push(`signal ${summary.exitSignal}`);
+    if (summary.stopReason === "error") {
+        parts.push(summary.errorMessage ? `model error: ${summary.errorMessage}` : "model error");
+    }
+    else if (summary.stopReason === "aborted") {
+        parts.push(summary.errorMessage ? `worker aborted: ${summary.errorMessage}` : "worker aborted");
+    }
+    if (summary.stdoutParseErrors > 0) {
+        const tail = summary.invalidStdout.trim();
+        parts.push(`${summary.stdoutParseErrors} invalid stdout line${summary.stdoutParseErrors === 1 ? "" : "s"} from child JSON mode${tail ? `:\n${tail}` : ""}`);
+    }
+    if (summary.stderr.trim()) {
+        parts.push(`stderr:\n${summary.stderr.trim()}`);
+    }
+    return parts.join("\n\n") || "Worker failed without a diagnostic.";
+}
+function createWorkerProcessEventState() {
+    return {
+        outputText: "",
+        usage: { ...EMPTY_USAGE },
+        estimatedUsage: true,
+        assistantMessageEndCount: 0,
+        stdoutParseErrors: 0,
+        invalidStdout: "",
+    };
+}
+function isAssistantMessageRecord(value) {
+    return typeof value === "object" && value !== null && value.role === "assistant";
+}
+function recordAssistantMessage(state, msg) {
+    const msgUsage = msg.usage;
+    if (msgUsage) {
+        state.usage = { ...EMPTY_USAGE, ...msgUsage };
+        state.estimatedUsage = false;
+    }
+    if (msg.model && typeof msg.model === "string")
+        state.model = msg.model;
+    if (msg.stopReason && typeof msg.stopReason === "string")
+        state.stopReason = msg.stopReason;
+    if (msg.errorMessage && typeof msg.errorMessage === "string")
+        state.errorMessage = msg.errorMessage;
+    const content = msg.content;
+    if (content) {
+        for (const part of content) {
+            if (part.type === "text" && part.text)
+                state.outputText += part.text;
+        }
+    }
+}
+function recordWorkerProcessEvent(state, event) {
+    if (event.type === "message_end" && isAssistantMessageRecord(event.message)) {
+        state.assistantMessageEndCount++;
+        recordAssistantMessage(state, event.message);
+        return;
+    }
+    // Fallback for corrupted/missing message_end streams. agent_end carries the
+    // final messages, so use it only when no assistant message_end was observed.
+    if (event.type === "agent_end" && state.assistantMessageEndCount === 0) {
+        const messages = event.messages;
+        if (!Array.isArray(messages))
+            return;
+        const finalAssistant = [...messages].reverse().find(isAssistantMessageRecord);
+        if (finalAssistant)
+            recordAssistantMessage(state, finalAssistant);
+    }
+}
+function buildWorkerOutcomeFromChildSummary(workerId, task, summary) {
+    if (summary.wasAborted) {
+        return {
+            status: "aborted",
+            workerId,
+            task,
+            reason: "user",
+        };
+    }
+    if (summary.stopReason === "error" ||
+        summary.stopReason === "aborted" ||
+        summary.spawnError ||
+        summary.exitCode !== 0 ||
+        summary.exitSignal) {
+        return {
+            status: "failed",
+            workerId,
+            task,
+            error: formatWorkerProcessFailure(summary),
+            text: summary.outputText,
+        };
+    }
+    if (summary.outputText.trim().length === 0 && (summary.stdoutParseErrors > 0 || summary.stderr.trim().length > 0)) {
+        return {
+            status: "failed",
+            workerId,
+            task,
+            error: formatWorkerProcessFailure(summary),
+            text: summary.outputText,
+        };
+    }
+    const outcome = {
+        status: "done",
+        workerId,
+        task,
+        text: summary.outputText,
+        usage: summary.usage,
+    };
+    if (summary.model)
+        outcome.model = summary.model;
+    outcome.estimatedUsage = summary.estimatedUsage;
+    if (summary.stopReason)
+        outcome.stopReason = summary.stopReason;
+    return outcome;
+}
 // ─── Test-only exports (not part of the public API) ──────────────────────────
 // Exposed so regression tests can verify correctness without spinning up
 // full child hamr processes.
@@ -1958,5 +2427,8 @@ export const _testExports = {
     pushEvent,
     validateWorkerOutput,
     createWorkerState,
+    createWorkerProcessEventState,
+    recordWorkerProcessEvent,
+    buildWorkerOutcomeFromChildSummary,
 };
 //# sourceMappingURL=subagents.js.map

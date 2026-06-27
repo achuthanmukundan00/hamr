@@ -25,8 +25,8 @@ import type { ExtensionContext, ExtensionFactory } from "../../core/extensions/t
 import { defineTool } from "../../core/extensions/types.ts";
 import type { HamrChildConfig } from "../../core/sdk.ts";
 import { getDefaultSessionDirPath, type SpawnPolicy } from "../../core/session-manager.ts";
-import type { Theme } from "../../modes/interactive/theme/theme.ts";
-import { getMarkdownTheme } from "../../modes/interactive/theme/theme.ts";
+import type { Theme, ThemeColor } from "../../modes/interactive/theme/theme.ts";
+import { theme as defaultTheme, getMarkdownTheme } from "../../modes/interactive/theme/theme.ts";
 import {
 	killProcessTree,
 	killTrackedDetachedChildren,
@@ -147,13 +147,48 @@ interface WorkerState {
 	errorMessage?: string;
 	lastActivity?: string;
 	lastTool?: string;
-	recentEvents: ActivityEvent[]; // ring buffer, max EVENTS_IN_MEMORY entries (truncated data)
-	pendingFlush: string[]; // full event JSON lines not yet written to disk
+	/** Fresh activity summary extracted from worker output or tool activity. */
+	lastSummary?: string;
+	/** Summary currently shown in the TUI. It rotates slowly to avoid log-like churn. */
+	displaySummary?: string;
+	displaySummaryUpdatedAt?: number;
+	/** Last N tool calls for loop detection. */
+	toolCallHistory: string[];
+	/** Set when the worker appears to be in a repeated-tool-call loop. */
+	looping?: boolean;
+	recentEvents: ActivityEvent[];
+	pendingFlush: string[];
 	flushTimer?: ReturnType<typeof setInterval>;
-	outputTail: string; // capped to OUTPUT_TAIL_BYTES bytes
-	finalOutput?: string; // capped
+	outputTail: string;
+	finalOutput?: string;
 	logPath: string;
 	resultPath?: string;
+	/** Live workers from a nested delegate_subagents call (recursive). */
+	nestedWorkers?: LiveWorkerView[];
+	/** Header text for nested subagent swarm (e.g. "parallel 2/5 · 3 active"). */
+	nestedHeader?: string;
+}
+
+// ─── Live worker view (for TUI card + widget) ───────────────────────────────
+
+interface LiveWorkerView {
+	workerId: string;
+	task: string;
+	status: WorkerState["status"] | "timeout";
+	model?: string;
+	displaySummary?: string;
+	lastSummary?: string;
+	lastTool?: string;
+	looping?: boolean;
+	usage: Usage;
+	/** Worker has output validation warnings (yellow dot on final). */
+	hasWarnings?: boolean;
+	/** Worker has high-severity output warnings (red dot on final). */
+	hasHighWarnings?: boolean;
+	/** Nested sub-worker views when this worker spawns its own subagents. */
+	nestedWorkers?: LiveWorkerView[];
+	/** Header text for nested swarm (e.g. "parallel 2/5 · 3 active · ↓45K tok"). */
+	nestedHeader?: string;
 }
 
 interface RunState {
@@ -172,6 +207,16 @@ interface RunState {
 	workers: Map<string, WorkerState>;
 	/** O(1) counters — the above fields are kept as views for consumers. */
 	_cnt: { queued: number; running: number; done: number; failed: number; aborted: number; tok: number };
+	/** Live update callback — debounced to avoid flicker from rapid events. */
+	onLiveUpdate?: (update: { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }) => void;
+	/** Last emitted live details, used for status transitions outside JSONL events. */
+	emitLiveUpdate?: () => void;
+	/** Debounce timer for live updates (setTimeout handle). */
+	_liveUpdateTimer?: ReturnType<typeof setTimeout>;
+	/** Last live update timestamp to enforce minimum interval. */
+	_lastLiveUpdate?: number;
+	/** For background runs: stored ctx so live widget can update post-tool-return. */
+	_backgroundCtx?: any;
 }
 
 // ─── Global state ────────────────────────────────────────────────────────────
@@ -208,6 +253,11 @@ function clamp(value: number, min: number, max: number): number {
 function padWorkerId(idx: number, total: number): string {
 	const width = String(total).length;
 	return String(idx).padStart(width, "0");
+}
+
+function workerLabel(workerId: string): string {
+	const num = Number.parseInt(workerId, 10);
+	return Number.isNaN(num) ? `Worker ${workerId}` : `Worker ${num + 1}`;
 }
 
 // ─── Tool call formatting (mirrors built-in tool renderers) ──────────────────
@@ -373,6 +423,197 @@ class AgentStatusWidget implements Component {
 			this.interval = undefined;
 		}
 	}
+}
+
+const LIVE_UPDATE_INTERVAL_MS = 1000;
+const SUMMARY_ROTATE_MS = 4500;
+const MAX_LIVE_WORKER_ROWS = 8;
+
+function oneLine(text: string): string {
+	return text.replace(/\s+/g, " ").trim();
+}
+
+function extractActivitySummary(text: string): string | undefined {
+	const cleaned = oneLine(
+		text
+			.replace(/```[\s\S]*?```/g, " ")
+			.replace(/`([^`]+)`/g, "$1")
+			.replace(/[*_#>\-[\]|]/g, " ")
+			.replace(/\{[^}]*\}/g, " ")
+			.replace(/(?:https?|ftp):\/\/[^\s]+/g, " ")
+			.replace(/\s{2,}/g, " ")
+			.trim(),
+	);
+	if (cleaned.length < 8) return undefined;
+	const sentences =
+		cleaned
+			.match(/[^.!?]+[.!?]?/g)
+			?.map((s) => oneLine(s))
+			.filter((s) => s.length > 8) ?? [];
+	return sentences[0]?.slice(0, 140) ?? cleaned.slice(0, 140);
+}
+
+function truncateActivityText(text: string, maxLen = 120): string {
+	const clean = text.replace(/\s+/g, " ").trim();
+	return clean.length > maxLen ? `${clean.slice(0, maxLen - 1)}…` : clean;
+}
+
+function maybeRotateDisplaySummary(
+	ws: WorkerState,
+	candidate: string | undefined,
+	now = Date.now(),
+	force = false,
+): void {
+	const summary = oneLine(candidate ?? "");
+	if (!summary) return;
+	if (
+		force ||
+		!ws.displaySummary ||
+		summary === ws.displaySummary ||
+		now - (ws.displaySummaryUpdatedAt ?? 0) >= SUMMARY_ROTATE_MS
+	) {
+		ws.displaySummary = summary;
+		ws.displaySummaryUpdatedAt = now;
+	}
+}
+
+class SubagentLiveCard implements Component {
+	private header: string;
+	private workers: LiveWorkerView[];
+	private logDir: string;
+	private theme: Theme;
+
+	constructor(header: string, workers: LiveWorkerView[], logDir: string, theme: Theme) {
+		this.header = header;
+		this.workers = workers;
+		this.logDir = logDir;
+		this.theme = theme;
+	}
+
+	private clip(text: string, width: number): string {
+		return sliceWithWidth(text, 0, Math.max(1, width), true).text;
+	}
+
+	render(width: number): string[] {
+		const fg = this.theme.fg.bind(this.theme);
+		const headerLine = this.clip(
+			`${fg("toolTitle", this.theme.bold("subagents"))} ${fg("accent", this.header)}`,
+			width,
+		);
+		const workerLines = this._renderWorkers(this.workers, width, fg, "", MAX_LIVE_WORKER_ROWS);
+		const logLine = this.clip(fg("muted", `logs: ${this.logDir}`), width);
+		const all = [headerLine, ...workerLines, logLine];
+		return all;
+	}
+
+	private _renderWorkers(
+		workers: LiveWorkerView[],
+		width: number,
+		fg: (color: ThemeColor, text: string) => string,
+		indent: string,
+		remainingSlots: number,
+	): string[] {
+		if (remainingSlots <= 0) return [];
+		const lines: string[] = [];
+		for (const w of workers) {
+			if (remainingSlots <= 0) break;
+			let icon: string;
+			if (w.looping) {
+				icon = fg("warning", "↻");
+			} else if (w.status === "running") {
+				icon = fg("accent", "●");
+			} else if (w.status === "done") {
+				if (w.hasHighWarnings) {
+					icon = fg("warning", "⚠");
+				} else if (w.hasWarnings) {
+					icon = fg("warning", "⚡");
+				} else {
+					icon = fg("success", "✓");
+				}
+			} else if (w.status === "failed") {
+				icon = fg("error", "✕");
+			} else if (w.status === "timeout") {
+				icon = fg("warning", "⏱");
+			} else if (w.status === "aborted") {
+				icon = fg("muted", "⊘");
+			} else {
+				icon = fg("muted", "·");
+			}
+			const label = fg("muted", workerLabel(w.workerId));
+			const activity =
+				w.status === "running"
+					? w.task
+					: (w.displaySummary ?? w.lastSummary ?? (w.lastTool ? `using ${w.lastTool}` : w.task));
+			const tok = w.usage?.totalTokens ? fg("muted", ` ↓${formatTokens(w.usage.totalTokens)} tok`) : "";
+			const loop = w.looping ? fg("warning", " loop?") : "";
+			const cleanActivity = activity
+				.replace(/```[\s\S]*?```/g, "[code]")
+				.replace(/`([^`]+)`/g, "$1")
+				.replace(/[*_#>\-[\]]/g, " ")
+				.replace(/\s{2,}/g, " ")
+				.trim();
+			lines.push(
+				this.clip(`${indent}  ${icon} ${label}  ${fg("dim", truncateActivityText(cleanActivity))}${tok}${loop}`, width),
+			);
+			remainingSlots--;
+
+			if (w.nestedWorkers && w.nestedWorkers.length > 0 && remainingSlots > 0) {
+				const nestedHeader = w.nestedHeader ? fg("accent", `subagents ${w.nestedHeader}`) : fg("dim", "subagents …");
+				lines.push(this.clip(`${indent}    ${nestedHeader}`, width));
+				const nestedLines = this._renderWorkers(w.nestedWorkers, width, fg, `${indent}  `, remainingSlots);
+				lines.push(...nestedLines);
+				remainingSlots -= 1 + nestedLines.length;
+			}
+		}
+		return lines;
+	}
+
+	invalidate(): void {}
+}
+
+function scheduleLiveUpdate(run: RunState | undefined): void {
+	if (!run?.onLiveUpdate) return;
+	if (run.emitLiveUpdate) {
+		run.emitLiveUpdate();
+		return;
+	}
+	run.emitLiveUpdate = () => {
+		const sorted = [...run.workers.values()].sort((a, b) => a.workerId.localeCompare(b.workerId));
+		const liveWorkers: LiveWorkerView[] = sorted.map((w) => ({
+			workerId: w.workerId,
+			task: w.taskPreview,
+			status: w.status,
+			model: w.model,
+			displaySummary: w.displaySummary,
+			lastSummary: w.lastSummary,
+			lastTool: w.lastTool,
+			looping: w.looping,
+			usage: w.usage,
+			nestedWorkers: w.nestedWorkers,
+			nestedHeader: w.nestedHeader,
+		}));
+		const active = run.running + run.queued;
+		const parts = [`${run.done + run.failed + run.aborted}/${run.total}`];
+		if (active > 0) parts.push(`${active} active`);
+		if (run.failed > 0) parts.push(`${run.failed} failed`);
+		if (run.aborted > 0) parts.push(`${run.aborted} aborted`);
+		if (run.usage.totalTokens) parts.push(`↓${formatTokens(run.usage.totalTokens)} tok`);
+		run._lastLiveUpdate = Date.now();
+		run.onLiveUpdate?.({
+			content: [{ type: "text", text: `${run.mode} ${parts.join(" · ")}` }],
+			details: {
+				mode: run.mode,
+				runId: run.runId,
+				total: run.total,
+				done: run.done,
+				failed: run.failed,
+				aborted: run.aborted,
+				workers: liveWorkers,
+				logDir: run.logDir,
+			},
+		});
+	};
+	run.emitLiveUpdate();
 }
 
 function updateStatusWidget(ctx: ExtensionContext): void {
@@ -907,6 +1148,7 @@ function createWorkerState(workerId: string, task: string, cwd: string, logPath:
 		pendingFlush: [],
 		outputTail: "",
 		logPath,
+		toolCallHistory: [],
 	};
 }
 
@@ -1833,10 +2075,15 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 							failed: number;
 							aborted: number;
 							timedOut?: number;
+							pending?: boolean;
 							logDir: string;
 							results?: WorkerOutcome[];
 					  }
 					| undefined;
+
+				// Background runs: hide the result card — the live widget
+				// above the editor shows real-time SubagentLiveCard.
+				if (details?.pending) return new Text("", 0, 0);
 
 				if (!details?.results) {
 					const text = result.content?.[0];
@@ -2197,6 +2444,203 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 
 				let results: WorkerOutcome[];
 
+				// ─── Background execution path (fire-and-forget) ──────
+				const backgroundMode = process.env.HAMR_SUBAGENT_BACKGROUND !== "false";
+
+				if (backgroundMode) {
+					// Wire live card updates through the widget system so the
+					// SubagentLiveCard stays visible after the tool returns.
+					// (tool_execution_update events are suppressed post-return.)
+					const updateLiveWidget = () => {
+						const sorted = [...run.workers.values()].sort((a, b) => a.workerId.localeCompare(b.workerId));
+						const liveWorkers: LiveWorkerView[] = sorted.map((w) => ({
+							workerId: w.workerId,
+							task: w.taskPreview,
+							status: w.status,
+							model: w.model,
+							displaySummary: w.displaySummary,
+							lastSummary: w.lastSummary,
+							lastTool: w.lastTool,
+							looping: w.looping,
+							usage: w.usage,
+							nestedWorkers: w.nestedWorkers,
+							nestedHeader: w.nestedHeader,
+						}));
+						const active = run.running + run.queued;
+						const parts = [`${run.done + run.failed + run.aborted}/${run.total}`];
+						if (active > 0) parts.push(`${active} active`);
+						if (run.failed > 0) parts.push(`${run.failed} failed`);
+						if (run.aborted > 0) parts.push(`${run.aborted} aborted`);
+						if (run.usage.totalTokens) parts.push(`↓${formatTokens(run.usage.totalTokens)} tok`);
+						const header = `${run.mode} ${parts.join(" · ")}`;
+						if (ctx.mode === "tui") {
+							ctx.ui.setWidget(
+								"hamr.subagents.live",
+								(_tui: any, _theme: any) => new SubagentLiveCard(header, liveWorkers, logDir, defaultTheme),
+								{ placement: "aboveEditor" },
+							);
+						}
+					};
+					// Hook into the existing live-update machinery.
+					run.onLiveUpdate = () => updateLiveWidget();
+					run._backgroundCtx = ctx;
+
+					// Fire the swarm without awaiting — the agent loop continues.
+					// Completion injects results via pi.sendMessage().
+					const swarmPromise: Promise<WorkerOutcome[]> = (async () => {
+						if (hasStages) {
+							const stageSpecs: StageSpec[] = (
+								params.stages as Array<{ mode: string; tasks: Array<{ task: string; cwd?: string }> }>
+							).map((s) => ({
+								mode: s.mode as "parallel" | "chain",
+								tasks: s.tasks,
+							}));
+							return executeStages(
+								run,
+								stageSpecs,
+								concurrency,
+								failFast,
+								totalAbortController.signal,
+								onUpdateWrapper,
+								ctx,
+							);
+						}
+						if (hasTasks) {
+							const tasks = params.tasks as Array<{ task: string; cwd?: string }>;
+							return executeTasks(run, tasks, concurrency, failFast, totalAbortController.signal, onUpdateWrapper, ctx);
+						}
+						if (hasChain) {
+							const chain = params.chain as Array<{ task: string; cwd?: string }>;
+							return executeChain(run, chain, failFast, totalAbortController.signal, onUpdateWrapper, ctx);
+						}
+						const subtasks = params.subtasks as Array<{ task: string; cwd?: string }>;
+						return executeChain(run, subtasks, failFast, totalAbortController.signal, onUpdateWrapper, ctx);
+					})();
+
+					// When the swarm settles, inject results via pi.sendMessage().
+					swarmPromise
+						.then((swarmResults) => {
+							clearTimeout(totalTimer);
+							if (signal) signal.removeEventListener("abort", forwardToolSignal);
+
+							const errors = swarmResults.filter((r) => r.status === "failed");
+							const aborted = swarmResults.filter((r) => r.status === "aborted");
+							const timedOut = swarmResults.filter((r) => r.status === "timeout");
+							const successCount = swarmResults.filter((r) => r.status === "done").length;
+
+							if (spawnPointEntryId) {
+								try {
+									const mergeParts: string[] = [];
+									mergeParts.push(`## Subagent swarm ${runId} results`);
+									mergeParts.push(`Mode: ${run.mode}, ${successCount}/${swarmResults.length} succeeded`);
+									for (const r of swarmResults) {
+										if (r.status === "done") {
+											const done = r as Extract<WorkerOutcome, { status: "done" }>;
+											mergeParts.push(`### [${r.workerId}] ✓ ${done.task.slice(0, 80)}`);
+											if (done.text) mergeParts.push(done.text.slice(0, 4096));
+										} else if (r.status === "failed") {
+											const failed = r as Extract<WorkerOutcome, { status: "failed" }>;
+											mergeParts.push(`### [${r.workerId}] ✕ ${failed.task.slice(0, 80)}`);
+											mergeParts.push(`Error: ${failed.error.slice(0, 500)}`);
+										}
+									}
+									ctx.sessionManager.mergeHandoff(spawnPointEntryId, "subagent_handoff", mergeParts.join("\n\n"), {
+										runId,
+										mode: run.mode,
+										total: swarmResults.length,
+										done: successCount,
+										failed: errors.length,
+										aborted: aborted.length,
+										totalTokens: run.usage.totalTokens,
+										cost: run.usage.cost,
+									});
+								} catch {
+									/* best-effort */
+								}
+							}
+
+							const summaryParts: string[] = [];
+							summaryParts.push(`Swarm ${runId} complete: ${successCount}/${swarmResults.length} succeeded`);
+							if (errors.length > 0) summaryParts.push(`${errors.length} failed`);
+							if (aborted.length > 0) summaryParts.push(`${aborted.length} aborted`);
+							if (timedOut.length > 0) summaryParts.push(`${timedOut.length} timed out`);
+							summaryParts.push(`\nFull logs: ${logDir}`);
+
+							pi.sendMessage(
+								{
+									customType: "subagent_handoff",
+									content: summaryParts.join(". "),
+									display: true,
+									details: {
+										mode: run.mode,
+										runId,
+										total: swarmResults.length,
+										done: successCount,
+										failed: errors.length,
+										aborted: aborted.length,
+										timedOut: timedOut.length,
+										logDir,
+										results: swarmResults,
+									},
+								},
+								{ triggerTurn: true },
+							);
+
+							run.endedAt = Date.now();
+							try {
+								fs.writeFileSync(
+									path.join(logDir, "run.json"),
+									JSON.stringify(
+										{
+											runId,
+											mode: run.mode,
+											total: swarmResults.length,
+											done: successCount,
+											failed: errors.length,
+											aborted: aborted.length,
+											startedAt: new Date(run.startedAt).toISOString(),
+											endedAt: new Date().toISOString(),
+											usage: run.usage,
+											cwd: ctx.cwd,
+											parentSessionId: ctx.sessionManager.getSessionId(),
+										},
+										null,
+										2,
+									),
+									{ encoding: "utf-8", mode: 0o600 },
+								);
+							} catch {
+								/* best-effort */
+							}
+							evictOldRuns();
+						})
+						.catch((err) => {
+							clearTimeout(totalTimer);
+							if (signal) signal.removeEventListener("abort", forwardToolSignal);
+							pi.sendMessage(
+								{
+									customType: "subagent_handoff",
+									content: `Subagent swarm ${runId} failed: ${err instanceof Error ? err.message : String(err)}`,
+									display: true,
+								},
+								{ triggerTurn: true },
+							);
+							run.endedAt = Date.now();
+							evictOldRuns();
+							if (ctx.mode === "tui") ctx.ui.setWidget("hamr.subagents.live", undefined);
+						});
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Dispatched ${taskCount} worker${taskCount === 1 ? "" : "s"} in background (${runId}). Results arrive automatically — no need to check on them. Continue with other work while they run.`,
+							},
+						],
+						details: { mode: run.mode, runId, total: taskCount, pending: true, logDir },
+					};
+				}
+
 				try {
 					if (hasStages) {
 						const stageSpecs: StageSpec[] = (
@@ -2418,6 +2862,163 @@ export function createHamrSubagentsExtension(
 	return factory;
 }
 
+// ─── Child process outcome builder (test-exported) ──────────────────────────
+// Extracted from runWorkerChildProcess for unit-testability.
+// Maps raw child process results (exit code, stderr, output) into structured outcomes.
+
+interface WorkerProcessSummary {
+	exitCode: number;
+	exitSignal?: NodeJS.Signals | null;
+	wasAborted: boolean;
+	stderr: string;
+	outputText: string;
+	usage: Usage;
+	model?: string;
+	estimatedUsage: boolean;
+	stopReason?: string;
+	errorMessage?: string;
+	stdoutParseErrors: number;
+	invalidStdout: string;
+	spawnError?: string;
+}
+
+function formatWorkerProcessFailure(summary: WorkerProcessSummary): string {
+	const parts: string[] = [];
+	if (summary.spawnError) parts.push(`spawn error: ${summary.spawnError}`);
+	if (summary.exitCode !== 0) parts.push(`exit code ${summary.exitCode}`);
+	if (summary.exitSignal) parts.push(`signal ${summary.exitSignal}`);
+	if (summary.stopReason === "error") {
+		parts.push(summary.errorMessage ? `model error: ${summary.errorMessage}` : "model error");
+	} else if (summary.stopReason === "aborted") {
+		parts.push(summary.errorMessage ? `worker aborted: ${summary.errorMessage}` : "worker aborted");
+	}
+	if (summary.stdoutParseErrors > 0) {
+		const tail = summary.invalidStdout.trim();
+		parts.push(
+			`${summary.stdoutParseErrors} invalid stdout line${summary.stdoutParseErrors === 1 ? "" : "s"} from child JSON mode${tail ? `:\n${tail}` : ""}`,
+		);
+	}
+	if (summary.stderr.trim()) {
+		parts.push(`stderr:\n${summary.stderr.trim()}`);
+	}
+	return parts.join("\n\n") || "Worker failed without a diagnostic.";
+}
+
+interface WorkerProcessEventState {
+	outputText: string;
+	usage: Usage;
+	model?: string;
+	estimatedUsage: boolean;
+	stopReason?: string;
+	errorMessage?: string;
+	assistantMessageEndCount: number;
+	stdoutParseErrors: number;
+	invalidStdout: string;
+}
+
+function createWorkerProcessEventState(): WorkerProcessEventState {
+	return {
+		outputText: "",
+		usage: { ...EMPTY_USAGE },
+		estimatedUsage: true,
+		assistantMessageEndCount: 0,
+		stdoutParseErrors: 0,
+		invalidStdout: "",
+	};
+}
+
+function isAssistantMessageRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && (value as { role?: unknown }).role === "assistant";
+}
+
+function recordAssistantMessage(state: WorkerProcessEventState, msg: Record<string, unknown>): void {
+	const msgUsage = msg.usage as Usage | undefined;
+	if (msgUsage) {
+		state.usage = { ...EMPTY_USAGE, ...msgUsage };
+		state.estimatedUsage = false;
+	}
+	if (msg.model && typeof msg.model === "string") state.model = msg.model;
+	if (msg.stopReason && typeof msg.stopReason === "string") state.stopReason = msg.stopReason;
+	if (msg.errorMessage && typeof msg.errorMessage === "string") state.errorMessage = msg.errorMessage;
+
+	const content = (msg as { content?: Array<{ type: string; text?: string }> }).content;
+	if (content) {
+		for (const part of content) {
+			if (part.type === "text" && part.text) state.outputText += part.text;
+		}
+	}
+}
+
+function recordWorkerProcessEvent(state: WorkerProcessEventState, event: Record<string, unknown>): void {
+	if (event.type === "message_end" && isAssistantMessageRecord(event.message)) {
+		state.assistantMessageEndCount++;
+		recordAssistantMessage(state, event.message);
+		return;
+	}
+
+	// Fallback for corrupted/missing message_end streams. agent_end carries the
+	// final messages, so use it only when no assistant message_end was observed.
+	if (event.type === "agent_end" && state.assistantMessageEndCount === 0) {
+		const messages = (event as { messages?: unknown }).messages;
+		if (!Array.isArray(messages)) return;
+		const finalAssistant = [...messages].reverse().find(isAssistantMessageRecord);
+		if (finalAssistant) recordAssistantMessage(state, finalAssistant);
+	}
+}
+
+function buildWorkerOutcomeFromChildSummary(
+	workerId: string,
+	task: string,
+	summary: WorkerProcessSummary,
+): WorkerOutcome {
+	if (summary.wasAborted) {
+		return {
+			status: "aborted",
+			workerId,
+			task,
+			reason: "user",
+		};
+	}
+
+	if (
+		summary.stopReason === "error" ||
+		summary.stopReason === "aborted" ||
+		summary.spawnError ||
+		summary.exitCode !== 0 ||
+		summary.exitSignal
+	) {
+		return {
+			status: "failed",
+			workerId,
+			task,
+			error: formatWorkerProcessFailure(summary),
+			text: summary.outputText,
+		};
+	}
+
+	if (summary.outputText.trim().length === 0 && (summary.stdoutParseErrors > 0 || summary.stderr.trim().length > 0)) {
+		return {
+			status: "failed",
+			workerId,
+			task,
+			error: formatWorkerProcessFailure(summary),
+			text: summary.outputText,
+		};
+	}
+
+	const outcome: WorkerOutcome = {
+		status: "done",
+		workerId,
+		task,
+		text: summary.outputText,
+		usage: summary.usage,
+	};
+	if (summary.model) outcome.model = summary.model;
+	outcome.estimatedUsage = summary.estimatedUsage;
+	if (summary.stopReason) outcome.stopReason = summary.stopReason;
+	return outcome;
+}
+
 // ─── Test-only exports (not part of the public API) ──────────────────────────
 // Exposed so regression tests can verify correctness without spinning up
 // full child hamr processes.
@@ -2425,4 +3026,7 @@ export const _testExports = {
 	pushEvent,
 	validateWorkerOutput,
 	createWorkerState,
+	createWorkerProcessEventState,
+	recordWorkerProcessEvent,
+	buildWorkerOutcomeFromChildSummary,
 };

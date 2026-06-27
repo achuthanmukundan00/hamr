@@ -24,7 +24,7 @@ export class HandoffManager {
      * with session-level metadata.
      */
     createHandoff(sessionId, memory, options) {
-        const memoryManifest = memory?.handoff();
+        const memoryManifest = memory?.handoff(sessionId);
         const handoffId = `handoff-${Date.now()}-${this.depth}`;
         // Merge memory-derived findings with caller-supplied context
         const keyFindings = [

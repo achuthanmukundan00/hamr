@@ -496,6 +496,35 @@ export declare class AgentSession {
      */
     private _runAutoCompaction;
     /**
+     * Estimate the total context tokens including upcoming messages yet to be sent.
+     * Combines the last known usage-based estimate with heuristic estimates for new messages.
+     */
+    private _estimateTotalPendingContextTokens;
+    /**
+     * Proactively compact if the total context (current + upcoming messages)
+     * exceeds a safe fraction of the context window.
+     *
+     * Unlike the reactive `_checkCompaction` (which runs after an assistant response),
+     * this runs BEFORE sending a request to prevent server-side context overflow
+     * errors that may not be detected by `isContextOverflow` (e.g. Codex
+     * `invalid_request_error` when the effective server limit is lower than the
+     * model's declared context window).
+     *
+     * @returns true if compaction ran successfully and the caller should retry
+     */
+    private _proactiveCompactIfNeeded;
+    /**
+     * Check if compaction should run given the current model.
+     *
+     * When the user has not explicitly toggled auto-compaction, the default is:
+     * - ON for models with context window < 400k tokens
+     * - OFF for models with context window >= 400k tokens (e.g. Codex)
+     *
+     * Large-context models rarely benefit from automatic compaction and the
+     * summarisation LLM call adds latency; disabling it avoids unnecessary work.
+     */
+    private _isCompactionEnabled;
+    /**
      * Toggle auto-compaction setting.
      */
     setAutoCompactionEnabled(enabled: boolean): void;

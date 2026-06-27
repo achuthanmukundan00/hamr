@@ -760,6 +760,11 @@ export class SettingsManager {
 		return this.settings.compaction?.enabled ?? true;
 	}
 
+	/** Whether the user explicitly set compaction.enabled (vs. inheriting the default). */
+	isCompactionEnabledExplicitlySet(): boolean {
+		return this.settings.compaction?.enabled !== undefined;
+	}
+
 	setCompactionEnabled(enabled: boolean): void {
 		if (!this.globalSettings.compaction) {
 			this.globalSettings.compaction = {};

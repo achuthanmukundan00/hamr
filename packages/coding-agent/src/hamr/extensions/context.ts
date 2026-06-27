@@ -5,22 +5,40 @@ import type { Theme, ThemeColor } from "../../modes/interactive/theme/theme.ts";
 
 // ─── Token estimation ─────────────────────────────────────────────────────────
 
-function estimateChars(text: string): number {
-	return Math.ceil(text.length / 4);
+/**
+ * Rough byte-count token estimate.
+ *
+ * Uses a 3.0 bytes-per-token ratio (round, not ceil) because modern
+ * tokenizers (Claude, GPT-4o, DeepSeek V4) encode English text at
+ * roughly 2.5–3.5 chars per token.  4.0 overestimates by ~33%.
+ *
+ * For JSON / tool-schema content the ratio is closer to 2.0 (many
+ * single-char tokens: `{`, `}`, `"`, `,`), so callers may override.
+ */
+function estimateTokens(text: string, bytesPerToken = 3.0): number {
+	if (!text) return 0;
+	return Math.round(text.length / bytesPerToken);
 }
 
 // ─── Context breakdown ───────────────────────────────────────────────────────
+
+interface Category {
+	name: string;
+	tokens: number;
+	color: ThemeColor;
+}
 
 export interface ContextBreakdown {
 	modelName: string | undefined;
 	modelId: string | undefined;
 	contextWindow: number;
+	/** Total estimated tokens (from last API usage + trailing estimate, or pure estimate). */
 	tokens: number | null;
 	percent: number | null;
-	systemPrompt: number;
-	skills: number;
-	contextFiles: number;
-	messagesAndTools: number | null;
+	/** Per-category breakdown in display order. */
+	categories: Category[];
+	/** True when the total is based on an actual API response. */
+	fromApi: boolean;
 }
 
 function computeBreakdown(ctx: ExtensionCommandContext): ContextBreakdown {
@@ -32,19 +50,69 @@ function computeBreakdown(ctx: ExtensionCommandContext): ContextBreakdown {
 	const opts = ctx.getSystemPromptOptions();
 	const systemPromptText = ctx.getSystemPrompt();
 
-	// Estimate each system-prompt section.
-	// Skills are no longer in the system prompt (loaded on demand).
-	const skillsTokens = 0;
+	// ── System prompt sections ──────────────────────────────────────────
+	// Reconstruct each section the same way buildSystemPrompt() does, so
+	// we can count them individually.
 
-	const contextFilesText = (opts.contextFiles ?? [])
-		.map(({ path, content }) => `<project_instructions path="${path}">\n${content}\n</project_instructions>\n\n`)
-		.join("");
-	const contextFilesTokens = estimateChars(contextFilesText);
+	const cats: Category[] = [];
 
-	const totalSystemTokens = estimateChars(systemPromptText);
-	const baseSystemTokens = Math.max(0, totalSystemTokens - contextFilesTokens);
+	// 1. Base instructions (everything before <project_context>, <available_skills>,
+	//    "Current date:", and "Current working directory:").
+	const skillsIdx = systemPromptText.indexOf("<available_skills>");
+	const projectCtxIdx = systemPromptText.indexOf("<project_context>");
+	const dateIdx = systemPromptText.lastIndexOf("Current date:");
 
-	const messagesAndTools = tokens !== null ? Math.max(0, tokens - totalSystemTokens) : null;
+	// The base slice goes from start up to the earlier of skills / project-context.
+	// (Date + cwd footer is included in system prompt — not worth its own category.)
+	let baseEnd = systemPromptText.length;
+	for (const idx of [skillsIdx, projectCtxIdx]) {
+		if (idx > 0 && idx < baseEnd) baseEnd = idx;
+	}
+	const baseText = systemPromptText.slice(0, baseEnd).trim();
+	if (baseText) {
+		cats.push({ name: "System prompt", tokens: estimateTokens(baseText, 3.0), color: "text" });
+	}
+
+	// 2. Skills (from <available_skills> block)
+	if (skillsIdx > 0) {
+		let skillsEnd = systemPromptText.length;
+		const afterSkills = systemPromptText.indexOf("</available_skills>", skillsIdx);
+		if (afterSkills > 0) skillsEnd = afterSkills + "</available_skills>".length;
+		const skillsText = systemPromptText.slice(skillsIdx, skillsEnd);
+		if (skillsText) {
+			// Skills are XML — token-inefficient. Use 2.5 bytes/token.
+			cats.push({ name: "Skills", tokens: estimateTokens(skillsText, 2.5), color: "warning" });
+		}
+	}
+
+	// 3. Context files (from <project_context> block)
+	if (projectCtxIdx > 0) {
+		let ctxEnd = systemPromptText.length;
+		const afterCtx = systemPromptText.indexOf("</project_context>", projectCtxIdx);
+		if (afterCtx > 0) ctxEnd = afterCtx + "</project_context>".length;
+		const ctxText = systemPromptText.slice(projectCtxIdx, ctxEnd);
+		if (ctxText) {
+			cats.push({ name: "Context files", tokens: estimateTokens(ctxText), color: "accent" });
+		}
+	}
+
+	// ── Messages ────────────────────────────────────────────────────────
+	// The contextUsage.tokens already includes the system prompt.  If the
+	// API reported real usage we trust its total; otherwise we estimate
+	// the whole thing from chars.
+	const totalSystemTokens = cats.reduce((sum, c) => sum + c.tokens, 0);
+
+	// Check whether we have a real API-based token count vs a pure estimate.
+	const hasApiUsage = tokens !== null && tokens > 0 && tokens > totalSystemTokens * 0.5;
+
+	let messagesTokens: number | null = null;
+	if (tokens !== null) {
+		messagesTokens = Math.max(0, tokens - totalSystemTokens);
+	}
+
+	if (messagesTokens !== null && messagesTokens > 0) {
+		cats.push({ name: "Messages + tools", tokens: messagesTokens, color: "accent" });
+	}
 
 	return {
 		modelName: model?.name,
@@ -52,10 +120,8 @@ function computeBreakdown(ctx: ExtensionCommandContext): ContextBreakdown {
 		contextWindow,
 		tokens,
 		percent,
-		systemPrompt: baseSystemTokens,
-		skills: skillsTokens,
-		contextFiles: contextFilesTokens,
-		messagesAndTools,
+		categories: cats,
+		fromApi: hasApiUsage,
 	};
 }
 
@@ -117,20 +183,19 @@ function renderDisplay(breakdown: ContextBreakdown, theme: Theme): string {
 	lines.push(`${iconRows[1]}    ${theme.fg("dim", breakdown.modelId ?? "")}`);
 	lines.push(`${iconRows[2]}    ${theme.fg("dim", `${tokenStr}${pctStr}`)}`);
 	lines.push(iconRows[3]);
-	lines.push(`${iconRows[4]}    ${theme.fg("dim", theme.italic("Estimated usage by category"))}`);
+
+	const sourceNote = breakdown.fromApi
+		? theme.fg("dim", theme.italic("Usage from last API response"))
+		: theme.fg("dim", theme.italic("Estimated usage (no API response yet)"));
+	lines.push(`${iconRows[4]}    ${sourceNote}`);
 	lines.push("");
-	lines.push(`${INDENT}${dot("dim", "⛁")} ${bold("System prompt:")} ${fmt(breakdown.systemPrompt)} tokens`);
-	if (breakdown.skills > 0) {
-		lines.push(`${INDENT}${dot("accent", "⛁")} ${bold("Skills:")} ${fmt(breakdown.skills)} tokens`);
+
+	for (const cat of breakdown.categories) {
+		const prefix = breakdown.fromApi ? "" : "~";
+		lines.push(`${INDENT}${dot(cat.color, "⛁")} ${bold(`${cat.name}:`)} ${prefix}${fmt(cat.tokens)} tokens`);
 	}
-	if (breakdown.contextFiles > 0) {
-		lines.push(`${INDENT}${dot("warning", "⛁")} ${bold("Context files:")} ${fmt(breakdown.contextFiles)} tokens`);
-	}
-	lines.push(
-		`${INDENT}${dot(usageColor, "⛁")} ${bold("Messages + tools:")} ${
-			breakdown.messagesAndTools !== null ? `${fmt(breakdown.messagesAndTools)} tokens` : "unknown"
-		}`,
-	);
+
+	lines.push("");
 	lines.push(
 		`${INDENT}${dot("dim", "⛶")} ${bold("Free space:")} ${
 			freeTokens !== null && contextWindow > 0 ? `${fmt(freeTokens)} (${Math.round(freePct!)}%)` : "unknown"

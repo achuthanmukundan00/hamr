@@ -21,7 +21,7 @@ import { resolvePath } from "../utils/paths.js";
 import { sleep } from "../utils/sleep.js";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.js";
 import { executeBashWithOperations } from "./bash-executor.js";
-import { calculateContextTokens, collectEntriesForBranchSummary, compact, estimateContextTokens, generateBranchSummary, prepareCompaction, shouldCompact, } from "./compaction/index.js";
+import { calculateContextTokens, collectEntriesForBranchSummary, compact, estimateContextTokens, estimateTokens, generateBranchSummary, prepareCompaction, shouldCompact, } from "./compaction/index.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
 import { exportSessionToHtml } from "./export-html/index.js";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
@@ -789,6 +789,35 @@ export class AgentSession {
                 // Ensure we're using the base prompt (in case previous turn had modifications)
                 this.agent.state.systemPrompt = this._baseSystemPrompt;
             }
+            // Proactive compaction: compact BEFORE sending if context is near the window limit.
+            // This prevents server-side overflow errors (e.g. Codex "invalid_request_error")
+            // when the effective server limit is lower than the model's declared context window.
+            if (await this._proactiveCompactIfNeeded(messages)) {
+                // Compaction updated agent.state.messages — rebuild the messages array
+                // to avoid sending stale/duplicate messages after compaction.
+                messages = [];
+                const userContent = [{ type: "text", text: expandedText }];
+                if (currentImages) {
+                    userContent.push(...currentImages);
+                }
+                messages.push({
+                    role: "user",
+                    content: userContent,
+                    timestamp: Date.now(),
+                });
+                if (result?.messages) {
+                    for (const msg of result.messages) {
+                        messages.push({
+                            role: "custom",
+                            customType: msg.customType,
+                            content: msg.content,
+                            display: msg.display,
+                            details: msg.details,
+                            timestamp: Date.now(),
+                        });
+                    }
+                }
+            }
         }
         catch (error) {
             preflightResult?.(false);
@@ -1378,9 +1407,9 @@ export class AgentSession {
      * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
      */
     async _checkCompaction(assistantMessage, skipAbortedCheck = true) {
-        const settings = this.settingsManager.getCompactionSettings();
-        if (!settings.enabled)
+        if (!this._isCompactionEnabled())
             return false;
+        const settings = this.settingsManager.getCompactionSettings();
         // Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
         if (skipAbortedCheck && assistantMessage.stopReason === "aborted")
             return false;
@@ -1605,6 +1634,111 @@ export class AgentSession {
         }
     }
     /**
+     * Estimate the total context tokens including upcoming messages yet to be sent.
+     * Combines the last known usage-based estimate with heuristic estimates for new messages.
+     */
+    _estimateTotalPendingContextTokens(upcomingMessages) {
+        const currentMessages = this.agent.state.messages;
+        const estimate = estimateContextTokens(currentMessages);
+        let total = estimate.tokens;
+        // Heuristic estimate for upcoming messages
+        for (const msg of upcomingMessages) {
+            total += estimateTokens(msg);
+        }
+        // Estimate system prompt tokens (conservative: 4 chars per token)
+        const systemPromptTokens = Math.ceil(this.systemPrompt.length / 4);
+        total += systemPromptTokens;
+        return total;
+    }
+    /**
+     * Proactively compact if the total context (current + upcoming messages)
+     * exceeds a safe fraction of the context window.
+     *
+     * Unlike the reactive `_checkCompaction` (which runs after an assistant response),
+     * this runs BEFORE sending a request to prevent server-side context overflow
+     * errors that may not be detected by `isContextOverflow` (e.g. Codex
+     * `invalid_request_error` when the effective server limit is lower than the
+     * model's declared context window).
+     *
+     * @returns true if compaction ran successfully and the caller should retry
+     */
+    async _proactiveCompactIfNeeded(upcomingMessages) {
+        if (!this._isCompactionEnabled())
+            return false;
+        const settings = this.settingsManager.getCompactionSettings();
+        const contextWindow = this.model?.contextWindow ?? 0;
+        if (contextWindow <= 0)
+            return false;
+        const estimatedTotal = this._estimateTotalPendingContextTokens(upcomingMessages);
+        const safetyMargin = settings.reserveTokens;
+        // Use the same threshold logic as shouldCompact but account for upcoming messages
+        if (estimatedTotal <= contextWindow - safetyMargin)
+            return false;
+        // Don't attempt proactive compaction if already compacting or recovering
+        if (this._autoCompactionAbortController || this._overflowRecoveryAttempted)
+            return false;
+        // Emit a proactive compaction start event
+        this._emit({ type: "compaction_start", reason: "threshold" });
+        try {
+            const { apiKey, headers, env } = await this._getCompactionRequestAuth(this.model);
+            const pathEntries = this.sessionManager.getBranch();
+            const preparation = prepareCompaction(pathEntries, settings);
+            if (!preparation) {
+                this._emit({
+                    type: "compaction_end",
+                    reason: "threshold",
+                    result: undefined,
+                    aborted: false,
+                    willRetry: false,
+                });
+                return false;
+            }
+            const compactResult = await compact(preparation, this.model, apiKey, headers, undefined, undefined, this.thinkingLevel, this.agent.streamFn, env);
+            this.sessionManager.appendCompaction(compactResult.summary, compactResult.firstKeptEntryId, compactResult.tokensBefore, compactResult.details, false);
+            const sessionContext = this.sessionManager.buildSessionContext();
+            this.agent.state.messages = sessionContext.messages;
+            const result = {
+                summary: compactResult.summary,
+                firstKeptEntryId: compactResult.firstKeptEntryId,
+                tokensBefore: compactResult.tokensBefore,
+                details: compactResult.details,
+            };
+            this._emit({ type: "compaction_end", reason: "threshold", result, aborted: false, willRetry: false });
+            return true;
+        }
+        catch (error) {
+            this._emit({
+                type: "compaction_end",
+                reason: "threshold",
+                result: undefined,
+                aborted: false,
+                willRetry: false,
+                errorMessage: `Proactive compaction failed: ${error instanceof Error ? error.message : "compaction failed"}`,
+            });
+            return false;
+        }
+    }
+    /**
+     * Check if compaction should run given the current model.
+     *
+     * When the user has not explicitly toggled auto-compaction, the default is:
+     * - ON for models with context window < 400k tokens
+     * - OFF for models with context window >= 400k tokens (e.g. Codex)
+     *
+     * Large-context models rarely benefit from automatic compaction and the
+     * summarisation LLM call adds latency; disabling it avoids unnecessary work.
+     */
+    _isCompactionEnabled() {
+        if (this.settingsManager.isCompactionEnabledExplicitlySet()) {
+            return this.settingsManager.getCompactionEnabled();
+        }
+        // Dynamic default: OFF for models with >= 400k context window
+        const contextWindow = this.model?.contextWindow ?? 0;
+        if (contextWindow > 0 && contextWindow >= 400_000)
+            return false;
+        return true;
+    }
+    /**
      * Toggle auto-compaction setting.
      */
     setAutoCompactionEnabled(enabled) {
@@ -1612,7 +1746,7 @@ export class AgentSession {
     }
     /** Whether auto-compaction is enabled */
     get autoCompactionEnabled() {
-        return this.settingsManager.getCompactionEnabled();
+        return this._isCompactionEnabled();
     }
     async bindExtensions(bindings) {
         if (bindings.uiContext !== undefined) {

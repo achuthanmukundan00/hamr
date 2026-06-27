@@ -15,7 +15,14 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { _testExports } from "../src/hamr/extensions/subagents.ts";
 
-const { pushEvent, validateWorkerOutput, createWorkerState } = _testExports;
+const {
+	pushEvent,
+	validateWorkerOutput,
+	createWorkerState,
+	createWorkerProcessEventState,
+	recordWorkerProcessEvent,
+	buildWorkerOutcomeFromChildSummary,
+} = _testExports;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -27,6 +34,93 @@ const EMPTY_USAGE = {
 	totalTokens: 0,
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
+
+// ─── 0. Child process classification ────────────────────────────────────────
+
+describe("child process outcome classification", () => {
+	it("surfaces assistant stopReason=error instead of reporting empty output", () => {
+		const outcome = buildWorkerOutcomeFromChildSummary("00", "call model", {
+			exitCode: 0,
+			wasAborted: false,
+			stderr: "",
+			outputText: "",
+			usage: { ...EMPTY_USAGE },
+			estimatedUsage: false,
+			stopReason: "error",
+			errorMessage: "rate limit exceeded",
+			stdoutParseErrors: 0,
+			invalidStdout: "",
+		});
+
+		expect(outcome.status).toBe("failed");
+		if (outcome.status !== "failed") throw new Error("expected failed outcome");
+		expect(outcome.error).toContain("rate limit exceeded");
+	});
+
+	it("does not fail solely because a successful child wrote a stderr warning", () => {
+		const outcome = buildWorkerOutcomeFromChildSummary("01", "produce answer", {
+			exitCode: 0,
+			wasAborted: false,
+			stderr: "ExperimentalWarning: noisy dependency\n",
+			outputText: "real answer",
+			usage: { ...EMPTY_USAGE },
+			estimatedUsage: false,
+			stopReason: "stop",
+			stdoutParseErrors: 0,
+			invalidStdout: "",
+		});
+
+		expect(outcome.status).toBe("done");
+		if (outcome.status !== "done") throw new Error("expected done outcome");
+		expect(outcome.text).toBe("real answer");
+	});
+
+	it("fails with malformed stdout diagnostics when JSON mode output cannot be parsed", () => {
+		const outcome = buildWorkerOutcomeFromChildSummary("02", "parse json stream", {
+			exitCode: 0,
+			wasAborted: false,
+			stderr: "",
+			outputText: "",
+			usage: { ...EMPTY_USAGE },
+			estimatedUsage: true,
+			stdoutParseErrors: 2,
+			invalidStdout: "not json\nalso not json\n",
+		});
+
+		expect(outcome.status).toBe("failed");
+		if (outcome.status !== "failed") throw new Error("expected failed outcome");
+		expect(outcome.error).toContain("2 invalid stdout lines");
+		expect(outcome.error).toContain("not json");
+	});
+
+	it("can recover final assistant text from agent_end when message_end is missing", () => {
+		const state = createWorkerProcessEventState();
+		recordWorkerProcessEvent(state, {
+			type: "agent_end",
+			messages: [
+				{ role: "user", content: [{ type: "text", text: "prompt" }] },
+				{ role: "assistant", content: [{ type: "text", text: "fallback answer" }], stopReason: "stop" },
+			],
+		});
+
+		const outcome = buildWorkerOutcomeFromChildSummary("03", "fallback", {
+			exitCode: 0,
+			wasAborted: false,
+			stderr: "",
+			outputText: state.outputText,
+			usage: state.usage,
+			estimatedUsage: state.estimatedUsage,
+			stopReason: state.stopReason,
+			errorMessage: state.errorMessage,
+			stdoutParseErrors: state.stdoutParseErrors,
+			invalidStdout: state.invalidStdout,
+		});
+
+		expect(outcome.status).toBe("done");
+		if (outcome.status !== "done") throw new Error("expected done outcome");
+		expect(outcome.text).toBe("fallback answer");
+	});
+});
 
 // ─── 1. Empty output: worker with only thinking events → failure ─────────────
 

@@ -16,8 +16,24 @@ const AUTO_INJECT_TOKEN_BUDGET = (() => {
     return Number.isNaN(parsed) || parsed < 0 ? 400 : parsed;
 })();
 const AUTO_INJECT_CHAR_BUDGET = AUTO_INJECT_TOKEN_BUDGET * 4;
+/**
+ * Default budget for cue-triggered durable memory prefetch. This is separate
+ * from full auto-injection: it only fires when the user asks to remember, pick
+ * up context, or sends a likely continuation fragment ("the genre is...").
+ */
+const MEMORY_PREFETCH_TOKEN_BUDGET = (() => {
+    const raw = process.env.HAMR_MEMORY_PREFETCH_TOKEN_BUDGET;
+    if (raw === undefined)
+        return 500;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isNaN(parsed) || parsed < 0 ? 500 : parsed;
+})();
+const MEMORY_PREFETCH_CHAR_BUDGET = MEMORY_PREFETCH_TOKEN_BUDGET * 4;
 function isTruthy(value) {
     return value === "1" || value === "true";
+}
+function isFalsey(value) {
+    return value === "0" || value === "false";
 }
 /** Track sessions that have already received their one-shot context injection. */
 const injectedSessions = new Set();
@@ -40,8 +56,8 @@ export function deduplicateResults(autoResults, existingMessages) {
     const seen = new Set();
     for (const msg of existingMessages) {
         if (typeof msg === "object" && msg !== null && "content" in msg) {
-            const content = msg.content;
-            if (typeof content === "string") {
+            const content = contentText(msg.content);
+            if (content) {
                 const words = content
                     .toLowerCase()
                     .split(/\s+/)
@@ -130,6 +146,171 @@ export function buildMemoryContextMessage(autoResults, index, options = {}) {
     }
     sections.push(`\n${index}`);
     return { role: "user", content: sections.join("\n"), timestamp };
+}
+const EXPLICIT_RECALL_RE = /\b(?:remember|recall|last time|earlier|previous(?:ly)?|prior conversation|we talked|we were talking|where (?:we|it) left off|pick up|continue(?: from)?|that .{0,40}thing|the .{0,40}thing)\b/i;
+const CONTINUATION_FRAGMENT_RE = /^(?:(?:the\s+(?:genre|vibe|artist|track|song|album|project|thing|one|issue|bug|error|problem|plan|approach|fix|branch|file|context|repo)\s+(?:is|was|are|were|=|should|needs?|has|uses?))|(?:(?:it|it's|its|that|this)\b)|(?:(?:also|btw)\b))/i;
+const MUSIC_CONTEXT_RE = /\b(?:music|electronic|artist|genre|track|song|album|club|deconstructed|industrial|sound|vibe)\b/i;
+const PROJECT_CONTEXT_RE = /\b(?:project|thing|context|conversation|remember|recall|last time|earlier|previous|pick up|continue)\b/i;
+const PREFETCH_STOP_WORDS = new Set([
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "is",
+    "are",
+    "was",
+    "were",
+    "it",
+    "its",
+    "it's",
+    "this",
+    "that",
+    "thing",
+    "one",
+    "about",
+    "with",
+    "from",
+    "for",
+    "to",
+    "of",
+    "in",
+    "on",
+    "can",
+    "you",
+    "we",
+    "me",
+    "my",
+    "our",
+    "remember",
+    "recall",
+    "please",
+]);
+function compactMemoryQuery(prompt) {
+    const words = prompt
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}_-]+/u)
+        .map((word) => word.trim())
+        .filter((word) => word.length > 2 && !PREFETCH_STOP_WORDS.has(word));
+    const unique = Array.from(new Set(words)).slice(0, 6);
+    return unique.length > 0 ? unique.join(" ") : null;
+}
+function pushUnique(values, value) {
+    const trimmed = value?.trim();
+    if (!trimmed)
+        return;
+    if (!values.some((existing) => existing.toLowerCase() === trimmed.toLowerCase()))
+        values.push(trimmed);
+}
+export function classifyMemoryPrefetchPrompt(prompt) {
+    const text = prompt.trim();
+    if (!text)
+        return null;
+    if (EXPLICIT_RECALL_RE.test(text))
+        return "explicit-recall";
+    if (text.length <= 500 && CONTINUATION_FRAGMENT_RE.test(text))
+        return "continuation";
+    return null;
+}
+export function buildMemoryPrefetchQueries(prompt, reason) {
+    const queries = [];
+    pushUnique(queries, compactMemoryQuery(prompt));
+    if (MUSIC_CONTEXT_RE.test(prompt)) {
+        pushUnique(queries, "music");
+        pushUnique(queries, "music project");
+        pushUnique(queries, "electronic music");
+        pushUnique(queries, "artist next level");
+    }
+    if (reason === "explicit-recall" || PROJECT_CONTEXT_RE.test(prompt)) {
+        pushUnique(queries, "user-context");
+        pushUnique(queries, "project-context");
+    }
+    return queries.slice(0, 8);
+}
+export function buildMemoryPrefetchContextMessage(payload) {
+    if (payload.facts.length === 0 && payload.transcriptResults.length === 0)
+        return null;
+    const reasonLabel = payload.reason === "explicit-recall" ? "explicit recall cue" : "continuation cue";
+    const lines = [
+        `MEMORY PREFETCH (${reasonLabel}; hidden context for this turn):`,
+        `Latest user prompt: ${JSON.stringify(truncate(payload.latestUserText, 160))}`,
+    ];
+    if (payload.facts.length > 0) {
+        lines.push("Durable facts:");
+        for (const fact of payload.facts.slice(0, 5)) {
+            const tags = fact.tags ? ` tags=${fact.tags}` : "";
+            lines.push(`- [#${fact.factId} trust=${fact.trustScore.toFixed(2)}${tags}] ${truncate(fact.content, 260)}`);
+        }
+    }
+    if (payload.transcriptResults.length > 0) {
+        lines.push("Transcript hits:");
+        for (const result of payload.transcriptResults.slice(0, 3)) {
+            const excerpt = sanitizeMemoryTranscriptText(result.snippet || result.content);
+            lines.push(`- turn ${result.turnId} ${result.role}${result.toolName ? `/${result.toolName}` : ""}: ${truncate(excerpt, 220)}`);
+        }
+    }
+    if (payload.queries.length > 0)
+        lines.push(`Searches used: ${payload.queries.join("; ")}`);
+    lines.push("Use this naturally to resolve pronouns/continuations. If the latest prompt adds a durable detail, save it with save_memory/fact_store.");
+    return {
+        role: "user",
+        content: applyTokenBudget(lines, MEMORY_PREFETCH_CHAR_BUDGET).join("\n"),
+        timestamp: payload.timestamp ?? Date.now(),
+    };
+}
+function latestUserText(messages) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i];
+        if (message?.role !== "user")
+            continue;
+        return contentText(message.content).trim();
+    }
+    return "";
+}
+function collectMemoryPrefetch(latestText, memory, factStore) {
+    if (isFalsey(process.env.HAMR_MEMORY_PREFETCH))
+        return null;
+    const reason = classifyMemoryPrefetchPrompt(latestText);
+    if (!reason)
+        return null;
+    const queries = buildMemoryPrefetchQueries(latestText, reason);
+    const facts = [];
+    const seenFacts = new Set();
+    const transcriptResults = [];
+    const seenTranscript = new Set();
+    const addFact = (fact) => {
+        if (seenFacts.has(fact.factId))
+            return;
+        seenFacts.add(fact.factId);
+        facts.push(fact);
+    };
+    const addTranscript = (result) => {
+        const key = `${result.sessionId}:${result.turnId}:${result.role}:${result.toolName ?? ""}:${result.content.slice(0, 80)}`;
+        if (seenTranscript.has(key))
+            return;
+        seenTranscript.add(key);
+        transcriptResults.push(result);
+    };
+    for (const query of queries) {
+        if (factStore?.isAvailable && facts.length < 5) {
+            for (const fact of factStore.searchFacts(query, 3))
+                addFact(fact);
+        }
+        if (memory && transcriptResults.length < 3) {
+            for (const result of memory.searchWithSnippets(query, 2))
+                addTranscript(result);
+        }
+    }
+    // For explicit "remember that thing" prompts, a low-information query may not
+    // match. Recent durable facts are safer here than pretending memory is empty.
+    if (reason === "explicit-recall" && facts.length === 0 && factStore?.isAvailable) {
+        for (const fact of factStore.listRecentFacts(3, 0.0))
+            addFact(fact);
+    }
+    if (facts.length === 0 && transcriptResults.length === 0)
+        return null;
+    return { reason, latestUserText: latestText, queries, facts, transcriptResults };
 }
 export function selectCompactionPolicy(options) {
     const contextWindow = options.contextWindow && options.contextWindow > 0 ? options.contextWindow : 16_384;
@@ -408,7 +589,7 @@ export function buildSurvivalManifest(messages, policy) {
  * models keep pi's default compaction, so this never overrides the summary.
  */
 function storeCompactionHandoff(memory, ctx, event) {
-    const manifest = memory.handoff();
+    const manifest = memory.handoff(ctx.sessionManager.getSessionId());
     memory.store({
         sessionId: ctx.sessionManager.getSessionId(),
         turnId: 0,
@@ -482,22 +663,34 @@ export const hamrMemoryExtension = async (pi) => {
     // Memory context is APPENDED (not prepended) to preserve Anthropic's
     // longest-prefix prompt caching.
     pi.on("context", (event, ctx) => {
-        // ── Opt-in gate: skip auto-injection unless HAMR_MEMORY_AUTO_INJECT is truthy ──
-        if (!isTruthy(process.env.HAMR_MEMORY_AUTO_INJECT))
-            return;
         const memory = getMemory(ctx);
+        const factStore = getFactStore(ctx);
+        let messages = event.messages;
+        let didPrefetch = false;
+        // Cue-triggered prefetch is on by default and independent of broad auto-inject.
+        // It fixes cold-resume fragments like: "the genre is deconstructed club".
+        const latestText = latestUserText(event.messages);
+        const prefetch = collectMemoryPrefetch(latestText, memory, factStore);
+        const prefetchMessage = prefetch ? buildMemoryPrefetchContextMessage(prefetch) : null;
+        if (prefetchMessage) {
+            messages = [...messages, prefetchMessage];
+            didPrefetch = true;
+        }
+        const prefetchOnly = () => (didPrefetch ? { messages } : undefined);
+        // ── Opt-in gate: skip broad auto-injection unless HAMR_MEMORY_AUTO_INJECT is truthy ──
+        if (!isTruthy(process.env.HAMR_MEMORY_AUTO_INJECT))
+            return prefetchOnly();
         if (!memory)
-            return;
+            return prefetchOnly();
         const sessionId = ctx.sessionManager.getSessionId();
         // ── Only inject on resumed/handoff sessions (sessions with prior entries) ──
         if (!memory.hasSessionEntries(sessionId))
-            return;
+            return prefetchOnly();
         // ── One-shot: inject only once per session, never on every turn ──
         if (injectedSessions.has(sessionId))
-            return;
+            return prefetchOnly();
         let index = memory.buildMemoryIndex();
         // Append fact store status to the memory index
-        const factStore = getFactStore(ctx);
         if (factStore?.isAvailable) {
             const fc = factStore.getFactCount();
             const fsLine = fc > 0
@@ -506,16 +699,16 @@ export const hamrMemoryExtension = async (pi) => {
             index = index ? `${index}${fsLine}` : fsLine;
         }
         if (!index)
-            return;
+            return prefetchOnly();
         const survival = memory.getLatestByDomainTag("survival", sessionId);
         const survivalManifest = survival?.content ?? null;
         const provider = ctx.model?.provider;
         const cloud = !provider || isCloudProvider(config, provider);
-        // Cloud providers: skip auto-injection entirely unless a survival
+        // Cloud providers: skip broad auto-injection entirely unless a survival
         // manifest from a prior local compaction exists. Cloud models rely on
-        // proper LLM compaction, not FTS5 context injection.
+        // proper LLM compaction, not broad FTS5 context injection.
         if (cloud && !survivalManifest)
-            return;
+            return prefetchOnly();
         const policy = selectCompactionPolicy({ cloud, contextWindow: ctx.model?.contextWindow });
         const terms = memory.getSuggestedSearchTerms();
         const autoResults = [];
@@ -526,22 +719,22 @@ export const hamrMemoryExtension = async (pi) => {
             }
         }
         // ── De-duplicate against existing context messages ──
-        const deduped = deduplicateResults(autoResults, event.messages);
+        const deduped = deduplicateResults(autoResults, messages);
         // ── Apply token budget cap ──
         const budgeted = applyTokenBudget(deduped, AUTO_INJECT_CHAR_BUDGET);
         // ── De-duplicate by content hash (skip if same content was already injected) ──
         const contextHash = hashContext(budgeted, index, survivalManifest);
         const prior = contextHashState.get(sessionId);
         if (prior === contextHash)
-            return;
+            return prefetchOnly();
         contextHashState.set(sessionId, contextHash);
         const message = buildMemoryContextMessage(budgeted, index, { survivalManifest });
         if (!message)
-            return;
+            return prefetchOnly();
         // Mark session as injected — one-shot only
         injectedSessions.add(sessionId);
         // APPEND memory context after existing messages to preserve prefix cache.
-        return { messages: [...event.messages, message] };
+        return { messages: [...messages, message] };
     });
     // Advance the memory turn counter at the end of each turn.
     pi.on("turn_end", (event) => {

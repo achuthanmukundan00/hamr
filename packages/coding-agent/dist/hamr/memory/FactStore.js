@@ -5,6 +5,7 @@
  * Shares the database with HolographicMemory (transcript FTS5) but uses
  * its own tables for structured knowledge that persists across sessions.
  */
+import { sanitizeFts5Query } from "./HolographicMemory.js";
 // ─── Schema ──────────────────────────────────────────────────────────────────
 const FACT_SCHEMA = `
 CREATE TABLE IF NOT EXISTS facts (
@@ -47,6 +48,57 @@ CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
     INSERT INTO facts_fts(rowid, content, tags) VALUES (new.fact_id, new.content, new.tags);
 END;
 `;
+// ─── Entity extraction patterns ──────────────────────────────────────────────
+// Capitalized multi-word phrases  e.g. "John Doe", "React Router"
+const RE_CAPITALIZED = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g;
+// Double-quoted terms             e.g. "hamr"
+const RE_DOUBLE_QUOTE = /"([^"]+)"/g;
+// Single-quoted terms             e.g. 'postgres'
+const RE_SINGLE_QUOTE = /'([^']+)'/g;
+// Backtick-quoted terms           e.g. `search_memory`
+const RE_BACKTICK = /`([^`\n]{2,60})`/g;
+// AKA patterns                    e.g. "Guido aka BDFL"
+const RE_AKA = /\b([\w-]+)\s+(?:aka|also known as)\s+([\w-]+)/gi;
+/**
+ * Extract entity candidates from text using simple regex rules.
+ *
+ * Rules applied (in order):
+ * 1. Capitalized multi-word phrases  e.g. "John Doe"
+ * 2. Double-quoted terms             e.g. "Python"
+ * 3. Single-quoted terms             e.g. 'pytest'
+ * 4. Backtick-quoted terms           e.g. `search_memory`
+ * 5. AKA patterns                    e.g. "Guido aka BDFL" → two entities
+ *
+ * Returns a deduplicated list preserving first-seen order.
+ */
+export function extractEntities(text) {
+    const seen = new Set();
+    const candidates = [];
+    const add = (name) => {
+        const stripped = name.trim();
+        if (stripped && stripped.length >= 2 && stripped.length <= 120 && !seen.has(stripped.toLowerCase())) {
+            seen.add(stripped.toLowerCase());
+            candidates.push(stripped);
+        }
+    };
+    for (const m of text.matchAll(RE_CAPITALIZED))
+        add(m[1]);
+    for (const m of text.matchAll(RE_DOUBLE_QUOTE))
+        add(m[1]);
+    for (const m of text.matchAll(RE_SINGLE_QUOTE))
+        add(m[1]);
+    for (const m of text.matchAll(RE_BACKTICK))
+        add(m[1]);
+    for (const m of text.matchAll(RE_AKA)) {
+        // Only accept AKA matches where the left-hand name starts with a capital
+        // letter — prevents false positives like "and AKA patterns"
+        if (/^[A-Z]/.test(m[1])) {
+            add(m[1]);
+            add(m[2]);
+        }
+    }
+    return candidates;
+}
 // ─── Implementation ──────────────────────────────────────────────────────────
 export class FactStore {
     constructor(db) {
@@ -55,6 +107,13 @@ export class FactStore {
         this.insertFactStmt = null;
         this.searchFtsStmt = null;
         this.getFactByIdStmt = null;
+        this.resolveEntityStmt = null;
+        this.resolveEntityInsertStmt = null;
+        this.linkFactEntityStmt = null;
+        this.getEntitiesStmt = null;
+        this.deleteFactEntitiesStmt = null;
+        this.listAllFactsStmt = null;
+        this.listRecentFactsStmt = null;
         this.db = db;
         if (db) {
             try {
@@ -67,6 +126,20 @@ export class FactStore {
 					   AND f.trust_score >= @minTrust
 					 ORDER BY rank LIMIT @limit`);
                 this.getFactByIdStmt = db.prepare(`SELECT fact_id, content, tags, trust_score, retrieval_count, helpful_count, created_at, updated_at FROM facts WHERE fact_id = @id`);
+                this.resolveEntityStmt = db.prepare(`SELECT entity_id FROM entities WHERE name LIKE @name`);
+                this.resolveEntityInsertStmt = db.prepare(`INSERT OR IGNORE INTO entities (name) VALUES (@name)`);
+                this.linkFactEntityStmt = db.prepare(`INSERT OR IGNORE INTO fact_entities (fact_id, entity_id) VALUES (@factId, @entityId)`);
+                this.getEntitiesStmt = db.prepare(`SELECT e.name FROM entities e JOIN fact_entities fe ON fe.entity_id = e.entity_id WHERE fe.fact_id = @factId`);
+                this.deleteFactEntitiesStmt = db.prepare(`DELETE FROM fact_entities WHERE fact_id = @factId`);
+                this.listAllFactsStmt = db.prepare(`SELECT fact_id, content, tags, trust_score, retrieval_count, helpful_count, created_at, updated_at
+					 FROM facts
+					 ORDER BY trust_score DESC
+					 LIMIT @limit`);
+                this.listRecentFactsStmt = db.prepare(`SELECT fact_id, content, tags, trust_score, retrieval_count, helpful_count, created_at, updated_at
+					 FROM facts
+					 WHERE trust_score >= @minTrust
+					 ORDER BY datetime(updated_at) DESC, fact_id DESC
+					 LIMIT @limit`);
             }
             catch {
                 this.isAvailable = false;
@@ -77,20 +150,47 @@ export class FactStore {
         return new FactStore(db);
     }
     addFact(content, tags) {
-        if (!this.isAvailable || !this.insertFactStmt)
+        if (!this.isAvailable || !this.insertFactStmt || !this.db)
             return null;
         try {
+            this.db.exec("BEGIN");
             const result = this.insertFactStmt.run({ content, tags });
-            return Number(result.lastInsertRowid ?? 0) || null;
+            const factId = Number(result.lastInsertRowid ?? 0) || null;
+            if (factId && factId > 0) {
+                // Purge old entity links on upsert so stale links don't survive re-extraction
+                if (this.deleteFactEntitiesStmt) {
+                    this.deleteFactEntitiesStmt.run({ factId });
+                }
+                // Extract entities from the fact content and link them
+                const entities = extractEntities(content);
+                for (const name of entities) {
+                    const entityId = this._resolveEntity(name);
+                    if (entityId)
+                        this._linkFactEntity(factId, entityId);
+                }
+            }
+            this.db.exec("COMMIT");
+            return factId;
         }
         catch {
+            this.db?.exec("ROLLBACK");
             return null;
         }
     }
     searchFacts(query, limit = 10) {
         if (!this.isAvailable || !this.searchFtsStmt)
             return [];
-        const safeQuery = query.replace(/[^\w\s*\-"()]/g, " ").trim();
+        // Bare "*" means "list all" — FTS5 can't handle it, so fall back to a direct SELECT
+        if (query.trim() === "*" && this.listAllFactsStmt) {
+            try {
+                const rows = this.listAllFactsStmt.all({ limit });
+                return rows.map((r) => this._rowToFact(r));
+            }
+            catch {
+                return [];
+            }
+        }
+        const safeQuery = sanitizeFts5Query(query);
         if (!safeQuery)
             return [];
         try {
@@ -105,13 +205,99 @@ export class FactStore {
         if (!this.isAvailable || !this.getFactByIdStmt)
             return null;
         const row = this.getFactByIdStmt.get({ id: factId });
-        return row ? this._rowToFact(row) : null;
+        if (!row)
+            return null;
+        const fact = this._rowToFact(row);
+        fact.entities = this.getFactEntities(factId);
+        return fact;
     }
+    /**
+     * Return recent durable facts for recall/continuation prefetch.
+     * This is intentionally separate from searchFacts("*"), which sorts by trust.
+     */
+    listRecentFacts(limit = 5, minTrust = 0.0) {
+        if (!this.isAvailable || !this.listRecentFactsStmt)
+            return [];
+        try {
+            const rows = this.listRecentFactsStmt.all({ minTrust, limit });
+            return rows.map((r) => this._rowToFact(r));
+        }
+        catch {
+            return [];
+        }
+    }
+    /**
+     * Get entities linked to a fact. Returns entity names.
+     */
+    getFactEntities(factId) {
+        if (!this.isAvailable || !this.getEntitiesStmt)
+            return [];
+        try {
+            const rows = this.getEntitiesStmt.all({ factId });
+            return rows.map((r) => r.name);
+        }
+        catch {
+            return [];
+        }
+    }
+    /**
+     * Probe for facts about a specific entity (case-insensitive match).
+     * Uses the fact_entities junction table. Falls back to FTS5 search
+     * if the entity has no linked facts.
+     */
     probe(entity, limit = 10) {
-        return this._entitySearch(entity, limit);
+        const results = this._entitySearch(entity, limit);
+        if (results.length > 0)
+            return results;
+        // Fallback to FTS5 keyword search so probe never returns empty
+        // when there are facts containing the entity name as text
+        return this.searchFacts(entity, limit);
     }
+    /**
+     * Discover facts that share entities with the given entity.
+     * First finds facts directly linked to the entity, then finds
+     * other facts that share at least one entity with those.
+     * Falls back to FTS5 search if no structured links exist.
+     */
     related(entity, limit = 10) {
-        return this._entitySearch(entity, limit);
+        const direct = this._entitySearch(entity, limit);
+        if (direct.length === 0)
+            return this.searchFacts(entity, limit);
+        if (!this.isAvailable || !this.db || direct.length === 0)
+            return direct;
+        try {
+            // Find entities linked to the direct facts, then find other facts sharing those
+            const directIds = direct.map((f) => f.factId);
+            // Use named params for the IN clause in better-sqlite3 style
+            const idParams = {};
+            const idPlaceholders = directIds
+                .map((id, i) => {
+                idParams[`id${i}`] = id;
+                return `@id${i}`;
+            })
+                .join(",");
+            const rows = this.db
+                .prepare(`SELECT DISTINCT f.fact_id, f.content, f.tags, f.trust_score, f.retrieval_count, f.helpful_count, f.created_at, f.updated_at
+					 FROM facts f
+					 JOIN fact_entities fe ON f.fact_id = fe.fact_id
+					 WHERE fe.entity_id IN (
+					   SELECT DISTINCT fe2.entity_id FROM fact_entities fe2
+					   WHERE fe2.fact_id IN (${idPlaceholders})
+					 )
+					 AND f.fact_id NOT IN (${idPlaceholders})
+					 AND f.trust_score >= @minTrust
+					 ORDER BY f.trust_score DESC LIMIT @limit`)
+                .all({ ...idParams, minTrust: 0.0, limit });
+            if (rows.length === 0)
+                return direct;
+            // Prepend direct results, deduplicate
+            const directIdsSet = new Set(directIds);
+            const related = rows.filter((r) => !directIdsSet.has(r.fact_id)).map((r) => this._rowToFact(r));
+            return [...direct, ...related].slice(0, limit);
+        }
+        catch {
+            return direct;
+        }
     }
     reason(entities, limit = 10) {
         return this.searchFacts(entities.join(" "), limit);
@@ -159,19 +345,52 @@ export class FactStore {
     _entitySearch(entity, limit) {
         if (!this.isAvailable || !this.db)
             return [];
+        // Try case-insensitive match first
+        let rows = [];
         try {
-            const rows = this.db
+            rows = this.db
                 .prepare(`SELECT DISTINCT f.fact_id, f.content, f.tags, f.trust_score, f.retrieval_count, f.helpful_count, f.created_at, f.updated_at
 				 FROM facts f
 				 JOIN fact_entities fe ON f.fact_id = fe.fact_id
 				 JOIN entities e ON fe.entity_id = e.entity_id
-				 WHERE e.name = @entity AND f.trust_score >= @minTrust
+				 WHERE e.name LIKE @entity AND f.trust_score >= @minTrust
 				 ORDER BY f.trust_score DESC LIMIT @limit`)
                 .all({ entity, minTrust: 0.0, limit });
-            return rows.map((r) => this._rowToFact(r));
         }
         catch {
             return [];
+        }
+        return rows.map((r) => this._rowToFact(r));
+    }
+    /** Find an existing entity by case-insensitive name match, or create one. */
+    _resolveEntity(name) {
+        if (!this.isAvailable || !this.db || !this.resolveEntityStmt)
+            return null;
+        try {
+            const existing = this.resolveEntityStmt.get({ name });
+            if (existing)
+                return existing.entity_id;
+            // Create new entity
+            const result = this.resolveEntityInsertStmt.run({ name });
+            const id = Number(result.lastInsertRowid ?? 0);
+            if (id > 0)
+                return id;
+            // Race condition: another insert won, fetch its id
+            const retry = this.resolveEntityStmt.get({ name });
+            return retry?.entity_id ?? null;
+        }
+        catch {
+            return null;
+        }
+    }
+    _linkFactEntity(factId, entityId) {
+        if (!this.linkFactEntityStmt)
+            return;
+        try {
+            this.linkFactEntityStmt.run({ factId, entityId });
+        }
+        catch {
+            // ignore duplicate links
         }
     }
 }

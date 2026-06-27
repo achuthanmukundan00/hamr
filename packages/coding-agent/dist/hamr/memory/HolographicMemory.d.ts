@@ -51,6 +51,20 @@ export interface HandoffManifest {
     domainTags: string[];
 }
 /**
+ * Sanitize a user query for safe FTS5 MATCH usage.
+ *
+ * FTS5 MATCH expects a boolean expression: bare words, "phrase queries",
+ * prefix* terms, AND/OR/NOT, and (grouping). Dangerous characters (#, @, etc.)
+ * are stripped. Hyphens in terms (e.g. "hamr-browser") are preserved by
+ * double-quoting each token that contains them, since bare `-` is a column
+ * filter in FTS5. Path-like tokens (containing / or .) are also double-quoted
+ * to avoid being split into separate FTS5 tokens.
+ *
+ * Falls back to the original query (with only null bytes and unprintables
+ * stripped) if tokenization produces nothing useful.
+ */
+export declare function sanitizeFts5Query(query: string): string;
+/**
  * @public
  */
 export declare class HolographicMemory {
@@ -61,6 +75,7 @@ export declare class HolographicMemory {
     private searchStmt;
     private searchSnippetStmt;
     private handoffCountsStmt;
+    private handoffRecentEntriesStmt;
     private latestByTagStmt;
     private _suggestedTermsCache;
     /** Count of store errors since construction. Non-zero means FTS5 is silently failing. */
@@ -109,7 +124,7 @@ export declare class HolographicMemory {
      *   - Suggested search terms for the next agent
      *   - Turn/entry counts
      */
-    handoff(): HandoffManifest;
+    handoff(sessionId: string): HandoffManifest;
     /**
      * Generate suggested FTS5 search terms from recent memory.
      *

@@ -1,5 +1,7 @@
 .env
 node_modules/
+releases/
+.notes
 
 # Local hamr config may contain live credentials (API keys, CF-Access tokens)
 .hamr/

@@ -1,1 +1,1 @@
-{"version":3,"file":"read-loop-guard.d.ts","sourceRoot":"","sources":["../../../src/hamr/extensions/read-loop-guard.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,gBAAgB,EAAE,MAAM,gCAAgC,CAAC;AAIvE,eAAO,MAAM,0BAA0B,EAAE,gBA2BxC,CAAC"}
+{"version":3,"file":"read-loop-guard.d.ts","sourceRoot":"","sources":["../../../src/hamr/extensions/read-loop-guard.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,gBAAgB,EAAE,MAAM,gCAAgC,CAAC;AAmEvE,eAAO,MAAM,0BAA0B,EAAE,gBAiCxC,CAAC"}

@@ -1,5 +1,7 @@
 import type { AgentMessage } from "@hamr/agent";
 import type { ExtensionFactory } from "../../core/extensions/types.ts";
+import type { FactWithScore } from "../memory/FactStore.ts";
+import type { MemorySearchResult } from "../memory/HolographicMemory.ts";
 /**
  * De-duplicate auto-results against existing context messages.
  * Removes result lines whose core content already appears in any existing message.
@@ -22,6 +24,24 @@ export declare function buildMemoryContextMessage(autoResults: string[], index: 
     survivalManifest?: string | null;
     timestamp?: number;
 }): {
+    role: "user";
+    content: string;
+    timestamp: number;
+} | null;
+export type MemoryPrefetchReason = "explicit-recall" | "continuation";
+export interface MemoryPrefetchPayload {
+    reason: MemoryPrefetchReason;
+    latestUserText: string;
+    queries: string[];
+    facts: FactWithScore[];
+    transcriptResults: Array<MemorySearchResult & {
+        snippet?: string;
+    }>;
+    timestamp?: number;
+}
+export declare function classifyMemoryPrefetchPrompt(prompt: string): MemoryPrefetchReason | null;
+export declare function buildMemoryPrefetchQueries(prompt: string, reason: MemoryPrefetchReason): string[];
+export declare function buildMemoryPrefetchContextMessage(payload: MemoryPrefetchPayload): {
     role: "user";
     content: string;
     timestamp: number;

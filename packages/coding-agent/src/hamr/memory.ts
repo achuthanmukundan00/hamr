@@ -1,4 +1,5 @@
-import { mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AgentMessage } from "@hamr/agent";
 import type { AssistantMessage, ToolCall, ToolResultMessage } from "@hamr/ai";
@@ -11,6 +12,7 @@ import type { FactWithScore } from "./memory/FactStore.ts";
 import { FactStore } from "./memory/FactStore.ts";
 import { stripFtsMarks } from "./memory/fts-marks.ts";
 import { HolographicMemory } from "./memory/HolographicMemory.ts";
+import { loadNodeSqliteDatabase } from "./store/node-sqlite-adapter.ts";
 import { loadBetterSqlite3 } from "./store/sqlite-loader.ts";
 
 export type MemoryHandle = {
@@ -32,8 +34,29 @@ export function getCurrentTurnId(): number {
 	return currentTurnId;
 }
 
+/**
+ * Resolve the memory database path.
+ *
+ * Priority:
+ *   1. HAMR_MEMORY_DB env var — absolute or relative (relative to cwd)
+ *   2. ~/.hamr/memory.sqlite — centralized, one DB for all projects
+ *
+ * Previously defaulted to `<cwd>/.hamr/memory.sqlite` which littered a
+ * separate DB in every project directory. Centralizing to ~/.hamr means
+ * all sessions share one memory store, and the agent can find facts from
+ * any project.
+ */
 function memoryPath(cwd: string): string {
-	return process.env.HAMR_MEMORY_DB || join(cwd, ".hamr", "memory.sqlite");
+	if (process.env.HAMR_MEMORY_DB) {
+		const envPath = process.env.HAMR_MEMORY_DB;
+		// If the env var is a relative path, resolve it against cwd
+		if (envPath.startsWith("/") || envPath.startsWith("~")) {
+			return envPath.replace(/^~/, homedir());
+		}
+		return join(cwd, envPath);
+	}
+	// Centralized: ~/.hamr/memory.sqlite — one memory store for all projects
+	return join(homedir(), ".hamr", "memory.sqlite");
 }
 
 export function getMemory(ctx: ExtensionContext): HolographicMemory | undefined {
@@ -46,10 +69,42 @@ function getMemoryHandle(cwd: string): MemoryHandle | undefined {
 	if (memoryHandle?.path === path) return memoryHandle;
 	if (failedPaths.has(path)) return undefined;
 
-	const Database = loadBetterSqlite3();
+	// Try better-sqlite3 first (native C++ addon), fall back to node:sqlite (Node 24+).
+	// node:sqlite ships inside the runtime with FTS5 enabled — no compilation needed.
+	let Database = loadBetterSqlite3();
+	if (!Database) {
+		Database = loadNodeSqliteDatabase();
+		if (Database) {
+			console.warn("[hamr] Using node:sqlite (built-in) as SQLite backend. better-sqlite3 unavailable.");
+		}
+	}
 	if (!Database) {
 		failedPaths.add(path);
+		console.error(
+			"[hamr] SQLite unavailable: better-sqlite3 AND node:sqlite both failed. " +
+				"Memory (search_memory / save_memory / fact_store) will be disabled. " +
+				"Install build tools for better-sqlite3 or upgrade to Node 24+ for built-in sqlite. " +
+				"Set HAMR_MEMORY_DB env var to override the db path (default: ~/.hamr/memory.sqlite).",
+		);
 		return undefined;
+	}
+
+	// ── Migration from v0.7.0: copy old <cwd>/.hamr/memory.sqlite → ~/.hamr/memory.sqlite ──
+	// The old default was <cwd>/.hamr/memory.sqlite which created one DB per project.
+	// The new default is ~/.hamr/memory.sqlite (centralized). On first access to the
+	// new path, copy any existing DB from the old project-scoped location so users
+	// don't lose their accumulated memory and facts.
+	if (!process.env.HAMR_MEMORY_DB && !existsSync(path)) {
+		const oldPath = join(cwd, ".hamr", "memory.sqlite");
+		if (existsSync(oldPath)) {
+			try {
+				mkdirSync(dirname(path), { recursive: true });
+				copyFileSync(oldPath, path);
+				console.warn(`[hamr] Migrated memory DB from ${oldPath} → ${path}`);
+			} catch (err) {
+				console.warn(`[hamr] Could not migrate old memory DB from ${oldPath}:`, err);
+			}
+		}
 	}
 
 	// Close old connection before opening new one
@@ -59,12 +114,14 @@ function getMemoryHandle(cwd: string): MemoryHandle | undefined {
 		} catch {
 			// ignore close errors
 		}
+		memoryHandle = undefined;
 	}
 
 	try {
 		mkdirSync(dirname(path), { recursive: true });
 		const db = new Database(path);
 		db.pragma("journal_mode = WAL");
+		db.pragma("foreign_keys = ON");
 		db.exec(`
 			CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
 				turn_id UNINDEXED,
@@ -193,7 +250,21 @@ export function registerMemoryTools(pi: Parameters<ExtensionFactory>[0]): void {
 			},
 			execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
 				const memory = getMemory(ctx);
-				if (!memory) return { content: [{ type: "text", text: "FTS5 memory is unavailable." }], details: {} };
+				if (!memory)
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									"⚠️ FTS5 memory is unavailable. Hamr cannot store or search session history. " +
+									"Likely causes: (1) better-sqlite3 native addon failed to compile — run `npm rebuild -g better-sqlite3` " +
+									"or install build tools (Xcode CLT / build-essential), (2) Node version < 24 and node:sqlite fallback " +
+									"not available, (3) Permission error writing to ~/.hamr/memory.sqlite. " +
+									"Check the terminal output for [hamr] warnings during startup.",
+							},
+						],
+						details: {},
+					};
 				const results = memory.searchWithSnippets(params.query, Math.min(params.limit ?? 5, 20));
 				const text =
 					results.length === 0
@@ -220,7 +291,16 @@ export function registerMemoryTools(pi: Parameters<ExtensionFactory>[0]): void {
 			}),
 			execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
 				const memory = getMemory(ctx);
-				if (!memory) return { content: [{ type: "text", text: "FTS5 memory is unavailable." }], details: {} };
+				if (!memory)
+					return {
+						content: [
+							{
+								type: "text",
+								text: "⚠️ FTS5 memory is unavailable — cannot save. See search_memory error for troubleshooting.",
+							},
+						],
+						details: {},
+					};
 				const errCountBefore = memory.storeErrorCount;
 				memory.store({
 					sessionId: ctx.sessionManager.getSessionId(),
@@ -289,8 +369,17 @@ export function registerMemoryTools(pi: Parameters<ExtensionFactory>[0]): void {
 			},
 			execute: async (_toolCallId, _params, _signal, _onUpdate, ctx) => {
 				const memory = getMemory(ctx);
-				if (!memory) return { content: [{ type: "text", text: "FTS5 memory is unavailable." }], details: {} };
-				const handoff = memory.handoff();
+				if (!memory)
+					return {
+						content: [
+							{
+								type: "text",
+								text: "⚠️ FTS5 memory is unavailable — cannot build handoff. See search_memory error for troubleshooting.",
+							},
+						],
+						details: {},
+					};
+				const handoff = memory.handoff(ctx.sessionManager.getSessionId());
 				const lines = [
 					`📋 Hamr handoff manifest`,
 					`Session: ${handoff.sessionId || ctx.sessionManager.getSessionId()}`,

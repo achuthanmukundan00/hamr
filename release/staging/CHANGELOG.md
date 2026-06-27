@@ -1,5 +1,154 @@
 # Changelog
 
+All notable changes to the Hamr coding agent. This project follows [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+### Added
+
+- Nothing yet.
+
+## [0.7.1] - 2026-06-27
+
+### Breaking
+
+- **Memory DB centralized to `~/.hamr/memory.sqlite`.** Previously the default was
+  `<cwd>/.hamr/memory.sqlite` which created a separate database per project.
+  The new default is `~/.hamr/memory.sqlite` so all sessions share one memory
+  store and the agent can find facts from any project. On first access, Hamr
+  auto-migrates any existing project-scoped DB to the new location — no data
+  loss. Set `HAMR_MEMORY_DB` env var to override. (#53)
+
+### Added
+
+- **Entity extraction in FactStore.** Facts stored via `fact_store add` now
+  automatically extract entity names from content using regex patterns:
+  capitalized multi-word phrases ("John Doe"), double/single/backtick-quoted
+  terms, and AKA patterns ("Guido aka BDFL"). Entities are linked via a
+  `fact_entities` junction table. `probe` and `related` use entity joins with
+  FTS5 keyword fallback so they never return empty when text matches. (#53)
+- **Cue-triggered memory prefetch.** Prompts like `remember that music thing`,
+  `pick up where we left off`, and continuation fragments like `the genre is …`
+  now prefetch relevant FactStore/FTS5 context for that turn, independent of
+  broad `HAMR_MEMORY_AUTO_INJECT`. The prefetch is on by default, can be
+  disabled with `HAMR_MEMORY_PREFETCH=0`, and is budgeted by
+  `HAMR_MEMORY_PREFETCH_TOKEN_BUDGET`.
+- **FTS5 query sanitizer (`sanitizeFts5Query`).** The memory search sanitizer
+  now correctly handles file paths (preserves `/` and `.`), hyphenated terms
+  (`hamr-browser`), colons and `@`-signs (`@skaft/hamr`), and prefix wildcards
+  (`error*`). Previous sanitizer stripped path separators and let bare hyphens
+  through, causing FTS5 MATCH syntax errors. (#53)
+- **`node:sqlite` fallback for memory.** When `better-sqlite3` native addon is
+  unavailable (no prebuilt binary for the Node ABI), Hamr falls back to Node's
+  built-in `node:sqlite` (stable since Node 24). FTS5 is available in both
+  backends. (#53, added in 0.6.3, now integrated into memory init path)
+- **Live subagent status updates in TUI.** The running subagent widget now
+  shows per-worker activity summaries (first sentence from the assistant's own
+  words), token usage, and a ⚠ LOOPING indicator when a worker repeats the
+  same tool 6+ times in sequence. Updates are debounced (300ms min interval)
+  to avoid flicker. (#52)
+- **Loop detection in subagents.** Worker state tracks the last 12 tool calls.
+  If the same tool is called 6 times consecutively with no other tools
+  interleaved, the worker is flagged as `looping` in the live status display.
+- **New models in registry.** Added GLM 5.2 Fast (Fireworks Anthropic Messages
+  API, $2.10/$6.60/M tok, 1M context), GLM-5.2 (Together, $1.40/$4.40/M tok,
+  262K context). Qwen3.7 Max and Qwen3.7 Plus switched from OpenAI to
+  Anthropic Messages API with corrected base URLs.
+- **Memory DB auto-migration.** On first access to the new centralized
+  `~/.hamr/memory.sqlite` path, if the old `<cwd>/.hamr/memory.sqlite` exists
+  and the new path does not, Hamr copies it automatically. No user action
+  required.
+- **Foreign key enforcement.** The FactStore schema defines `REFERENCES ... ON
+  DELETE CASCADE` on `fact_entities`, but foreign keys were never enabled at
+  runtime. Now `PRAGMA foreign_keys = ON` is set on the memory database
+  connection, ensuring cascading deletes work if facts are ever removed.
+- **Subagent background execution.** Subagent swarms now run in the background
+  by default (fire-and-forget). The agent loop continues immediately while
+  workers run; results are injected on completion via `pi.sendMessage()` with
+  `triggerTurn: true`, so the agent picks them up automatically without
+  polling. Disable via `HAMR_SUBAGENT_BACKGROUND=false` to restore the
+  blocking behavior.
+- **SubagentLiveCard widget.** A real-time worker status card appears above the
+  TUI editor during background subagent runs. Shows per-worker activity
+  summaries, token usage, and LOOPING indicators. The widget persists across
+  turns and clears automatically when the swarm completes.
+- **FactStore bare `"*"` query.** Searching for `"*"` in `fact_store search`
+  now returns all facts sorted by trust score, instead of failing with an
+  FTS5 syntax error.
+
+### Changed
+
+- **Subagents process management refactored.** The old `runWorkerChildProcess`
+  serialized the entire parent config (API keys, CF-Access headers, system
+  prompt) to a temp file with `0o600` perms, passed via `HAMR_CHILD_CONFIG`
+  env var, and tracked the file for orphan cleanup on parent crash. This
+  carried risk of API-key-bearing temp files being left behind. Now child
+  processes inherit auth from `process.env` directly (which is always
+  available) — no serialization, no cleanup, no temp files. The
+  `--no-session` fast-start flag is removed since the child now resolves auth
+  the same way the parent does. (#52)
+- **Subagent error classification significantly improved.** `exitCode` and
+  `exitSignal` are tracked separately (correctly distinguishes signal death
+  from normal exit). Spawn errors are captured as strings. Stderr is tailed to
+  16KB (was unbounded). JSON parse errors in worker stdout are counted and
+  the invalid tail is stored for diagnostics. `buildWorkerOutcomeFromChildSummary`
+  handles `stopReason: "error"`, empty output with stderr, and malformed
+  streams. (#52)
+- **Read-loop-guard rewritten.** Previously counted consecutive read-only tools
+  (`read`, `grep`, `find`, `ls`) as a group and nudged after 5. Now tracks
+  identical tool calls by building an identity key from the tool name and its
+  arguments — `read` is keyed by (path, offset, limit), `edit` by (path,
+  first-edit oldText), `write` by (path, content prefix), `bash` by command
+  string. The cooldown is reduced from 30s to 15s, and the event hook is
+  `tool_call` (fires before execution) instead of `turn_end` (after). (#51)
+- **Model pricing and capabilities updated.** MiniMax-M3 context window
+  corrected from 512K to 1M. DeepSeek V3.2 cache read pricing added
+  ($0.02288/M). Qwen3.6-27B output price reduced from $3.17 to $2.65/M.
+  Claude 3.5 Sonnet (GLM 5.2) context window corrected from 1048576 to
+  1048575. GLM-4.7, GLM-4.7 Max, and GLM-5.2 (z.ai) pricing significantly
+  revised (e.g. GLM-4.7 input $0.35→$0.10/M, output $0.75→$0.50/M;
+  GLM-4.7 Max context 131K→200K, max output 40K→120K). Claude Opus 4.7
+  and Sonnet 4.5 prices adjusted (+10%).
+- **`@typescript/native-preview-darwin-arm64` moved to optionalDependencies.**
+  The TypeScript native preview binary is platform-specific (darwin-arm64).
+  Moving it to `optionalDependencies` unblocks npm install on linux-x64
+  (Cloudflare Pages builds) where the binary cannot be installed. The package
+  is still installed on darwin-arm64 where it works. (#54)
+- **Handoff session-scoping.** `handoff()` now takes a `sessionId` parameter
+  and scopes recent entries to the current session only. Handoff manifests
+  no longer leak cross-session data. Memory tool error messages now include
+  specific diagnostic guidance (permission errors, missing build tools, Node
+  version requirements) instead of a generic "FTS5 memory is unavailable."
+- **FactStore probe/related fallback.** `probe()` and `related()` now fall
+  back to FTS5 keyword search when no structured entity links exist, so they
+  never return empty when facts contain the entity name as text. `related()`
+  also uses entity-join logic to find facts that share entities with the
+  query, ordered by trust score. Added `listRecentFacts()` for recall and
+  continuation prefetch.
+
+### Fixed
+
+- **Subagent live update crash on deferred timer.** The `doLiveUpdate` call
+  used a non-null assertion (`run.onLiveUpdate!()`) which would throw a
+  TypeError if the 300ms debounced timer fired after `onLiveUpdate` was
+  cleared (e.g., run completion just before the timer). Changed to optional
+  chaining (`run.onLiveUpdate?.()`).
+- **Read-loop-guard edit identity key broken.** The identity key for `edit`
+  read `input.oldText` at the top level, but the `EditToolInput` schema uses
+  `edits: Array<{ oldText, newText }>` — so `input.oldText` was always
+  `undefined`. This caused all consecutive edits on the same file to trigger
+  a false loop nudge. Now extracts the first edit's oldText from the `edits`
+  array with a legacy top-level fallback.
+- **Read-loop-guard write identity key ignored content.** The `write` identity
+  key only included the path, so all writes to the same file were identical
+  regardless of content. Now includes the first 80 characters of content to
+  distinguish iterative writes.
+- **Codex error extraction from nested payloads.** OpenAI Codex Responses API
+  errors sometimes arrive with details nested under `event.error` rather than
+  at the top level. The Codex provider now extracts `code`, `type`, and
+  `message` from both locations, preventing `Codex error: [object Object]`
+  fallbacks.
+
 ## [0.7.0] - 2026-06-25
 
 ### Breaking
@@ -48,6 +197,10 @@
 
 - **Model pricing and capabilities updated.** MiniMax M2, Claude Opus 4.7, DeepSeek V4 Pro, DeepSeek V4 Flash, Xiaomi Mimo, and GLM-5 reflect current OpenRouter pricing and revised max output tokens.
 - **Supply-chain hardening.** `.npmrc` enforces `save-exact=true` and `min-release-age=2`. Pre-commit hook blocks accidental `package-lock.json` commits unless `HAMR_ALLOW_LOCKFILE_CHANGE=1` is set.
+
+## [0.6.2] - (skipped)
+
+This version was never formally released. Changes intended for 0.6.2 were folded directly into 0.6.3.
 
 ## [0.6.1] - 2026-06-23
 

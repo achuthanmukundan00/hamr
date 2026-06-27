@@ -585,8 +585,10 @@ async function* mapCodexEvents(events: AsyncIterable<Record<string, unknown>>): 
 		if (!type) continue;
 
 		if (type === "error") {
-			const code = (event as { code?: string }).code || "";
-			const message = (event as { message?: string }).message || "";
+			// Extract error details from top-level or nested under event.error
+			const errorDetail = (event as { error?: { code?: string; type?: string; message?: string } }).error;
+			const code = (event as { code?: string }).code || errorDetail?.code || errorDetail?.type || "";
+			const message = (event as { message?: string }).message || errorDetail?.message || "";
 			throw new CodexApiError(`Codex error: ${message || code || JSON.stringify(event)}`, {
 				code: code || undefined,
 				payload: event,

@@ -12,6 +12,63 @@
  * Shares the SQLite connection with EventStore. If SQLite is unavailable,
  * all operations are safe no-ops.
  */
+// ─── FTS5 query sanitizer ───────────────────────────────────────────────────
+/**
+ * Sanitize a user query for safe FTS5 MATCH usage.
+ *
+ * FTS5 MATCH expects a boolean expression: bare words, "phrase queries",
+ * prefix* terms, AND/OR/NOT, and (grouping). Dangerous characters (#, @, etc.)
+ * are stripped. Hyphens in terms (e.g. "hamr-browser") are preserved by
+ * double-quoting each token that contains them, since bare `-` is a column
+ * filter in FTS5. Path-like tokens (containing / or .) are also double-quoted
+ * to avoid being split into separate FTS5 tokens.
+ *
+ * Falls back to the original query (with only null bytes and unprintables
+ * stripped) if tokenization produces nothing useful.
+ */
+export function sanitizeFts5Query(query) {
+    // Strip null bytes and other truly dangerous characters
+    const q = query.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+    // If the query is already wrapped in quotes (intentional phrase search), keep it
+    if (/^"[^"]+"$/.test(q.trim()))
+        return q.trim();
+    // Tokenize by whitespace, preserving quoted phrases
+    const tokens = [];
+    const regex = /"[^"]+"|\S+/g;
+    let match;
+    while ((match = regex.exec(q)) !== null) {
+        let token = match[0];
+        // Already a quoted phrase — keep as-is
+        if (token.startsWith('"') && token.endsWith('"')) {
+            tokens.push(token);
+            continue;
+        }
+        // Strip characters that FTS5 interprets as operators when bare
+        // (keep alnum, hyphens, slashes, dots, underscores, asterisks for prefix)
+        token = token.replace(/[^\w\-/.@*#:]/g, "");
+        if (!token)
+            continue;
+        // Double-quote tokens that contain FTS5-dangerous characters:
+        // hyphens (column filter), dots/slashes (path separators that
+        // FTS5 tokenizer would split), colons, at-signs.
+        if (/[-/.@#:]/.test(token.replace(/\*$/, ""))) {
+            // Preserve trailing * for prefix queries after quoting
+            const isPrefix = token.endsWith("*");
+            const core = isPrefix ? token.slice(0, -1) : token;
+            if (core)
+                tokens.push(`"${core}"${isPrefix ? "*" : ""}`);
+        }
+        else {
+            tokens.push(token);
+        }
+    }
+    const result = tokens.join(" ").trim();
+    if (result)
+        return result;
+    // Fallback: try raw query with only truly dangerous chars stripped
+    const bare = query.replace(/[^\w\s"'*\-/.@#:()[\]]/g, " ").trim();
+    return bare || q.trim() || "";
+}
 // ─── HolographicMemory ───────────────────────────────────────────────────────
 /**
  * @public
@@ -25,6 +82,7 @@ export class HolographicMemory {
         this.searchStmt = null;
         this.searchSnippetStmt = null;
         this.handoffCountsStmt = null;
+        this.handoffRecentEntriesStmt = null;
         this.latestByTagStmt = null;
         // ── Word frequency cache (invalidated on store) ──
         this._suggestedTermsCache = null;
@@ -58,11 +116,16 @@ export class HolographicMemory {
                 this.handoffCountsStmt = db.prepare(`SELECT COUNT(DISTINCT turn_id) as turns, COUNT(*) as entries
            FROM memory_fts
            WHERE session_id = @sessionId`);
+                this.handoffRecentEntriesStmt = db.prepare(`SELECT turn_id, session_id, role, tool_name, file_paths, domain_tags, content
+           FROM memory_fts
+           WHERE session_id = @sessionId
+           ORDER BY rowid DESC
+           LIMIT @limit`);
                 // domain_tags is UNINDEXED, so it can't be reached via FTS5 MATCH —
-                // a plain LIKE over the comma-joined tags is the way to find tagged rows.
+                // exact comma-delimited matching avoids false positives from substrings.
                 this.latestByTagStmt = db.prepare(`SELECT turn_id, session_id, role, tool_name, file_paths, domain_tags, content
            FROM memory_fts
-           WHERE domain_tags LIKE '%' || @tag || '%'
+           WHERE ',' || domain_tags || ',' LIKE '%,' || @tag || ',%'
              AND session_id = @sessionId
            ORDER BY rowid DESC
            LIMIT 1`);
@@ -128,8 +191,7 @@ export class HolographicMemory {
     search(query, limit = 10) {
         if (!this.searchStmt)
             return [];
-        // Sanitize query for FTS5: escape special characters, only allow safe tokens
-        const safeQuery = query.replace(/[^\w\s*\-"()]/g, " ").trim();
+        const safeQuery = sanitizeFts5Query(query);
         if (!safeQuery)
             return [];
         try {
@@ -156,7 +218,7 @@ export class HolographicMemory {
     searchWithSnippets(query, limit = 5) {
         if (!this.searchSnippetStmt)
             return [];
-        const safeQuery = query.replace(/[^\w\s*\-"()]/g, " ").trim();
+        const safeQuery = sanitizeFts5Query(query);
         if (!safeQuery)
             return [];
         try {
@@ -218,10 +280,10 @@ export class HolographicMemory {
      *   - Suggested search terms for the next agent
      *   - Turn/entry counts
      */
-    handoff() {
-        if (!this.recentEntriesStmt || !this.handoffCountsStmt) {
+    handoff(sessionId) {
+        if (!this.handoffRecentEntriesStmt || !this.handoffCountsStmt) {
             return {
-                sessionId: "",
+                sessionId,
                 keyFindings: [],
                 filesTouched: [],
                 suggestedSearchTerms: [],
@@ -231,8 +293,8 @@ export class HolographicMemory {
             };
         }
         try {
-            // Get recent entries (last 20) using cached statement
-            const recent = this.recentEntriesStmt.all({ limit: 20 });
+            // Get recent entries (last 20) for this session only
+            const recent = this.handoffRecentEntriesStmt.all({ sessionId, limit: 20 });
             // Extract key findings: error messages, tool outputs with "error", "fail", "success"
             const keyFindings = [];
             const filesTouched = new Set();
@@ -300,8 +362,7 @@ export class HolographicMemory {
                 if (keyFindings.length >= 15)
                     break;
             }
-            // Get counts — single combined query instead of two separate ones
-            const sessionId = recent.length > 0 ? recent[0].session_id : "";
+            // Get counts for this session
             const counts = this.handoffCountsStmt.get({ sessionId });
             return {
                 sessionId,
@@ -315,7 +376,7 @@ export class HolographicMemory {
         }
         catch {
             return {
-                sessionId: "",
+                sessionId,
                 keyFindings: [],
                 filesTouched: [],
                 domainTags: [],

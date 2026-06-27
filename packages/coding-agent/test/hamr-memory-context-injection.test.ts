@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
 	applyTokenBudget,
 	buildMemoryContextMessage,
+	buildMemoryPrefetchContextMessage,
+	buildMemoryPrefetchQueries,
+	classifyMemoryPrefetchPrompt,
 	deduplicateResults,
 	selectCompactionPolicy,
 } from "../src/hamr/extensions/memory.ts";
@@ -49,6 +52,51 @@ describe("hamr memory context injection", () => {
 		const autoIndex = message?.content.indexOf("Auto-retrieved context") ?? -1;
 		expect(manifestIndex).toBeGreaterThanOrEqual(0);
 		expect(autoIndex).toBeGreaterThan(manifestIndex);
+	});
+
+	it("classifies explicit memory recall prompts", () => {
+		expect(classifyMemoryPrefetchPrompt("remember that music thing")).toBe("explicit-recall");
+		expect(classifyMemoryPrefetchPrompt("can we pick up where we left off?")).toBe("explicit-recall");
+	});
+
+	it("classifies continuation fragments that need prior context", () => {
+		expect(classifyMemoryPrefetchPrompt("the genre is deconstructed club")).toBe("continuation");
+		expect(classifyMemoryPrefetchPrompt("that works for me")).toBe("continuation");
+	});
+
+	it("builds music recovery queries for underspecified genre updates", () => {
+		const queries = buildMemoryPrefetchQueries("the genre is deconstructed club", "continuation");
+		expect(queries).toContain("music");
+		expect(queries).toContain("music project");
+		expect(queries).toContain("electronic music");
+	});
+
+	it("formats cue-triggered durable facts as hidden prefetch context", () => {
+		const message = buildMemoryPrefetchContextMessage({
+			reason: "continuation",
+			latestUserText: "the genre is deconstructed club",
+			queries: ["music project"],
+			facts: [
+				{
+					factId: 9,
+					content: "User is nervous about an electronic music project sent to an artist who said it was next level.",
+					tags: "music,project-context",
+					trustScore: 0.5,
+					retrievalCount: 0,
+					helpfulCount: 0,
+					createdAt: "2026-06-26",
+					updatedAt: "2026-06-26",
+				},
+			],
+			transcriptResults: [],
+			timestamp: 123,
+		});
+
+		expect(message).not.toBeNull();
+		expect(message?.content).toContain("MEMORY PREFETCH");
+		expect(message?.content).toContain("electronic music project");
+		expect(message?.content).toContain("save it with save_memory/fact_store");
+		expect(message?.timestamp).toBe(123);
 	});
 
 	it("selects conservative retrieval for 16k local models", () => {
