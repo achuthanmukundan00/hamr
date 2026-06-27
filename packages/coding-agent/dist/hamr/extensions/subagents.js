@@ -1047,9 +1047,10 @@ function accumulateCost(run, usage) {
 async function executeSingleWorker(run, workerId, task, cwd, signal, _onUpdate, ctx, workerModel, workerTools, stepTimeoutMs, workerArtifact) {
     const logPath = path.join(run.logDir, "workers", `${workerId}.events.ndjson`);
     const resultPath = path.join(run.logDir, "workers", `${workerId}.final.md`);
+    // ─── Resolve worker model: explicit override → parent model (no fallback to child defaults) ──
+    const resolvedWorkerModel = workerModel ?? ctx.model?.id;
     let ws = run.workers.get(workerId) ?? createWorkerState(workerId, task, cwd, logPath);
-    if (workerModel)
-        ws.model = workerModel;
+    ws.model = resolvedWorkerModel ?? ws.model;
     transition(run, ws, "running");
     ws.startedAt = Date.now();
     run.workers.set(workerId, ws);
@@ -1110,7 +1111,7 @@ async function executeSingleWorker(run, workerId, task, cwd, signal, _onUpdate, 
         const result = await runWorkerChildProcess(workerId, task, cwd, stepAbortController.signal, (event) => {
             ws = run.workers.get(workerId) ?? ws;
             pushEvent(ws, event);
-        }, workerModel, workerTools, parentConfig);
+        }, resolvedWorkerModel, workerTools, parentConfig);
         ws = run.workers.get(workerId) ?? ws;
         ws.endedAt = Date.now();
         if (result.status === "done") {
@@ -1591,6 +1592,8 @@ function registerSubagentTool(pi) {
             "Use {previous} in chain/stages tasks to reference the prior worker's output.",
             "Parallel concurrency is bounded — do not worry about overloading, the system caps it safely.",
             "Delegate only as many tasks as the work genuinely warrants.",
+            "Subagents run in the background. Results are injected automatically when they complete — DO NOT redo or duplicate the dispatched work yourself. Trust the subagents.",
+            "After dispatching, continue with other work or wait. If subagents fail, you'll get an error handoff — only then should you take over.",
         ],
         parameters: SubagentParams,
         renderCall: (args, theme, context) => {
@@ -2118,7 +2121,7 @@ function registerSubagentTool(pi) {
                     content: [
                         {
                             type: "text",
-                            text: `Dispatched ${taskCount} worker${taskCount === 1 ? "" : "s"} in background (${runId}). Results arrive automatically — no need to check on them. Continue with other work while they run.`,
+                            text: `Dispatched ${taskCount} worker${taskCount === 1 ? "" : "s"} in background (${runId}). Results will be injected automatically when workers complete. Do NOT redo this work — wait for the subagents to finish.`,
                         },
                     ],
                     details: { mode: run.mode, runId, total: taskCount, pending: true, logDir },
