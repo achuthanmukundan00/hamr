@@ -46,7 +46,7 @@
     "proper-lockfile": "4.1.2",
     "semver": "7.8.0",
     "toml": "3.0.0",
-    "undici": "8.3.0",
+    "undici": "8.5.0",
     "@hamr/tui": "0.79.7",
     "@hamr/ai": "0.79.7",
     "@hamr/agent": "0.79.7",
