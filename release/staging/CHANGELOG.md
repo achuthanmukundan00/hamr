@@ -78,6 +78,12 @@ All notable changes to the Hamr coding agent. This project follows [Semantic Ver
 
 ### Changed
 
+- **Subagent model inheritance.** Workers now explicitly inherit the parent's
+  model when no per-task `model` override is specified. Previously a missing
+  override caused the child to auto-resolve its own model from available
+  providers, which could select a completely different (and often weaker)
+  model than the parent. Now `--model <parentId>` is always passed to child
+  processes unless explicitly overridden.
 - **Subagents process management refactored.** The old `runWorkerChildProcess`
   serialized the entire parent config (API keys, CF-Access headers, system
   prompt) to a temp file with `0o600` perms, passed via `HAMR_CHILD_CONFIG`
@@ -148,6 +154,12 @@ All notable changes to the Hamr coding agent. This project follows [Semantic Ver
   at the top level. The Codex provider now extracts `code`, `type`, and
   `message` from both locations, preventing `Codex error: [object Object]`
   fallbacks.
+- **Background subagent prompt guidelines.** Added explicit instructions to
+  prevent the model from redoing dispatched work: "Subagents run in the
+  background. Results are injected automatically when they complete — DO NOT
+  redo or duplicate the dispatched work yourself." The dispatch result
+  message was also strengthened to say "Do NOT redo this work — wait for the
+  subagents to finish."
 
 ## [0.7.0] - 2026-06-25
 

@@ -8,7 +8,7 @@ All notable changes to the Hamr coding agent. This project follows [Semantic Ver
 
 - Nothing yet.
 
-## [0.7.1] - 2026-06-27
+## [0.8.0] - 2026-06-27
 
 ### Breaking
 
