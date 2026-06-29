@@ -1,0 +1,47 @@
+.env
+node_modules/
+
+# Local hamr config may contain live credentials (API keys, CF-Access tokens)
+.hamr/
+.hamr.toml
+.hamr.toml.bak
+.hamr.toml.bak-*
+docs/.vitepress/cache
+docs/.vitepress/dist
+stress-test-output/
+test-results/
+*.bak-*
+*.bak
+
+# python test tooling
+.venv-test/
+__pycache__/
+*.pyc
+.pytest_cache/
+releases/
+rust/target/
+
+# Rust build artifacts
+*.rlib
+*.rmeta
+hamr-agent/rust_out
+librust_out.rlib
+
+# Development reports/analysis (not source)
+AGENT_TASK_PROMPTS.md
+AUDIT_REPORT.md
+DEEP_STUB_AUDIT.md
+FEATURE_PARITY_REPORT.md
+HAMR_TS_V070_REFERENCE_MAP.md
+HANDOFF_*.md
+IMPLEMENTATION_PLAN.md
+P0_FIX_REPORT.md
+P2_MEMORY_FIX_REPORT.md
+PROGRESS.md
+REMAINING_ANALYSIS.md
+RUST_TEST_REWRITE_PLAN.md
+TEST_PORT_ORCHESTRATION.md
+US_CONSTITUTION.md
+
+# Scripts output
+scripts/output/

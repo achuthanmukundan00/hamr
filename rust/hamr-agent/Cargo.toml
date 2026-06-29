@@ -15,7 +15,7 @@ path = "src/cli/main.rs"
 [features]
 default = ["hamr-extensions-all", "tui"]
 # TUI is optional — benchmark mode doesn't need it
-tui = ["dep:crossterm", "dep:unicode-width"]
+tui = ["dep:crossterm", "dep:unicode-width", "dep:sexy-tui-rs"]
 # Hamr built-in extensions
 hamr-extensions-all = ["hamr-memory", "hamr-subagents", "hamr-providers", "hamr-cards", "hamr-context", "hamr-read-loop-guard", "hamr-persistent-editor"]
 hamr-memory = ["dep:rusqlite"]
@@ -39,18 +39,40 @@ tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 regex.workspace = true
 glob.workspace = true
 ignore.workspace = true
+notify = { version = "7", default-features = false, features = ["macos_fsevent"] }
 similar.workspace = true
 tempfile.workspace = true
+semver.workspace = true
+sha2 = "0.10"
+url.workspace = true
+urlencoding.workspace = true
+
+# Image processing
+image.workspace = true
+
+# Archive extraction
+tar.workspace = true
+flate2.workspace = true
+zip.workspace = true
+
+# Syntax highlighting
+syntect = { workspace = true, features = ["html"] }
 schemars.workspace = true
+toml = "0.8"
+pathdiff = "0.2"
+reqwest = { workspace = true, features = ["rustls-tls", "stream", "http2"] }
 pin-project-lite.workspace = true
+base64.workspace = true
+unicode-normalization = "0.1"
 
 # TUI
-crossterm = { workspace = true, optional = true }
+crossterm = { workspace = true, optional = true, features = ["event-stream"] }
 unicode-width = { workspace = true, optional = true }
+sexy-tui-rs = { path = "../sexy-tui-rs", optional = true }
 
 # Storage
 rusqlite = { workspace = true, optional = true }
@@ -62,5 +84,12 @@ rhai = { workspace = true, optional = true }
 # TODO: bring in a Rust markdown parser
 # pulldown-cmark = "0.12"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tokio-test.workspace = true
+
+[[test]]
+name = "tools_test"
+path = "tests/tools_test.rs"

@@ -36,6 +36,7 @@ cloudflare = []
 images-openrouter = []
 
 [dependencies]
+anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -47,7 +48,18 @@ bytes.workspace = true
 pin-project-lite.workspace = true
 reqwest.workspace = true
 schemars.workspace = true
+jsonschema.workspace = true
 json5.workspace = true
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+getrandom = "0.2"
+url = "2"
+async-trait = "0.1"
+futures = { version = "0.3", features = ["executor"] }
+serde_urlencoded = "0.7"
+regex.workspace = true
+tokio-stream = "0.1"
 
 # Optional provider SDKs — uncomment as provider modules are implemented
 # async-openai = { workspace = true, optional = true }

@@ -6,9 +6,11 @@
 //! concepts: tool execution, lifecycle events, steering/follow-up queues,
 //! compaction hints, and the extension surface.
 
+use hamr_ai::stream::StreamError;
 use hamr_ai::types::*;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -25,24 +27,41 @@ use std::sync::Arc;
 pub struct AgentTool {
     /// Human-readable label for UI display.
     pub label: String,
-    /// The base tool definition (name, description, JSON Schema parameters).
-    pub tool: Tool,
+    /// Stable model-visible tool name.
+    pub name: String,
+    /// Model-visible tool description.
+    pub description: String,
+    /// JSON schema parameters definition.
+    pub parameters: serde_json::Value,
     /// Optional compat shim for raw tool-call args before schema validation.
-    pub prepare_arguments: Option<Arc<dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync>>,
+    pub prepare_arguments:
+        Option<Arc<dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync>>,
     /// Per-tool execution mode override.
     pub execution_mode: Option<ToolExecutionMode>,
     /// Execute the tool. Returns a result or an error.
     pub execute: Arc<
         dyn Fn(
-                String,                   // tool_call_id
-                serde_json::Value,         // params
+                String,                                     // tool_call_id
+                serde_json::Value,                          // params
                 Option<tokio::sync::watch::Receiver<bool>>, // signal
-            ) -> std::pin::Pin<
-                Box<dyn std::future::Future<Output = AgentToolResult> + Send>,
-            >
+                Option<AgentToolUpdateCallback>,            // on_update
+            )
+                -> std::pin::Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send>>
             + Send
             + Sync,
     >,
+}
+
+pub type AgentToolUpdateCallback = Arc<dyn Fn(AgentToolResult) + Send + Sync>;
+
+impl AgentTool {
+    pub fn to_llm_tool(&self) -> Tool {
+        Tool {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            parameters: self.parameters.clone(),
+        }
+    }
 }
 
 /// Result produced by a tool execution.
@@ -50,6 +69,9 @@ pub struct AgentTool {
 pub struct AgentToolResult {
     /// Text or image content returned to the model.
     pub content: Vec<MessageContent>,
+    /// Arbitrary structured details for logs or UI rendering.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
     /// Whether the tool failed.
     #[serde(default)]
     pub is_error: bool,
@@ -90,23 +112,113 @@ pub enum QueueMode {
 // Agent message (extends LLM Message with custom types)
 // ---------------------------------------------------------------------------
 
-/// Custom agent message types can be added via an extensible enum.
-/// This mirrors TypeScript's `CustomAgentMessages` interface + declaration merging.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "customType")]
-pub enum CustomAgentMessage {
-    /// Placeholder — extended via declaration merging in TypeScript,
-    /// and by matching on unknown tags at runtime in Rust.
-    #[serde(untagged)]
-    Unknown(serde_json::Value),
-}
-
-/// Any message in the agent transcript — LLM messages + custom messages.
+/// Content payload for a custom user-visible message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
+pub enum CustomMessageContent {
+    Text(String),
+    Blocks(Vec<MessageContent>),
+}
+
+/// Message emitted when the harness runs a bash command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BashExecutionMessage {
+    pub command: String,
+    pub output: String,
+    pub exit_code: Option<i32>,
+    pub cancelled: bool,
+    pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_output_path: Option<String>,
+    pub timestamp: i64,
+    #[serde(default)]
+    pub exclude_from_context: bool,
+}
+
+/// Generic custom message persisted by the harness.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomMessage {
+    pub custom_type: String,
+    pub content: CustomMessageContent,
+    pub display: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+    pub timestamp: i64,
+}
+
+/// Branch-summary message shown to the model as a synthetic user message.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchSummaryMessage {
+    pub summary: String,
+    pub from_id: String,
+    pub timestamp: i64,
+}
+
+/// Compaction-summary message shown to the model as a synthetic user message.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactionSummaryMessage {
+    pub summary: String,
+    pub tokens_before: u64,
+    pub timestamp: i64,
+}
+
+/// Any message in the agent transcript — base LLM messages + harness custom messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "role")]
 pub enum AgentMessage {
-    Llm(Message),
-    Custom(CustomAgentMessage),
+    #[serde(rename = "user")]
+    User(UserMessage),
+    #[serde(rename = "assistant")]
+    Assistant(AssistantMessage),
+    #[serde(rename = "toolResult")]
+    ToolResult(ToolResultMessage),
+    #[serde(rename = "bashExecution")]
+    BashExecution(BashExecutionMessage),
+    #[serde(rename = "custom")]
+    Custom(CustomMessage),
+    #[serde(rename = "branchSummary")]
+    BranchSummary(BranchSummaryMessage),
+    #[serde(rename = "compactionSummary")]
+    CompactionSummary(CompactionSummaryMessage),
+}
+
+/// Deserialize a persisted message by its `role` discriminator.
+///
+/// `AgentMessage` wraps base message structs that also carry a role field, so
+/// routing to the concrete struct avoids serde's duplicate-tag ambiguity.
+pub fn agent_message_from_value(value: serde_json::Value) -> Result<AgentMessage, String> {
+    let role = value
+        .get("role")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "missing role".to_string())?;
+    match role {
+        "user" => serde_json::from_value(value)
+            .map(AgentMessage::User)
+            .map_err(|error| error.to_string()),
+        "assistant" => serde_json::from_value(value)
+            .map(AgentMessage::Assistant)
+            .map_err(|error| error.to_string()),
+        "toolResult" => serde_json::from_value(value)
+            .map(AgentMessage::ToolResult)
+            .map_err(|error| error.to_string()),
+        "bashExecution" => serde_json::from_value(value)
+            .map(AgentMessage::BashExecution)
+            .map_err(|error| error.to_string()),
+        "custom" => serde_json::from_value(value)
+            .map(AgentMessage::Custom)
+            .map_err(|error| error.to_string()),
+        "branchSummary" => serde_json::from_value(value)
+            .map(AgentMessage::BranchSummary)
+            .map_err(|error| error.to_string()),
+        "compactionSummary" => serde_json::from_value(value)
+            .map(AgentMessage::CompactionSummary)
+            .map_err(|error| error.to_string()),
+        _ => Err(format!("unknown role: {role}")),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -114,12 +226,24 @@ pub enum AgentMessage {
 // ---------------------------------------------------------------------------
 
 /// A snapshot of the agent's state passed into each loop invocation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct AgentContext {
     pub system_prompt: String,
     pub messages: Vec<AgentMessage>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<String>, // tool names — actual tool defs are looked up
+    pub tools: Vec<AgentTool>,
+}
+
+// ---------------------------------------------------------------------------
+// Compaction result (for events)
+// ---------------------------------------------------------------------------
+
+/// Result of a successful compaction, included in CompactionEnd events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactionResult {
+    pub summary: String,
+    pub tokens_before: u64,
+    pub tokens_after: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -188,10 +312,21 @@ pub enum AgentEvent {
 
     // Model cold-start progress
     #[serde(rename = "model_loading")]
-    ModelLoading {
-        model: String,
-        elapsed_ms: u64,
+    ModelLoading { model: String, elapsed_ms: u64 },
+
+    // Compaction lifecycle
+    #[serde(rename = "compaction_start")]
+    CompactionStart { reason: String },
+
+    #[serde(rename = "compaction_end")]
+    CompactionEnd {
+        aborted: bool,
+        reason: String,
+        result: Option<CompactionResult>,
     },
+
+    #[serde(rename = "compaction_summary")]
+    CompactionSummary { summary: String, tokens_before: u64 },
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +341,69 @@ pub struct AgentLoopConfig {
     pub transport: Option<Transport>,
     pub tool_execution: ToolExecutionMode,
     pub max_retry_delay_ms: Option<u64>,
+    pub convert_to_llm: Arc<
+        dyn Fn(Vec<AgentMessage>) -> Pin<Box<dyn Future<Output = Vec<Message>> + Send>>
+            + Send
+            + Sync,
+    >,
+    pub transform_context: Option<
+        Arc<
+            dyn Fn(
+                    Vec<AgentMessage>,
+                    Option<tokio::sync::watch::Receiver<bool>>,
+                ) -> Pin<Box<dyn Future<Output = Vec<AgentMessage>> + Send>>
+                + Send
+                + Sync,
+        >,
+    >,
+    pub get_api_key: Option<
+        Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>,
+    >,
+    pub should_stop_after_turn: Option<
+        Arc<
+            dyn Fn(ShouldStopAfterTurnContext) -> Pin<Box<dyn Future<Output = bool> + Send>>
+                + Send
+                + Sync,
+        >,
+    >,
+    pub prepare_next_turn: Option<
+        Arc<
+            dyn Fn(
+                    PrepareNextTurnContext,
+                )
+                    -> Pin<Box<dyn Future<Output = Option<AgentLoopTurnUpdate>> + Send>>
+                + Send
+                + Sync,
+        >,
+    >,
+    pub get_steering_messages: Option<
+        Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Vec<AgentMessage>> + Send>> + Send + Sync>,
+    >,
+    pub get_follow_up_messages: Option<
+        Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Vec<AgentMessage>> + Send>> + Send + Sync>,
+    >,
+    pub before_tool_call: Option<
+        Arc<
+            dyn Fn(
+                    BeforeToolCallContext,
+                    Option<tokio::sync::watch::Receiver<bool>>,
+                )
+                    -> Pin<Box<dyn Future<Output = Option<BeforeToolCallResult>> + Send>>
+                + Send
+                + Sync,
+        >,
+    >,
+    pub after_tool_call: Option<
+        Arc<
+            dyn Fn(
+                    AfterToolCallContext,
+                    Option<tokio::sync::watch::Receiver<bool>>,
+                )
+                    -> Pin<Box<dyn Future<Output = Option<AfterToolCallResult>> + Send>>
+                + Send
+                + Sync,
+        >,
+    >,
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +439,7 @@ pub struct AfterToolCallContext {
 /// Partial override returned from `after_tool_call`.
 pub struct AfterToolCallResult {
     pub content: Option<Vec<MessageContent>>,
+    pub details: Option<serde_json::Value>,
     pub is_error: Option<bool>,
     pub terminate: Option<bool>,
 }
@@ -263,6 +462,19 @@ pub struct AgentLoopTurnUpdate {
     pub model: Option<Model>,
     pub thinking_level: Option<ThinkingLevel>,
 }
+
+pub type PrepareNextTurnContext = ShouldStopAfterTurnContext;
+
+pub type StreamFn = Arc<
+    dyn Fn(
+            Model,
+            Context,
+            Option<SimpleStreamOptions>,
+        )
+            -> Pin<Box<dyn Future<Output = Result<AssistantMessageEventStream, StreamError>> + Send>>
+        + Send
+        + Sync,
+>;
 
 // ---------------------------------------------------------------------------
 // Agent state (public read surface)

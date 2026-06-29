@@ -3,6 +3,7 @@
 //! Mirror of `packages/coding-agent/src/modes/interactive/components/`.
 //!
 //! These components render to the [sexy-tui-rs] crate when the `tui` feature is enabled.
+#![allow(dead_code)]
 
 pub mod armin;
 pub mod assistant_message;
@@ -38,6 +39,7 @@ pub mod thinking_selector;
 pub mod tool_execution;
 pub mod tree_selector;
 pub mod trust_selector;
+pub mod tui_shim;
 pub mod user_message;
 pub mod user_message_selector;
 pub mod visual_truncate;

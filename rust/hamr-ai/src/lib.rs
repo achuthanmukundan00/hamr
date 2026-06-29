@@ -35,6 +35,7 @@ pub mod api_registry;
 pub mod env_api_keys;
 pub mod images;
 pub mod models;
+pub mod models_generated;
 pub mod oauth;
 pub mod session_resources;
 pub mod stream;
@@ -48,3 +49,11 @@ pub mod providers;
 // Internal utilities — available to dependents
 // ---------------------------------------------------------------------------
 pub mod utils;
+
+/// Initialize hamr-ai: register all built-in API providers.
+///
+/// Call this once at startup before using [`stream::stream`] or [`stream::complete`].
+/// Mirrors the TS side-effect `import "./providers/register-builtins.ts"`.
+pub fn init() {
+    providers::register_builtins::register_built_in_api_providers();
+}

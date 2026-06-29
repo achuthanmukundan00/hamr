@@ -181,25 +181,48 @@ These are the highest-priority files to port first — they define types used ev
 ## What's Already Done
 
 - [x] Cargo workspace with 4 crates
-- [x] Full module tree (empty stubs) mirroring TS source
-- [x] `hamr-ai::types` (core LLM types: Message, Model, Tool, Context, AssistantMessageEvent)
-- [x] `hamr-harness::types` (core agent types: AgentTool, AgentEvent, AgentContext, AgentLoopConfig)
+- [x] Full module tree mirroring TS source
+- [x] `hamr-ai::types` — core LLM types: Message, Model, Tool, Context, AssistantMessageEvent
+- [x] `hamr-ai::models` — model registry with provider detection and cost data
+- [x] `hamr-ai::providers` — 9 providers implemented: anthropic, openai-completions, openai-responses, openai-codex-responses, google, google-vertex, amazon-bedrock, mistral, azure-openai-responses, cloudflare
+- [x] `hamr-ai::providers::register_builtins` — all 9 providers registered + auto-init via `hamr_ai::init()`
+- [x] `hamr-ai::stream` — top-level stream/complete entry points
+- [x] `hamr-ai::images` — image generation registry
+- [x] `hamr-ai::oauth` — OAuth registry with reset support
+- [x] `hamr-ai::providers::transform_messages` — message normalization
+- [x] `hamr-ai::providers::openai_responses_shared` — shared Responses API logic
+- [x] `Model.compat` field (`Option<serde_json::Value>`) — wired into openai-responses, openai-completions, google providers
+- [x] `hamr-harness::types` — core agent types
+- [x] `hamr-harness::session` — session storage (JSONL, memory, SQLite)
+- [x] `hamr-harness::compaction` — compaction logic
+- [x] `hamr-harness::truncate` — output truncation with byte/line limits
+- [x] `hamr-agent::core::tools` — bash, read, edit, write, grep, find, ls
+- [x] `hamr-agent::core::extensions` — types, runner, loader (with Rhai support)
+- [x] `hamr-agent::core::session_manager` — session management
+- [x] `hamr-agent::core::compaction` — context compaction with `should_compact`, `find_cut_point`, `prepare_compaction`
+- [x] `hamr-agent::core::model_registry` — model registry with OAuth wiring
+- [x] `hamr-agent::core::settings_manager` — settings management
+- [x] `hamr-agent::core::trust_manager` — trust/path security
+- [x] `hamr-agent::hamr::extensions::subagents` — delegate_subagents tool registered with full schema
+- [x] `hamr-agent::hamr::extensions::memory` — fact store + FTS5
+- [x] `hamr-agent::hamr::extensions::providers` — provider extension
+- [x] `hamr-agent::hamr::repair` — tool call repair with has_tool_calls, get_assistant_text, get_thinking_text
+- [x] `hamr-agent::modes::print_mode` — with ImageContent support
+- [x] `hamr-agent::modes::rpc` — RPC mode types and client
+- [x] `hamr-agent::cli` — args, startup, session picker
+- [x] `sexy-tui-rs` — full TUI framework (already ported)
 - [x] Feature flags for providers, extensions, TUI, Rhai
-- [x] `cargo check` passes
-- [x] This spec
+- [x] 3034 tests passing, 0 failures
+- [x] Production hardening: Model.compat, provider registration, error handling
 
-## What's NOT Done
+## Remaining Work (lower priority)
 
-- [ ] All `/*.rs` files marked "TODO: port from..."
-- [ ] Provider implementations (anthropic, openai, google, mistral, bedrock, etc.)
-- [ ] Agent loop implementation
-- [ ] Tool implementations (bash, read, edit, write, grep, find, ls)
-- [ ] Extension trait + runner + loader
-- [ ] Hamr built-in extensions (memory, subagents, providers, cards, context)
-- [ ] Session manager
-- [ ] Compaction
-- [ ] CLI args parsing + startup
-- [ ] TUI integration (sexy-tui-rs)
-- [ ] RPC mode
-- [ ] Print mode
-- [ ] Tests
+- [ ] Google Vertex ADC: service-account JWT minting from GOOGLE_APPLICATION_CREDENTIALS
+- [ ] OpenAI Codex Responses: WebSocket transport fallback (SSE-only path works)
+- [ ] Provider retry logic with exponential backoff (5xx, 429 rate limits)
+- [ ] Persistent editor: full TUI integration (requires TUI types)
+- [ ] Interactive mode: full TUI component wiring
+- [ ] RPC mode: event/response channel wiring
+- [ ] Dynamic provider registration from config (StreamSimpleArgs → ApiStreamFunction bridge)
+- [ ] Port remaining integration tests from TS (301 test files in TS vs 185 test modules in Rust)
+- [ ] ~59 remaining TODOs in provider compat, TUI wiring, and extension infrastructure

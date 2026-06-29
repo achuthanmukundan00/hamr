@@ -1,0 +1,133 @@
+[package]
+name = "sexy-tui-rs"
+version.workspace = true
+edition = "2021"
+description = "Rust port of pi-tui — minimal terminal UI framework with differential rendering and enhanced theming"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+crossterm = { workspace = true, features = ["event-stream"] }
+serde.workspace = true
+toml = "0.8"
+notify = "6"
+unicode-width.workspace = true
+unicode-segmentation = "1"
+syntect.workspace = true
+log = "0.4"
+vt100.workspace = true
+
+[[test]]
+name = "tui_render"
+path = "tests/tui_render_test.rs"
+
+[[test]]
+name = "tui_shrink"
+path = "tests/tui_shrink_test.rs"
+
+[[test]]
+name = "tui_cell_size_input"
+path = "tests/tui_cell_size_input_test.rs"
+
+[[test]]
+name = "tui_overlay_style_leak"
+path = "tests/tui_overlay_style_leak_test.rs"
+
+[[test]]
+name = "overlay_options"
+path = "tests/overlay_options_test.rs"
+
+[[test]]
+name = "overlay_non_capturing"
+path = "tests/overlay_non_capturing_test.rs"
+
+[[test]]
+name = "overlay_short_content"
+path = "tests/overlay_short_content_test.rs"
+
+[[test]]
+name = "markdown_test"
+path = "tests/markdown_test.rs"
+
+[[test]]
+name = "keybindings"
+path = "tests/keybindings_test.rs"
+
+[[test]]
+name = "keys"
+path = "tests/keys_test.rs"
+
+[[test]]
+name = "stdin_buffer"
+path = "tests/stdin_buffer_test.rs"
+
+[[test]]
+name = "word_navigation"
+path = "tests/word_navigation_test.rs"
+
+[[test]]
+name = "fuzzy"
+path = "tests/fuzzy_test.rs"
+
+[[test]]
+name = "truncate_to_width"
+path = "tests/truncate_to_width_test.rs"
+
+[[test]]
+name = "wrap_ansi"
+path = "tests/wrap_ansi_test.rs"
+
+[[test]]
+name = "terminal_colors"
+path = "tests/terminal_colors_test.rs"
+
+[[test]]
+name = "terminal_image"
+path = "tests/terminal_image_test.rs"
+
+[[test]]
+name = "terminal"
+path = "tests/terminal_test.rs"
+
+[[test]]
+name = "autocomplete"
+path = "tests/autocomplete_test.rs"
+
+[[test]]
+name = "editor"
+path = "tests/editor_test.rs"
+
+[[test]]
+name = "input"
+path = "tests/input_test.rs"
+
+[[test]]
+name = "select_list"
+path = "tests/select_list_test.rs"
+
+[[test]]
+name = "settings_list"
+path = "tests/settings_list_test.rs"
+
+[[test]]
+name = "tab_width"
+path = "tests/tab_width_test.rs"
+
+[[test]]
+name = "truncated_text"
+path = "tests/truncated_text_test.rs"
+
+[[test]]
+name = "regression_regional_indicator_width"
+path = "tests/regression_regional_indicator_width_test.rs"
+
+[[test]]
+name = "regression_overlay_cjk_boundary"
+path = "tests/regression_overlay_cjk_boundary_test.rs"
+
+[[test]]
+name = "bug_regression_imageline"
+path = "tests/bug_regression_imageline_test.rs"
+
+[dev-dependencies]
+tempfile = "3"

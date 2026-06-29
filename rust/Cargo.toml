@@ -8,6 +8,7 @@ members = [
     "hamr-harness",
     "hamr-agent",
     "hamr-support",
+    "sexy-tui-rs",
 ]
 
 [workspace.package]
@@ -20,12 +21,14 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 # --- Core ---
+anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
+vt100 = "0.15"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v7"] }
 bytes = "1"
@@ -45,6 +48,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 
 # --- Parsing / Schema ---
 schemars = { version = "0.8", features = ["derive", "chrono"] }  # JSON Schema → TypeBox equivalent
+jsonschema = "0.26"                  # JSON Schema validation (TypeBox Value.Check equivalent)
 json5 = "0.4"                       # relaxed JSON parsing
 serde_yaml = "0.9"
 
@@ -52,16 +56,39 @@ serde_yaml = "0.9"
 rusqlite = { version = "0.32", features = ["bundled", "vtab"] }  # FTS5
 tempfile = "3"
 
+# --- Encoding ---
+base64 = "0.22"                      # base64 encode/decode
+
+# --- Image Processing ---
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+
+# --- Archive Extraction ---
+tar = "0.4"
+flate2 = { version = "1", features = ["rust_backend"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# --- Syntax Highlighting ---
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
+
+# --- Version / URL ---
+semver = "1"
+url = "2"
+urlencoding = "2"
+
 # --- Text / Diff ---
 similar = "2"                       # diff engine (replaces diff.js)
 regex = "1"
 glob = "0.3"
 ignore = "0.4"                      # .gitignore-aware directory walking
 
+# --- HTTP / Downloads ---
+# reqwest already declared above
+
 # --- TUI / Terminal ---
 crossterm = "0.28"
 unicode-width = "0.2"
-# sexy-tui-rs will be added when integrated
+notify = "6"
+log = "0.4"
 
 # --- Scripting ---
 rhai = { version = "1", features = ["sync", "serde"] }
@@ -69,6 +96,12 @@ rhai = { version = "1", features = ["sync", "serde"] }
 # --- Benchmarking / Testing ---
 tokio-test = "0.4"
 criterion = "0.5"
+
+[profile.dev]
+debug = 1  # line tables only, not full DWARF
+
+[profile.test]
+debug = 1  # line tables only — full DWARF is 4+ GB
 
 [profile.release]
 lto = true

@@ -25,3 +25,4 @@ ignore.workspace = true
 tempfile.workspace = true
 schemars.workspace = true
 pin-project-lite.workspace = true
+async-trait = "0.1"
