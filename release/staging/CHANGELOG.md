@@ -2,7 +2,7 @@
 
 All notable changes to the Hamr coding agent. This project follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.8.1] - 2026-07-02
 
 ### Added
 
@@ -68,6 +68,12 @@ All notable changes to the Hamr coding agent. This project follows [Semantic Ver
   (`console.log`, `this.foo`, `process.env`), imports (`node:fs`, `@scope/pkg`),
   and code fragments containing `()=;{}` — reducing false-positive file-path
   detection during subagent result rendering.
+
+## [Unreleased]
+
+### Added
+
+- Nothing yet.
 
 ### Changed
 
