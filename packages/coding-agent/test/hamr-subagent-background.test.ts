@@ -32,7 +32,7 @@ vi.mock("node:child_process", () => {
 				stdout.emit(
 					"data",
 					Buffer.from(
-						JSON.stringify({
+						`${JSON.stringify({
 							type: "message_end",
 							message: {
 								role: "assistant",
@@ -41,7 +41,7 @@ vi.mock("node:child_process", () => {
 								model: "test-model",
 								stopReason: "end",
 							},
-						}) + "\n",
+						})}\n`,
 					),
 				);
 				proc.emit("close", 0, null);

@@ -56,6 +56,8 @@ interface WorkerState {
     nestedWorkers?: LiveWorkerView[];
     /** Header text for nested subagent swarm (e.g. "parallel 2/5 · 3 active"). */
     nestedHeader?: string;
+    /** Track last message length for streaming preview delta computation */
+    lastMessageLength?: number;
 }
 interface LiveWorkerView {
     workerId: string;
@@ -127,6 +129,36 @@ type WorkerOutcome = {
  * Returns a confidence score (0.0–1.0) and a list of warnings.
  */
 declare function validateWorkerOutput(outcome: WorkerOutcome, cwd: string): ValidationResult;
+/**
+ * Build the `--model` spec for a worker.
+ *
+ * Explicit per-task overrides pass through verbatim. The inherited parent
+ * model is provider-qualified ("provider/id") — a bare id is ambiguous in the
+ * child's registry (e.g. "gpt-5.5" exists under azure-openai-responses,
+ * openai, and openai-codex) and the CLI resolver picks the first exact-id
+ * match regardless of configured auth, so an unqualified id can select an
+ * unauthenticated provider and kill the worker at its first request.
+ */
+declare function resolveWorkerModelSpec(workerModel: string | undefined, parentModel: {
+    provider: string;
+    id: string;
+} | undefined): string | undefined;
+/**
+ * Build the child CLI args for a worker.
+ *
+ * `--model` is passed only when the task carries an explicit override, or as
+ * a provider-qualified fallback when the parent-config snapshot could not be
+ * written. When the snapshot is present and no override exists, the model is
+ * deliberately omitted so the child clones the parent's model from
+ * HAMR_CHILD_CONFIG instead of re-resolving it against its own registry.
+ */
+declare function buildWorkerCliArgs(options: {
+    task: string;
+    workerModel?: string;
+    inheritedModelSpec?: string;
+    hasChildConfig: boolean;
+    workerTools?: string[];
+}): string[];
 declare function createWorkerState(workerId: string, task: string, cwd: string, logPath: string): WorkerState;
 declare function pushEvent(ws: WorkerState, event: Record<string, unknown>): void;
 export declare function createHamrSubagentsExtension(_getChildExtensions: () => ExtensionFactory[], depth?: number): ExtensionFactory;
@@ -161,6 +193,8 @@ declare function recordWorkerProcessEvent(state: WorkerProcessEventState, event:
 declare function buildWorkerOutcomeFromChildSummary(workerId: string, task: string, summary: WorkerProcessSummary): WorkerOutcome;
 export declare const _testExports: {
     pushEvent: typeof pushEvent;
+    resolveWorkerModelSpec: typeof resolveWorkerModelSpec;
+    buildWorkerCliArgs: typeof buildWorkerCliArgs;
     validateWorkerOutput: typeof validateWorkerOutput;
     createWorkerState: typeof createWorkerState;
     createWorkerProcessEventState: typeof createWorkerProcessEventState;

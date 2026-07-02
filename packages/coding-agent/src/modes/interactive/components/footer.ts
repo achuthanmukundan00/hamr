@@ -169,16 +169,16 @@ export class FooterComponent implements Component {
 		const rightForLine = right;
 		const rightWidth = visibleWidth(rightForLine);
 
-		// Not enough room for left + gap + right: show only right (truncated if needed)
-		if (rightWidth + 2 >= width) {
-			lines.push(truncateToWidth(rightForLine, width, theme.fg("dim", "...")));
-		} else if (!right || leftWidth + rightWidth + 2 > width) {
-			const availableLeft = width - rightWidth - 2;
-			const trimmedLeft = truncateToWidth(left, Math.max(1, availableLeft), theme.fg("dim", "..."));
-			const gap = width - visibleWidth(trimmedLeft) - rightWidth;
-			lines.push(`${trimmedLeft}${" ".repeat(gap)}${rightForLine}`);
-		} else {
+		if (leftWidth + rightWidth + 2 <= width) {
 			lines.push(`${left}${" ".repeat(width - leftWidth - rightWidth)}${rightForLine}`);
+		} else {
+			// Not enough room: always show left (working indicator), truncate right
+			const minLeft = Math.min(leftWidth, 12);
+			const availableRight = width - minLeft - 1;
+			const trimmedRight = truncateToWidth(rightForLine, Math.max(1, availableRight), theme.fg("dim", "..."));
+			const trimmedLeft = truncateToWidth(left, minLeft, theme.fg("dim", "..."));
+			const gap = width - visibleWidth(trimmedLeft) - visibleWidth(trimmedRight);
+			lines.push(`${trimmedLeft}${" ".repeat(Math.max(0, gap))}${trimmedRight}`);
 		}
 
 		const extensionStatuses = this.footerData.getExtensionStatuses();
@@ -287,8 +287,8 @@ export class FooterComponent implements Component {
 			parts.push(theme.fg("dim", `$${usage.totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`));
 		}
 
-		// Token counts — hidden below 80 cols to save space
-		if (width >= 80 && (usage.totalInput > 0 || usage.totalOutput > 0)) {
+		// Token counts — hidden below 100 cols to save space (first to go)
+		if (width >= 100 && (usage.totalInput > 0 || usage.totalOutput > 0)) {
 			const tokens: string[] = [];
 			if (usage.totalInput > 0) tokens.push(`${theme.glyph("arrowUp")} ${formatTokens(usage.totalInput)}`);
 			if (usage.totalOutput > 0) tokens.push(`${theme.glyph("arrowDown")} ${formatTokens(usage.totalOutput)}`);

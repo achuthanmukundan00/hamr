@@ -18,8 +18,8 @@ Subagent:
     Job:
     1. Implement exactly the brief.
     2. Follow TDD if required.
-    3. Run focused tests while iterating; full relevant suite before commit.
-    4. Commit work.
+    3. Run focused tests while iterating; full relevant suite before any approved commit.
+    4. Commit only if the controller/user explicitly authorized committing; otherwise leave changes uncommitted.
     5. Self-review, fix issues found.
     6. Write report file.
 
@@ -46,7 +46,7 @@ Subagent:
 
     Chat reply only, under 15 lines:
     - Status: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
-    - commits: short SHA + subject
+    - commits: short SHA + subject, or "none (not authorized)"
     - tests: one-line summary
     - concerns/blocker/context need
     - report path

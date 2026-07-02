@@ -1,9 +1,20 @@
 // Complete implementation of condition-based waiting utilities
 // From: Lace test infrastructure improvements (2025-10-03)
 // Context: Fixed 15 flaky tests by replacing arbitrary timeouts
+//
+// Note: This is a generic example. Adapt the types/interfaces for your project.
 
-import type { ThreadManager } from '~/threads/thread-manager';
-import type { LaceEvent, LaceEventType } from '~/threads/types';
+// Generic types — replace with your project's actual types
+interface ThreadManager {
+  getEvents(threadId: string): LaceEvent[];
+}
+
+interface LaceEvent {
+  type: string;
+  data?: Record<string, unknown>;
+}
+
+type LaceEventType = string;
 
 /**
  * Wait for a specific event type to appear in thread

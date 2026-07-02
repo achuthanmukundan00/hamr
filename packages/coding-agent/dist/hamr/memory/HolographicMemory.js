@@ -93,13 +93,13 @@ export class HolographicMemory {
         if (db) {
             try {
                 this.insertStmt = db.prepare(`
-          INSERT INTO memory_fts (turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+          INSERT INTO memory_history (turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
           VALUES (@turnId, @sessionId, @role, @toolName, @filePaths, @content, @domainTags)
         `);
-                this.statsStmt = db.prepare(`SELECT COUNT(*) as entries, COUNT(DISTINCT turn_id) as turns FROM memory_fts`);
+                this.statsStmt = db.prepare(`SELECT COUNT(*) as entries, COUNT(DISTINCT turn_id) as turns FROM memory_history`);
                 this.recentEntriesStmt = db.prepare(`SELECT turn_id, session_id, role, tool_name, file_paths, domain_tags, content
-           FROM memory_fts
-           ORDER BY rowid DESC
+           FROM memory_history
+           ORDER BY id DESC
            LIMIT @limit`);
                 this.searchStmt = db.prepare(`SELECT turn_id, session_id, role, tool_name, file_paths, domain_tags, content, rank
            FROM memory_fts
@@ -114,20 +114,20 @@ export class HolographicMemory {
            ORDER BY rank
            LIMIT @limit`);
                 this.handoffCountsStmt = db.prepare(`SELECT COUNT(DISTINCT turn_id) as turns, COUNT(*) as entries
-           FROM memory_fts
+           FROM memory_history
            WHERE session_id = @sessionId`);
                 this.handoffRecentEntriesStmt = db.prepare(`SELECT turn_id, session_id, role, tool_name, file_paths, domain_tags, content
-           FROM memory_fts
+           FROM memory_history
            WHERE session_id = @sessionId
-           ORDER BY rowid DESC
+           ORDER BY id DESC
            LIMIT @limit`);
                 // domain_tags is UNINDEXED, so it can't be reached via FTS5 MATCH —
                 // exact comma-delimited matching avoids false positives from substrings.
                 this.latestByTagStmt = db.prepare(`SELECT turn_id, session_id, role, tool_name, file_paths, domain_tags, content
-           FROM memory_fts
+           FROM memory_history
            WHERE ',' || domain_tags || ',' LIKE '%,' || @tag || ',%'
              AND session_id = @sessionId
-           ORDER BY rowid DESC
+           ORDER BY id DESC
            LIMIT 1`);
             }
             catch {

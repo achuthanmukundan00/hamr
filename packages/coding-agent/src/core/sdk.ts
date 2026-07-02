@@ -84,6 +84,8 @@ export interface HamrChildConfig {
 	cwd: string;
 	/** Remaining subagent tree budget. */
 	treeBudgetRemaining: number;
+	/** Recursion depth of subagent. */
+	subagentDepth?: number;
 }
 
 /** Read HamrChildConfig from HAMR_CHILD_CONFIG env var. */
@@ -99,13 +101,20 @@ function readChildConfigFromEnv(): HamrChildConfig | undefined {
 	}
 }
 
-/** Build a Model object from child config fields, falling back to built-in getModel(). */
+/**
+ * Build a Model object from child config fields.
+ *
+ * The serialized fields are preferred over the built-in registry: the parent
+ * may run a models.json-customized or runtime-discovered model whose fields
+ * (baseUrl, compat, thinking map) differ from the built-in entry of the same
+ * id, and the child must clone the parent's actual model, not a lookalike.
+ * getModel() is only a fallback for incomplete snapshots.
+ */
 function buildModelFromChildConfig(config: HamrChildConfig): Model<any> | undefined {
-	const fromBuiltin = getModel(config.provider as never, config.modelId as never);
-	if (fromBuiltin) return fromBuiltin as Model<any>;
-
-	// Construct a minimal model for non-built-in providers (e.g. relay).
-	if (!config.modelName || !config.modelApi || !config.modelBaseUrl) return undefined;
+	if (!config.modelName || !config.modelApi || !config.modelBaseUrl) {
+		const fromBuiltin = getModel(config.provider as never, config.modelId as never);
+		return fromBuiltin ? (fromBuiltin as Model<any>) : undefined;
+	}
 	return {
 		provider: config.provider,
 		id: config.modelId,
@@ -242,14 +251,21 @@ async function createAgentSessionFromChildConfig(
 	const cwd = resolvePath(config.cwd);
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getDefaultAgentDir();
 
-	// ── In-memory auth storage with the parent's API key ──────────────────
-	const authStorage = AuthStorage.inMemory();
-	if (config.apiKey) {
+	// ── Auth storage: prefer the child's own credential store ─────────────
+	// When the caller provides a disk-backed AuthStorage (the normal CLI child
+	// startup does), keep it: it can refresh OAuth tokens mid-run, which the
+	// snapshot's static access token cannot. The parent's forwarded credential
+	// only fills the gap when the child has no auth of its own for the
+	// provider (e.g. the parent got its key via a runtime-only --api-key).
+	const authStorage = options.authStorage ?? AuthStorage.inMemory();
+	const childHasOwnAuth = authStorage.hasAuth(config.provider);
+	if (config.apiKey && !childHasOwnAuth) {
 		authStorage.setRuntimeApiKey(config.provider, config.apiKey);
 	}
-	// Also store provider env + headers via a minimal persisted credential so
-	// getProviderEnv() returns them (used by modelRegistry.getApiKeyAndHeaders).
-	if (config.apiEnv || config.apiHeaders) {
+	// Store provider env via a credential so getProviderEnv() returns it (used
+	// by modelRegistry.getApiKeyAndHeaders) — but never write into a
+	// disk-backed store; only the private in-memory fallback may be seeded.
+	if (!options.authStorage && (config.apiEnv || config.apiHeaders)) {
 		authStorage.set(config.provider, {
 			type: "api_key",
 			key: config.apiKey ?? "not-needed",
@@ -260,8 +276,27 @@ async function createAgentSessionFromChildConfig(
 	// ── In-memory settings manager (no file lock) ─────────────────────────
 	const settingsManager = options.settingsManager ?? SettingsManager.inMemory();
 
-	// ── In-memory model registry (built-in models only, no models.json) ───
+	// ── Model registry: prefer the child's own (disk-backed) registry ─────
 	const modelRegistry = options.modelRegistry ?? ModelRegistry.inMemory(authStorage);
+
+	// ── Forward parent provider request config (auth headers) ─────────────
+	// The parent's apiHeaders contain provider-level auth headers
+	// (e.g. CF-Access-Client-Id, Authorization when authHeader is true).
+	// Register them in the child's registry so getApiKeyAndHeaders can
+	// resolve them when making API requests. Without this, relay and
+	// custom providers that rely on authHeader or custom headers fail
+	// in the child process. Skip when the child registry already has its own
+	// config for the provider (models.json / extension registration) so the
+	// child's resolvable, refreshable config is not clobbered by a static copy.
+	if (config.apiHeaders && Object.keys(config.apiHeaders).length > 0) {
+		const providerConfigured =
+			childHasOwnAuth || modelRegistry.getProviderAuthStatus(config.provider).configured === true;
+		if (!providerConfigured) {
+			modelRegistry.registerProvider(config.provider, {
+				headers: config.apiHeaders,
+			});
+		}
+	}
 
 	// ── In-memory session manager (--no-session) ──────────────────────────
 	const sessionManager = options.sessionManager ?? SessionManager.inMemory(cwd);
@@ -299,6 +334,9 @@ async function createAgentSessionFromChildConfig(
 		extendResources: () => {},
 		reload: async () => {},
 	};
+
+	// ── Use provided or minimal resource loader ──────────────────────────
+	const resourceLoader = options.resourceLoader ?? noopResourceLoader;
 
 	// ── Stream function (uses the in-memory auth + registry) ──────────────
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
@@ -339,7 +377,7 @@ async function createAgentSessionFromChildConfig(
 		sessionManager,
 		settingsManager,
 		cwd,
-		resourceLoader: noopResourceLoader,
+		resourceLoader,
 		customTools: options.customTools,
 		modelRegistry,
 		initialActiveToolNames,

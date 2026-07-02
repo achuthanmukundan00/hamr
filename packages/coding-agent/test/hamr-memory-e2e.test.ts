@@ -14,6 +14,17 @@ import { HolographicMemory } from "../src/hamr/memory/HolographicMemory.ts";
 import { loadBetterSqlite3 } from "../src/hamr/store/sqlite-loader.ts";
 
 const MEMORY_FTS_SCHEMA = `
+	CREATE TABLE IF NOT EXISTS memory_history (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		turn_id      INTEGER,
+		session_id   TEXT,
+		role         TEXT,
+		tool_name    TEXT,
+		file_paths   TEXT,
+		content      TEXT,
+		domain_tags  TEXT
+	);
+	CREATE INDEX IF NOT EXISTS idx_memory_session ON memory_history(session_id);
 	CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
 		turn_id UNINDEXED,
 		session_id UNINDEXED,
@@ -21,8 +32,24 @@ const MEMORY_FTS_SCHEMA = `
 		tool_name UNINDEXED,
 		file_paths UNINDEXED,
 		content,
-		domain_tags UNINDEXED
+		domain_tags UNINDEXED,
+		content='memory_history',
+		content_rowid='id'
 	);
+	CREATE TRIGGER IF NOT EXISTS memory_history_ai AFTER INSERT ON memory_history BEGIN
+		INSERT INTO memory_fts(rowid, turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+		VALUES (new.id, new.turn_id, new.session_id, new.role, new.tool_name, new.file_paths, new.content, new.domain_tags);
+	END;
+	CREATE TRIGGER IF NOT EXISTS memory_history_ad AFTER DELETE ON memory_history BEGIN
+		INSERT INTO memory_fts(memory_fts, rowid, turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+		VALUES ('delete', old.id, old.turn_id, old.session_id, old.role, old.tool_name, old.file_paths, old.content, old.domain_tags);
+	END;
+	CREATE TRIGGER IF NOT EXISTS memory_history_au AFTER UPDATE ON memory_history BEGIN
+		INSERT INTO memory_fts(memory_fts, rowid, turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+		VALUES ('delete', old.id, old.turn_id, old.session_id, old.role, old.tool_name, old.file_paths, old.content, old.domain_tags);
+		INSERT INTO memory_fts(rowid, turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+		VALUES (new.id, new.turn_id, new.session_id, new.role, new.tool_name, new.file_paths, new.content, new.domain_tags);
+	END;
 `;
 
 const Database = loadBetterSqlite3();

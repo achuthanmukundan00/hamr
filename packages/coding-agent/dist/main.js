@@ -589,7 +589,9 @@ export async function main(args, options) {
         const scopedModels = modelPatterns && modelPatterns.length > 0 ? await resolveModelScope(modelPatterns, modelRegistry) : [];
         const { options: sessionOptions, cliThinkingFromModel, diagnostics: sessionOptionDiagnostics, } = buildSessionOptions(parsed, scopedModels, hasExistingSession, modelRegistry, settingsManager);
         diagnostics.push(...sessionOptionDiagnostics);
-        if (!sessionOptions.model && scopedModels.length === 0 && !hasExistingSession) {
+        // Subagent children (HAMR_CHILD_CONFIG) must clone the parent's model from
+        // the config snapshot; project defaults like .hamr.toml must not override it.
+        if (!sessionOptions.model && scopedModels.length === 0 && !hasExistingSession && !process.env.HAMR_CHILD_CONFIG) {
             const hamrDefault = getHamrDefaultModel(loadHamrStartupConfig(cwd), modelRegistry);
             if (hamrDefault) {
                 // Keep settings.json authoritative: only use .hamr.toml when there is no saved model.

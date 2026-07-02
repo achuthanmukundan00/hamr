@@ -104,17 +104,125 @@ function getMemoryHandle(cwd) {
         const db = new Database(path);
         db.pragma("journal_mode = WAL");
         db.pragma("foreign_keys = ON");
-        db.exec(`
-			CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-				turn_id UNINDEXED,
-				session_id UNINDEXED,
-				role UNINDEXED,
-				tool_name UNINDEXED,
-				file_paths UNINDEXED,
-				content,
-				domain_tags UNINDEXED
-			);
-		`);
+        let needMigration = false;
+        try {
+            const check = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'memory_fts' AND type = 'table'").get();
+            if (check && !check.sql.includes("content='memory_history'")) {
+                needMigration = true;
+            }
+        }
+        catch {
+            // ignore
+        }
+        if (needMigration) {
+            console.warn("[hamr] Migrating memory_fts to external content memory_history table...");
+            db.exec("BEGIN TRANSACTION");
+            try {
+                const oldEntries = db
+                    .prepare("SELECT turn_id, session_id, role, tool_name, file_paths, content, domain_tags FROM memory_fts")
+                    .all();
+                db.exec("DROP TABLE memory_fts");
+                db.exec(`
+					CREATE TABLE IF NOT EXISTS memory_history (
+						id           INTEGER PRIMARY KEY AUTOINCREMENT,
+						turn_id      INTEGER,
+						session_id   TEXT,
+						role         TEXT,
+						tool_name    TEXT,
+						file_paths   TEXT,
+						content      TEXT,
+						domain_tags  TEXT
+					);
+					CREATE INDEX IF NOT EXISTS idx_memory_session ON memory_history(session_id);
+					CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+						turn_id UNINDEXED,
+						session_id UNINDEXED,
+						role UNINDEXED,
+						tool_name UNINDEXED,
+						file_paths UNINDEXED,
+						content,
+						domain_tags UNINDEXED,
+						content='memory_history',
+						content_rowid='id'
+					);
+					CREATE TRIGGER IF NOT EXISTS memory_history_ai AFTER INSERT ON memory_history BEGIN
+						INSERT INTO memory_fts(rowid, turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+						VALUES (new.id, new.turn_id, new.session_id, new.role, new.tool_name, new.file_paths, new.content, new.domain_tags);
+					END;
+					CREATE TRIGGER IF NOT EXISTS memory_history_ad AFTER DELETE ON memory_history BEGIN
+						INSERT INTO memory_fts(memory_fts, rowid, turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+						VALUES ('delete', old.id, old.turn_id, old.session_id, old.role, old.tool_name, old.file_paths, old.content, old.domain_tags);
+					END;
+					CREATE TRIGGER IF NOT EXISTS memory_history_au AFTER UPDATE ON memory_history BEGIN
+						INSERT INTO memory_fts(memory_fts, rowid, turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+						VALUES ('delete', old.id, old.turn_id, old.session_id, old.role, old.tool_name, old.file_paths, old.content, old.domain_tags);
+						INSERT INTO memory_fts(rowid, turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+						VALUES (new.id, new.turn_id, new.session_id, new.role, new.tool_name, new.file_paths, new.content, new.domain_tags);
+					END;
+				`);
+                const insertStmt = db.prepare(`
+					INSERT INTO memory_history (turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+					VALUES (@turn_id, @session_id, @role, @tool_name, @file_paths, @content, @domain_tags)
+				`);
+                for (const entry of oldEntries) {
+                    insertStmt.run({
+                        turn_id: entry.turn_id,
+                        session_id: entry.session_id,
+                        role: entry.role,
+                        tool_name: entry.tool_name,
+                        file_paths: entry.file_paths,
+                        content: entry.content,
+                        domain_tags: entry.domain_tags,
+                    });
+                }
+                db.exec("COMMIT");
+                console.log("[hamr] Migration to external content table completed successfully.");
+            }
+            catch (err) {
+                db.exec("ROLLBACK");
+                console.error("[hamr] Failed to migrate memory database:", err);
+            }
+        }
+        else {
+            db.exec(`
+				CREATE TABLE IF NOT EXISTS memory_history (
+					id           INTEGER PRIMARY KEY AUTOINCREMENT,
+					turn_id      INTEGER,
+					session_id   TEXT,
+					role         TEXT,
+					tool_name    TEXT,
+					file_paths   TEXT,
+					content      TEXT,
+					domain_tags  TEXT
+				);
+				CREATE INDEX IF NOT EXISTS idx_memory_session ON memory_history(session_id);
+				CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+					turn_id UNINDEXED,
+					session_id UNINDEXED,
+					role UNINDEXED,
+					tool_name UNINDEXED,
+					file_paths UNINDEXED,
+					content,
+					domain_tags UNINDEXED,
+					content='memory_history',
+					content_rowid='id'
+				);
+				CREATE TRIGGER IF NOT EXISTS memory_history_ai AFTER INSERT ON memory_history BEGIN
+					INSERT INTO memory_fts(rowid, turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+					VALUES (new.id, new.turn_id, new.session_id, new.role, new.tool_name, new.file_paths, new.content, new.domain_tags);
+				END;
+				CREATE TRIGGER IF NOT EXISTS memory_history_ad AFTER DELETE ON memory_history BEGIN
+					INSERT INTO memory_fts(memory_fts, rowid, turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+					VALUES ('delete', old.id, old.turn_id, old.session_id, old.role, old.tool_name, old.file_paths, old.content, old.domain_tags);
+				END;
+				CREATE TRIGGER IF NOT EXISTS memory_history_au AFTER UPDATE ON memory_history BEGIN
+					INSERT INTO memory_fts(memory_fts, rowid, turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+					VALUES ('delete', old.id, old.turn_id, old.session_id, old.role, old.tool_name, old.file_paths, old.content, old.domain_tags);
+					INSERT INTO memory_fts(rowid, turn_id, session_id, role, tool_name, file_paths, content, domain_tags)
+					VALUES (new.id, new.turn_id, new.session_id, new.role, new.tool_name, new.file_paths, new.content, new.domain_tags);
+				END;
+			`);
+        }
         const holographic = new HolographicMemory(db);
         const factStore = new FactStore(db);
         memoryHandle = { path, memory: holographic, factStore };

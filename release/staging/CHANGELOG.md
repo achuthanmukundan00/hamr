@@ -6,9 +6,110 @@ All notable changes to the Hamr coding agent. This project follows [Semantic Ver
 
 ### Added
 
-- Nothing yet.
+- **New models in registry.** Major refresh with many additions:
+  - **Claude Sonnet 5** — Amazon Bedrock (all regions: US, AU, EU, APAC, JP)
+  - **Claude Fable 5** — Amazon Bedrock ($10/$50/M tok, 1M context, reasoning)
+  - **Grok 4.3** (OpenRouter)
+  - **Gemma 4 31B IT** (OpenRouter)
+  - **Kimi K2.7 Code** (OpenRouter)
+  - **MAI-Code-1-Flash** (OpenRouter)
+  - **GPT OSS 120B** (OpenRouter)
+  - **MiniMax-M2.5, MiniMax-M2.7, MiniMax-M3** — multiple regions (US, EU, APAC)
+  - **Poolside: Laguna M.1, Laguna M.1 (free), Laguna XS 2.1, Laguna XS 2.1 (free)**
+  - **Google: Nano Banana 2 Lite** (image model, Gemini 3.1 Flash Lite Image)
+- **FTS5 external content table migration.** Memory FTS5 now syncs via `memory_history` +
+  triggers instead of direct rowid storage. Existing databases auto-migrate on first
+  access (old rows are copied to `memory_history`, FTS table is rebuilt with
+  `content='memory_history'`). Reduces index size by storing only content in the FTS
+  index. `HolographicMemory` inserts go to `memory_history`; triggers sync FTS.
+- **FactStore upsert updates tags.** `fact_store add` with existing content now updates
+  the tags field to the new value.
+- **FactStore case-insensitive entity resolution.** Entity name lookups use
+  `COLLATE NOCASE` for case-insensitive matching (e.g. "John" matches "john").
+  `probe()` and `related()` entity matching also use `COLLATE NOCASE`.
+- **FactStore returns correct fact_id on upsert.** When content already exists,
+  the upsert queries the `facts` table directly to return the existing fact_id
+  instead of rowid 0.
+- **Subagent config serialization diagnostics.** When parent config JSON serialization
+  fails, detailed error info (model name, error reason) is logged to stderr.
+- **Subagent `resolveWorkerModelSpec`.** New function that provider-qualifies model IDs
+  (e.g. `"amazon-bedrock/anthropic.claude-sonnet-5"`) before passing to child
+  processes, preventing ambiguous id resolution when the same bare model id exists
+  under multiple providers in the child's registry.
+- **Subagent `buildWorkerCliArgs`.** Centralized CLI argument construction for worker
+  child processes. `--model` is only passed when the task carries an explicit override
+  or when no parent config snapshot is available (so inherited model comes from
+  `HAMR_CHILD_CONFIG` when present).
+- **Subagent `getPiInvocation` enhanced.** Now handles `.cjs`, `.mjs` extensions
+  and scripts with shebang lines (detects Node.js shebangs vs shell wrappers).
+- **Subagent loop detection — pattern recognition.** In addition to consecutive
+  repeat detection, the loop detector now recognizes alternating patterns
+  (A, B, A, B, A, B) and flags them as looping.
+- **Subagent delta-based message streaming.** Worker output tail tracking now
+  uses a `lastMessageLength` delta — only newly appended text is concatenated,
+  avoiding O(n²) string growth on large outputs.
+- **Subagent depth tracking.** `subagentDepth` is threaded through all execute
+  functions (`executeSingleWorker`, `executeTasks`, `executeChain`, `executeStages`)
+  and passed to child workers via `HAMR_SUBAGENT_DEPTH` env var. Enables depth-aware
+  tool registration (e.g. leaf-depth gate on delegate_subagents).
+- **Subagent worker failure diagnostics.** Failed workers now emit a `worker_failed`
+  event with error details, and the `final.md` artifact captures the error message
+  (not just empty output) so runs are diagnosable from disk.
+- **Child SDK prefers own auth storage.** `createAgentSessionFromChildConfig` now uses
+  the child's own disk-backed `AuthStorage` when available (can refresh OAuth tokens
+  mid-run). The parent's forwarded API key only fills the gap when the child has no
+  auth for the provider (e.g. runtime-only `--api-key`). Parent `apiHeaders`
+  (CF-Access, Authorization) are registered in the child's `ModelRegistry` so relay
+  and custom providers get auth headers in subagent requests.
+- **Child startup skips `.hamr.toml` model override.** When `HAMR_CHILD_CONFIG` is
+  set, `main.ts` no longer applies `.hamr.toml` default model resolution — the child
+  must clone the parent's model from the config snapshot.
+- **`looksLikeFilePath` improved.** Now ignores common programming properties
+  (`console.log`, `this.foo`, `process.env`), imports (`node:fs`, `@scope/pkg`),
+  and code fragments containing `()=;{}` — reducing false-positive file-path
+  detection during subagent result rendering.
 
-## [0.7.1] - 2026-06-27
+### Changed
+
+- **`safeJsonClone` rewrite.** Previously returned the original value on
+  `JSON.stringify` failure, which could poison the parent config write with
+  non-serializable fields (functions, symbols, BigInt). Now strips non-serializable
+  fields and returns a clean JSON-safe object, logging a diagnostic warning.
+- **`parentConfig` serialization retry.** If `JSON.stringify(parentConfig)` fails on
+  the first attempt, it retries after stripping `modelCompat` (which may contain
+  non-serializable runtime-callable values) rather than silently falling back.
+  Detailed error info is logged on both attempts.
+- **Footer layout: always show left working indicator.** On narrow terminals, the
+  left indicator (model name) is always shown. Token counts are hidden below 100
+  columns (was 80) so the cost display is never cut off.
+- **Dist skills pruned.** Removed 32 stale/unused skill files from `dist/askr/skills/`
+  (dispatching-parallel-agents, executing-plans, finishing-a-development-branch,
+  frontend-design, receiving/requesting-code-review, subagent-driven-development,
+  test-driven-development, using-git-worktrees, verification-before-completion,
+  writing-plans, writing-skills, systematic-debugging collateral). Net -2830 lines.
+- **`bundle-askr.sh` copies bin/ and .hamr/ from askr.** Previously only `skills/`
+  was copied. Now also bundles `bin/` (launcher scripts like `askr-lavish.js` and
+  `no-mistakes.js`) and `.hamr/extensions/` (session-start bootstrap extension)
+  from the askr release. Needed for askr v8.2.0 compatibility.
+
+### Fixed
+
+- **Subagent model inheritance for relay/custom providers.** `safeJsonClone` silently
+  returned the original non-serializable value on `JSON.stringify` failure, which
+  poisoned the `parentConfig` write and caused the child to fall back to the default
+  model. The rewritten `safeJsonClone` now strips non-serializable fields instead.
+  Additionally, `apiHeaders` (CF-Access, Authorization) from the parent config were
+  never registered in the child's `ModelRegistry.providerRequestConfigs`, so relay
+  requests from subagents lacked required auth headers. Both are now fixed.
+- **Subagent parent config retain without `modelCompat`.** If the first
+  `JSON.stringify(parentConfig)` attempt fails (e.g. due to a non-serializable field
+  in `modelCompat`), it retries after stripping `modelCompat` rather than silently
+  falling back entirely.
+- **Footer layout truncation.** The footer now always shows the left working indicator
+  (model name) even on narrow terminals. Token counts are hidden below 100 columns
+  (was 80) to prevent the cost display from being cut off.
+
+## [0.8.0] - 2026-06-27
 
 ### Breaking
 

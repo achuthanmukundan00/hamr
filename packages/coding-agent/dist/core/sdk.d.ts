@@ -59,6 +59,8 @@ export interface HamrChildConfig {
     cwd: string;
     /** Remaining subagent tree budget. */
     treeBudgetRemaining: number;
+    /** Recursion depth of subagent. */
+    subagentDepth?: number;
 }
 export interface CreateAgentSessionOptions {
     /** Working directory for project-local discovery. Default: process.cwd() */

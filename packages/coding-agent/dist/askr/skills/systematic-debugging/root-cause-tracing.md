@@ -31,7 +31,8 @@ In tests, use `console.error` so output appears. Include path/cwd/env/timestamp/
 Use `find-polluter.sh`:
 
 ```bash
-./find-polluter.sh '.git' 'src/**/*.test.ts'
+./find-polluter.sh '.git' '*.test.ts'
+./find-polluter.sh '.git' -path '*src/*.test.ts'
 ```
 
 Runs tests one-by-one, stops at first polluter.

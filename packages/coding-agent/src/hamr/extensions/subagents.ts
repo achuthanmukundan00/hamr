@@ -167,6 +167,8 @@ interface WorkerState {
 	nestedWorkers?: LiveWorkerView[];
 	/** Header text for nested subagent swarm (e.g. "parallel 2/5 · 3 active"). */
 	nestedHeader?: string;
+	/** Track last message length for streaming preview delta computation */
+	lastMessageLength?: number;
 }
 
 // ─── Live worker view (for TUI card + widget) ───────────────────────────────
@@ -240,9 +242,20 @@ function formatTokens(tokens: number): string {
 /** Deep-clone a value via JSON round-trip. Returns the original on failure (BigInt, circular refs). */
 function safeJsonClone<T>(value: T): T {
 	try {
-		return JSON.parse(JSON.stringify(value));
+		return JSON.parse(JSON.stringify(value)) as T;
 	} catch {
-		return value;
+		// JSON.stringify failed — strip non-serializable fields rather than
+		// returning the original (which would poison the parent config write).
+		const result: Record<string, unknown> = {};
+		for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+			try {
+				JSON.stringify(val);
+				result[key] = val;
+			} catch {
+				// Skip non-serializable fields (functions, symbols, etc.)
+			}
+		}
+		return result as T;
 	}
 }
 
@@ -743,6 +756,15 @@ function looksLikeFilePath(s: string): boolean {
 	if (/^v?\d+\.\d+\.\d+/.test(s)) return false;
 	if (!/\.[a-zA-Z0-9]{1,10}$/.test(s)) return false;
 	if (/^\d+\.\d+\.\d+$/.test(s)) return false;
+	// Ignore common programming properties, imports and keywords
+	if (
+		/^(?:console|this|process|ctx|args|options|state|user|data|err|error|res|req|window|document|db|fs|path)\.[a-zA-Z]/i.test(
+			s,
+		)
+	)
+		return false;
+	if (/[()=;{}]/.test(s)) return false;
+	if (s.startsWith("node:") || s.startsWith("@")) return false;
 	return true;
 }
 
@@ -906,13 +928,83 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	}
 
 	// Node.js: use the current script if it exists and is a .js file
-	if (currentScript && !currentScript.startsWith("/$bunfs") && scriptExt === ".js") {
-		if (fs.existsSync(currentScript)) {
-			return { command: process.execPath, args: [currentScript, ...args] };
+	if (currentScript && !currentScript.startsWith("/$bunfs")) {
+		if (scriptExt === ".js" || scriptExt === ".cjs" || scriptExt === ".mjs") {
+			if (fs.existsSync(currentScript)) {
+				return { command: process.execPath, args: [currentScript, ...args] };
+			}
+		} else if (fs.existsSync(currentScript)) {
+			// Read the first line to check shebang
+			try {
+				const fd = fs.openSync(currentScript, "r");
+				const buf = Buffer.alloc(100);
+				const bytesRead = fs.readSync(fd, buf, 0, 100, 0);
+				fs.closeSync(fd);
+				const firstLine = buf.toString("utf8", 0, bytesRead).split("\n")[0];
+				if (firstLine.startsWith("#!")) {
+					if (firstLine.includes("node")) {
+						// JS script with node shebang, run with Node
+						return { command: process.execPath, args: [currentScript, ...args] };
+					} else {
+						// Shell script wrapper, run directly
+						return { command: currentScript, args };
+					}
+				}
+			} catch {
+				// Fallback to running directly if read failed but file exists (might be binary)
+				return { command: currentScript, args };
+			}
 		}
 	}
 
 	return { command: "hamr", args };
+}
+
+/**
+ * Build the `--model` spec for a worker.
+ *
+ * Explicit per-task overrides pass through verbatim. The inherited parent
+ * model is provider-qualified ("provider/id") — a bare id is ambiguous in the
+ * child's registry (e.g. "gpt-5.5" exists under azure-openai-responses,
+ * openai, and openai-codex) and the CLI resolver picks the first exact-id
+ * match regardless of configured auth, so an unqualified id can select an
+ * unauthenticated provider and kill the worker at its first request.
+ */
+function resolveWorkerModelSpec(
+	workerModel: string | undefined,
+	parentModel: { provider: string; id: string } | undefined,
+): string | undefined {
+	if (workerModel) return workerModel;
+	if (!parentModel) return undefined;
+	if (parentModel.id.toLowerCase().startsWith(`${parentModel.provider.toLowerCase()}/`)) return parentModel.id;
+	return `${parentModel.provider}/${parentModel.id}`;
+}
+
+/**
+ * Build the child CLI args for a worker.
+ *
+ * `--model` is passed only when the task carries an explicit override, or as
+ * a provider-qualified fallback when the parent-config snapshot could not be
+ * written. When the snapshot is present and no override exists, the model is
+ * deliberately omitted so the child clones the parent's model from
+ * HAMR_CHILD_CONFIG instead of re-resolving it against its own registry.
+ */
+function buildWorkerCliArgs(options: {
+	task: string;
+	workerModel?: string;
+	inheritedModelSpec?: string;
+	hasChildConfig: boolean;
+	workerTools?: string[];
+}): string[] {
+	const args: string[] = ["--mode", "json", "-p", "--no-session"];
+	if (options.workerModel) {
+		args.push("--model", options.workerModel);
+	} else if (!options.hasChildConfig && options.inheritedModelSpec) {
+		args.push("--model", options.inheritedModelSpec);
+	}
+	if (options.workerTools && options.workerTools.length > 0) args.push("--tools", options.workerTools.join(","));
+	args.push(options.task);
+	return args;
 }
 
 async function runWorkerChildProcess(
@@ -924,12 +1016,9 @@ async function runWorkerChildProcess(
 	workerModel?: string,
 	workerTools?: string[],
 	parentConfig?: HamrChildConfig,
+	subagentDepth = 0,
+	inheritedModelSpec?: string,
 ): Promise<WorkerOutcome> {
-	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (workerModel) args.push("--model", workerModel);
-	if (workerTools && workerTools.length > 0) args.push("--tools", workerTools.join(","));
-	args.push(task);
-
 	// ─── Serialize parent config for child process ────────────────────────
 	// Written with 0o600 (then chmod'd, since `mode` is masked by umask) because it
 	// carries the provider API key and CF-Access credentials. Registered for
@@ -941,11 +1030,40 @@ async function runWorkerChildProcess(
 			fs.writeFileSync(childConfigPath, JSON.stringify(parentConfig), { encoding: "utf-8", mode: 0o600 });
 			fs.chmodSync(childConfigPath, 0o600);
 			registerOrphanedConfigForCleanup(childConfigPath);
-		} catch {
-			// If we can't write the config, the child falls back to normal startup.
-			childConfigPath = undefined;
+		} catch (firstErr) {
+			// JSON.stringify can fail if a nested field is non-serializable.
+			// Retry without modelCompat rather than silently falling back.
+			try {
+				const { modelCompat: _omitted, ...safeConfig } = parentConfig;
+				fs.writeFileSync(childConfigPath, JSON.stringify(safeConfig), { encoding: "utf-8", mode: 0o600 });
+				fs.chmodSync(childConfigPath, 0o600);
+				registerOrphanedConfigForCleanup(childConfigPath);
+				console.error(
+					"[subagents] WARN parentConfig serialization failed on first attempt; retried without modelCompat. Model:",
+					parentConfig.modelName,
+				);
+			} catch (secondErr) {
+				// If we can't write the config, the child falls back to normal startup.
+				console.error(
+					"[subagents] ERROR parentConfig serialization failed entirely. Model:",
+					parentConfig.modelName,
+					"First:",
+					String(firstErr),
+					"Second:",
+					String(secondErr),
+				);
+				childConfigPath = undefined;
+			}
 		}
 	}
+
+	const args = buildWorkerCliArgs({
+		task,
+		workerModel,
+		inheritedModelSpec,
+		hasChildConfig: childConfigPath !== undefined,
+		workerTools,
+	});
 
 	let wasAborted = false;
 	let stderr = "";
@@ -962,7 +1080,11 @@ async function runWorkerChildProcess(
 				Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
 			),
 			[ENV_TREE_REMAINING]: String(treeBudgetRemaining),
+			HAMR_SUBAGENT_DEPTH: String(subagentDepth),
 		};
+		if (parentConfig) {
+			parentConfig.subagentDepth = subagentDepth;
+		}
 		if (childConfigPath) {
 			childEnv[ENV_CHILD_CONFIG] = childConfigPath;
 		}
@@ -1073,37 +1195,20 @@ async function runWorkerChildProcess(
 		}
 	});
 
-	if (wasAborted) {
-		return {
-			status: "aborted",
-			workerId,
-			task,
-			reason: "user",
-		};
-	}
-
-	if (exitCode !== 0 || stderr) {
-		return {
-			status: "failed",
-			workerId,
-			task,
-			error: stderr || `exit code ${exitCode}`,
-			text: outputText,
-		};
-	}
-
-	// Success — build the done outcome
-	const outcome: WorkerOutcome = {
-		status: "done",
-		workerId,
-		task,
-		text: outputText,
+	// Use buildWorkerOutcomeFromChildSummary to unify result classification.
+	// This ensures that benign stderr warnings (like deprecation warnings) do not fail the run
+	// if the worker successfully produced output.
+	return buildWorkerOutcomeFromChildSummary(workerId, task, {
+		exitCode,
+		wasAborted,
+		stderr,
+		outputText,
 		usage,
-	};
-	if (model) outcome.model = model;
-	if (estimatedUsage !== undefined) outcome.estimatedUsage = estimatedUsage;
-	if (stopReason) outcome.stopReason = stopReason;
-	return outcome;
+		estimatedUsage,
+		stopReason,
+		stdoutParseErrors: 0,
+		invalidStdout: "",
+	});
 }
 
 // ─── Concurrency limiter ─────────────────────────────────────────────────────
@@ -1149,6 +1254,7 @@ function createWorkerState(workerId: string, task: string, cwd: string, logPath:
 		outputTail: "",
 		logPath,
 		toolCallHistory: [],
+		lastMessageLength: 0,
 	};
 }
 
@@ -1173,21 +1279,64 @@ function pushEvent(ws: WorkerState, event: Record<string, unknown>): void {
 		ws.lastTool = (event as { toolName?: string }).toolName ?? type;
 	}
 
-	// Update output tail from streamed text (avoid O(n²) concat: build then slice).
-	if (type === "message_update" || type === "message_end") {
+	// Tool call loop detection
+	if (type === "tool_execution_start") {
+		const toolName = (event.toolName as string) || "";
+		const argsStr = event.args ? JSON.stringify(event.args) : "";
+		const callKey = `${toolName}:${argsStr}`;
+
+		ws.toolCallHistory.push(callKey);
+		if (ws.toolCallHistory.length > 10) {
+			ws.toolCallHistory.shift();
+		}
+
+		let isLoop = false;
+		// 1. Repeating last tool call
+		if (ws.toolCallHistory.length >= 3) {
+			const last = ws.toolCallHistory[ws.toolCallHistory.length - 1];
+			if (ws.toolCallHistory.slice(-3).every((call) => call === last)) {
+				isLoop = true;
+			}
+		}
+		// 2. Repeating pattern (e.g. A, B, A, B, A, B)
+		if (!isLoop && ws.toolCallHistory.length >= 6) {
+			const h = ws.toolCallHistory;
+			const len = h.length;
+			if (
+				h[len - 1] === h[len - 3] &&
+				h[len - 3] === h[len - 5] &&
+				h[len - 2] === h[len - 4] &&
+				h[len - 4] === h[len - 6]
+			) {
+				isLoop = true;
+			}
+		}
+		if (isLoop) {
+			ws.looping = true;
+		}
+	}
+
+	// Update output tail from streamed text using delta-tracking.
+	if (type === "message_update") {
 		const msg = event.message as { content?: Array<{ type: string; text?: string }> } | undefined;
 		if (msg?.content) {
 			let text = "";
 			for (const part of msg.content) {
 				if (part.type === "text" && part.text) text += part.text;
 			}
-			if (text) {
+			const prevLen = ws.lastMessageLength ?? 0;
+			if (text.length > prevLen) {
+				const delta = text.slice(prevLen);
 				ws.outputTail =
-					ws.outputTail.length + text.length > OUTPUT_TAIL_BYTES
-						? (ws.outputTail + text).slice(-OUTPUT_TAIL_BYTES)
-						: ws.outputTail + text;
+					ws.outputTail.length + delta.length > OUTPUT_TAIL_BYTES
+						? (ws.outputTail + delta).slice(-OUTPUT_TAIL_BYTES)
+						: ws.outputTail + delta;
+				ws.lastMessageLength = text.length;
 			}
 		}
+	} else if (type === "message_end") {
+		// Reset tracking length at end of assistant turn
+		ws.lastMessageLength = 0;
 	}
 
 	// Incremental disk flush: store full event JSON for forensic replay.
@@ -1292,12 +1441,13 @@ async function executeSingleWorker(
 	workerTools?: string[],
 	stepTimeoutMs?: number,
 	workerArtifact?: string,
+	subagentDepth = 0,
 ): Promise<WorkerOutcome> {
 	const logPath = path.join(run.logDir, "workers", `${workerId}.events.ndjson`);
 	const resultPath = path.join(run.logDir, "workers", `${workerId}.final.md`);
 
 	// ─── Resolve worker model: explicit override → parent model (no fallback to child defaults) ──
-	const resolvedWorkerModel = workerModel ?? ctx.model?.id;
+	const resolvedWorkerModel = resolveWorkerModelSpec(workerModel, ctx.model);
 
 	let ws = run.workers.get(workerId) ?? createWorkerState(workerId, task, cwd, logPath);
 	ws.model = resolvedWorkerModel ?? ws.model;
@@ -1369,9 +1519,11 @@ async function executeSingleWorker(
 				ws = run.workers.get(workerId) ?? ws;
 				pushEvent(ws, event);
 			},
-			resolvedWorkerModel,
+			workerModel,
 			workerTools,
 			parentConfig,
+			subagentDepth,
+			resolveWorkerModelSpec(undefined, ctx.model),
 		);
 
 		ws = run.workers.get(workerId) ?? ws;
@@ -1407,8 +1559,13 @@ async function executeSingleWorker(
 			ws.errorMessage = result.error;
 			ws.finalOutput = result.text.slice(0, OUTPUT_TAIL_BYTES);
 			ws.resultPath = resultPath;
+			// Persist the failure to the run artifacts: without this, a worker
+			// that dies before producing output leaves an empty final.md and an
+			// events log with no error record, making the run undiagnosable from disk.
+			pushEvent(ws, { type: "worker_failed", error: result.error, model: ws.model });
+			const failureBody = result.text.trim().length > 0 ? result.text.slice(0, OUTPUT_TAIL_BYTES) : result.error;
 			try {
-				fs.writeFileSync(resultPath, result.text.slice(0, OUTPUT_TAIL_BYTES), { encoding: "utf-8", mode: 0o600 });
+				fs.writeFileSync(resultPath, failureBody, { encoding: "utf-8", mode: 0o600 });
 			} catch {
 				/* best-effort */
 			}
@@ -1563,6 +1720,7 @@ async function executeTasks(
 	onUpdate: ((update: { text: string; details: Record<string, unknown> }) => void) | undefined,
 	ctx: ExtensionContext,
 	stepTimeoutMs?: number,
+	subagentDepth = 0,
 ): Promise<WorkerOutcome[]> {
 	// Initialize all workers as queued — O(1) counter init
 	const N = taskItems.length;
@@ -1605,6 +1763,7 @@ async function executeTasks(
 				(item as any).tools,
 				stepTimeoutMs,
 				(item as any).artifact,
+				subagentDepth,
 			);
 		},
 		(done) => {
@@ -1643,6 +1802,7 @@ async function executeChain(
 	onUpdate: ((update: { text: string; details: Record<string, unknown> }) => void) | undefined,
 	ctx: ExtensionContext,
 	stepTimeoutMs?: number,
+	subagentDepth = 0,
 ): Promise<WorkerOutcome[]> {
 	const N = chainItems.length;
 	for (let i = 0; i < N; i++) {
@@ -1708,6 +1868,7 @@ async function executeChain(
 				(item as any).tools,
 				stepTimeoutMs,
 				(item as any).artifact,
+				subagentDepth,
 			);
 		} finally {
 			// Always clean up the tool signal listener for this step.
@@ -1780,6 +1941,7 @@ async function executeStages(
 	onUpdate: ((update: { text: string; details: Record<string, unknown> }) => void) | undefined,
 	ctx: ExtensionContext,
 	stepTimeoutMs?: number,
+	subagentDepth = 0,
 ): Promise<WorkerOutcome[]> {
 	// O(1) counter init: all workers start queued
 	let globalIdx = 0;
@@ -1823,6 +1985,7 @@ async function executeStages(
 				undefined,
 				ctx,
 				stepTimeoutMs,
+				subagentDepth,
 			);
 			allResults.push(...stageResults);
 
@@ -1865,6 +2028,7 @@ async function executeStages(
 					(item as any).tools,
 					stepTimeoutMs,
 					(item as any).artifact,
+					subagentDepth,
 				);
 				allResults.push(result);
 
@@ -2010,7 +2174,7 @@ function modeDescription(): string {
 	].join("\n");
 }
 
-function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
+function registerSubagentTool(pi: Parameters<ExtensionFactory>[0], depth: number): void {
 	pi.registerTool(
 		defineTool({
 			name: "delegate_subagents",
@@ -2508,18 +2672,48 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 								totalAbortController.signal,
 								onUpdateWrapper,
 								ctx,
+								stepTimeoutMs,
+								depth + 1,
 							);
 						}
 						if (hasTasks) {
 							const tasks = params.tasks as Array<{ task: string; cwd?: string }>;
-							return executeTasks(run, tasks, concurrency, failFast, totalAbortController.signal, onUpdateWrapper, ctx);
+							return executeTasks(
+								run,
+								tasks,
+								concurrency,
+								failFast,
+								totalAbortController.signal,
+								onUpdateWrapper,
+								ctx,
+								stepTimeoutMs,
+								depth + 1,
+							);
 						}
 						if (hasChain) {
 							const chain = params.chain as Array<{ task: string; cwd?: string }>;
-							return executeChain(run, chain, failFast, totalAbortController.signal, onUpdateWrapper, ctx);
+							return executeChain(
+								run,
+								chain,
+								failFast,
+								totalAbortController.signal,
+								onUpdateWrapper,
+								ctx,
+								stepTimeoutMs,
+								depth + 1,
+							);
 						}
 						const subtasks = params.subtasks as Array<{ task: string; cwd?: string }>;
-						return executeChain(run, subtasks, failFast, totalAbortController.signal, onUpdateWrapper, ctx);
+						return executeChain(
+							run,
+							subtasks,
+							failFast,
+							totalAbortController.signal,
+							onUpdateWrapper,
+							ctx,
+							stepTimeoutMs,
+							depth + 1,
+						);
 					})();
 
 					// When the swarm settles, inject results via pi.sendMessage().
@@ -2663,6 +2857,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 							onUpdateWrapper,
 							ctx,
 							stepTimeoutMs,
+							depth + 1,
 						);
 					} else if (hasTasks) {
 						const tasks = params.tasks as Array<{ task: string; cwd?: string }>;
@@ -2675,6 +2870,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 							onUpdateWrapper,
 							ctx,
 							stepTimeoutMs,
+							depth + 1,
 						);
 					} else if (hasChain) {
 						const chain = params.chain as Array<{ task: string; cwd?: string }>;
@@ -2686,6 +2882,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 							onUpdateWrapper,
 							ctx,
 							stepTimeoutMs,
+							depth + 1,
 						);
 					} else {
 						// Legacy subtasks — run as chain
@@ -2698,6 +2895,7 @@ function registerSubagentTool(pi: Parameters<ExtensionFactory>[0]): void {
 							onUpdateWrapper,
 							ctx,
 							stepTimeoutMs,
+							depth + 1,
 						);
 					}
 				} catch (err) {
@@ -2838,9 +3036,12 @@ export function createHamrSubagentsExtension(
 	_getChildExtensions: () => ExtensionFactory[],
 	depth = 0,
 ): ExtensionFactory {
+	const envDepth = process.env.HAMR_SUBAGENT_DEPTH;
+	const effectiveDepth = envDepth !== undefined ? Number.parseInt(envDepth, 10) : depth;
+
 	const factory: ExtensionFactory = async (pi) => {
 		// Leaf: no delegate tool, so recursion stops here.
-		if (depth >= MAX_DEPTH) return;
+		if (effectiveDepth >= MAX_DEPTH) return;
 
 		// Restore completed runs on session resume; clear on new/switch/fork.
 		// session_before_switch fires on the OLD session's runtime (which is then
@@ -2861,7 +3062,7 @@ export function createHamrSubagentsExtension(
 			activeRuns.clear();
 			updateStatusWidget(ctx);
 		});
-		registerSubagentTool(pi);
+		registerSubagentTool(pi, effectiveDepth);
 	};
 	(factory as { [HAMR_SUBAGENTS_FACTORY]?: boolean })[HAMR_SUBAGENTS_FACTORY] = true;
 	return factory;
@@ -3029,6 +3230,8 @@ function buildWorkerOutcomeFromChildSummary(
 // full child hamr processes.
 export const _testExports = {
 	pushEvent,
+	resolveWorkerModelSpec,
+	buildWorkerCliArgs,
 	validateWorkerOutput,
 	createWorkerState,
 	createWorkerProcessEventState,

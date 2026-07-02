@@ -68,6 +68,27 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "anthropic.claude-fable-5": {
+            id: string;
+            name: string;
+            api: "bedrock-converse-stream";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            thinkingLevelMap: {
+                off: null;
+                xhigh: string;
+            };
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "anthropic.claude-haiku-4-5-20251001-v1:0": {
             id: string;
             name: string;
@@ -213,6 +234,23 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "anthropic.claude-sonnet-5": {
+            id: string;
+            name: string;
+            api: "bedrock-converse-stream";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "au.anthropic.claude-haiku-4-5-20251001-v1:0": {
             id: string;
             name: string;
@@ -288,6 +326,23 @@ export declare const MODELS: {
             maxTokens: number;
         };
         readonly "au.anthropic.claude-sonnet-4-6": {
+            id: string;
+            name: string;
+            api: "bedrock-converse-stream";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "au.anthropic.claude-sonnet-5": {
             id: string;
             name: string;
             api: "bedrock-converse-stream";
@@ -504,6 +559,23 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "eu.anthropic.claude-sonnet-5": {
+            id: string;
+            name: string;
+            api: "bedrock-converse-stream";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "global.anthropic.claude-fable-5": {
             id: string;
             name: string;
@@ -653,6 +725,23 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "global.anthropic.claude-sonnet-5": {
+            id: string;
+            name: string;
+            api: "bedrock-converse-stream";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "google.gemma-3-27b-it": {
             id: string;
             name: string;
@@ -745,6 +834,23 @@ export declare const MODELS: {
             maxTokens: number;
         };
         readonly "jp.anthropic.claude-sonnet-4-6": {
+            id: string;
+            name: string;
+            api: "bedrock-converse-stream";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "jp.anthropic.claude-sonnet-5": {
             id: string;
             name: string;
             api: "bedrock-converse-stream";
@@ -1579,6 +1685,23 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "us.anthropic.claude-sonnet-5": {
+            id: string;
+            name: string;
+            api: "bedrock-converse-stream";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "us.deepseek.r1-v1:0": {
             id: string;
             name: string;
@@ -1655,6 +1778,23 @@ export declare const MODELS: {
             baseUrl: string;
             reasoning: true;
             input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "xai.grok-4.3": {
+            id: string;
+            name: string;
+            api: "bedrock-converse-stream";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
             cost: {
                 input: number;
                 output: number;
@@ -2210,6 +2350,23 @@ export declare const MODELS: {
             compat: {
                 forceAdaptiveThinking: true;
             };
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "claude-sonnet-5": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
             reasoning: true;
             input: ("image" | "text")[];
             cost: {
@@ -3026,6 +3183,23 @@ export declare const MODELS: {
         };
     };
     readonly cerebras: {
+        readonly "gemma-4-31b": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "gpt-oss-120b": {
             id: string;
             name: string;
@@ -3370,6 +3544,23 @@ export declare const MODELS: {
             compat: {
                 forceAdaptiveThinking: true;
             };
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "claude-sonnet-5": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
             reasoning: true;
             input: ("image" | "text")[];
             cost: {
@@ -4701,6 +4892,34 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "claude-sonnet-5": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            headers: {
+                "User-Agent": string;
+                "Editor-Version": string;
+                "Editor-Plugin-Version": string;
+                "Copilot-Integration-Id": string;
+            };
+            compat: {
+                supportsStore: false;
+                supportsDeveloperRole: false;
+                supportsReasoningEffort: false;
+            };
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "gemini-2.5-pro": {
             id: string;
             name: string;
@@ -5055,6 +5274,62 @@ export declare const MODELS: {
                 xhigh: string;
             };
             input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "kimi-k2.7-code": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            headers: {
+                "User-Agent": string;
+                "Editor-Version": string;
+                "Editor-Plugin-Version": string;
+                "Copilot-Integration-Id": string;
+            };
+            compat: {
+                supportsStore: false;
+                supportsDeveloperRole: false;
+                supportsReasoningEffort: false;
+            };
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "mai-code-1-flash-picker": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            headers: {
+                "User-Agent": string;
+                "Editor-Version": string;
+                "Editor-Plugin-Version": string;
+                "Copilot-Integration-Id": string;
+            };
+            compat: {
+                supportsStore: false;
+                supportsDeveloperRole: false;
+                supportsReasoningEffort: false;
+            };
+            reasoning: true;
+            input: "text"[];
             cost: {
                 input: number;
                 output: number;
@@ -6432,6 +6707,26 @@ export declare const MODELS: {
             };
             reasoning: true;
             input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "openai/gpt-oss-120b": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            compat: {
+                supportsDeveloperRole: false;
+            };
+            reasoning: true;
+            input: "text"[];
             cost: {
                 input: number;
                 output: number;
@@ -7949,6 +8244,34 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "minimaxai/minimax-m3": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            headers: {
+                "NVCF-POLL-SECONDS": string;
+            };
+            compat: {
+                supportsStore: false;
+                supportsDeveloperRole: false;
+                supportsReasoningEffort: false;
+                maxTokensField: "max_tokens";
+                supportsStrictMode: false;
+                supportsLongCacheRetention: false;
+            };
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "mistralai/mistral-large-3-675b-instruct-2512": {
             id: string;
             name: string;
@@ -8304,34 +8627,6 @@ export declare const MODELS: {
             };
             reasoning: true;
             input: ("image" | "text")[];
-            cost: {
-                input: number;
-                output: number;
-                cacheRead: number;
-                cacheWrite: number;
-            };
-            contextWindow: number;
-            maxTokens: number;
-        };
-        readonly "z-ai/glm-5.1": {
-            id: string;
-            name: string;
-            api: "openai-completions";
-            provider: string;
-            baseUrl: string;
-            headers: {
-                "NVCF-POLL-SECONDS": string;
-            };
-            compat: {
-                supportsStore: false;
-                supportsDeveloperRole: false;
-                supportsReasoningEffort: false;
-                maxTokensField: "max_tokens";
-                supportsStrictMode: false;
-                supportsLongCacheRetention: false;
-            };
-            reasoning: true;
-            input: "text"[];
             cost: {
                 input: number;
                 output: number;
@@ -9253,6 +9548,30 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "claude-fable-5": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            compat: {
+                forceAdaptiveThinking: true;
+            };
+            reasoning: true;
+            thinkingLevelMap: {
+                off: null;
+                xhigh: string;
+            };
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "claude-haiku-4-5": {
             id: string;
             name: string;
@@ -9418,6 +9737,23 @@ export declare const MODELS: {
             compat: {
                 forceAdaptiveThinking: true;
             };
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "claude-sonnet-5": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
             reasoning: true;
             input: ("image" | "text")[];
             cost: {
@@ -10041,6 +10377,26 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "kimi-k2.7-code": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            compat: {
+                maxTokensField: "max_tokens";
+            };
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "mimo-v2.5-free": {
             id: string;
             name: string;
@@ -10093,6 +10449,26 @@ export declare const MODELS: {
             };
             reasoning: true;
             input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "minimax-m3": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            compat: {
+                maxTokensField: "max_tokens";
+            };
+            reasoning: true;
+            input: ("image" | "text")[];
             cost: {
                 input: number;
                 output: number;
@@ -10682,26 +11058,6 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
-        readonly "anthropic/claude-opus-4.6-fast": {
-            id: string;
-            name: string;
-            api: "openai-completions";
-            provider: string;
-            baseUrl: string;
-            reasoning: true;
-            thinkingLevelMap: {
-                xhigh: string;
-            };
-            input: ("image" | "text")[];
-            cost: {
-                input: number;
-                output: number;
-                cacheRead: number;
-                cacheWrite: number;
-            };
-            contextWindow: number;
-            maxTokens: number;
-        };
         readonly "anthropic/claude-opus-4.7": {
             id: string;
             name: string;
@@ -10817,6 +11173,23 @@ export declare const MODELS: {
             maxTokens: number;
         };
         readonly "anthropic/claude-sonnet-4.6": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "anthropic/claude-sonnet-5": {
             id: string;
             name: string;
             api: "openai-completions";
@@ -13415,23 +13788,6 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
-        readonly "openrouter/owl-alpha": {
-            id: string;
-            name: string;
-            api: "openai-completions";
-            provider: string;
-            baseUrl: string;
-            reasoning: false;
-            input: "text"[];
-            cost: {
-                input: number;
-                output: number;
-                cacheRead: number;
-                cacheWrite: number;
-            };
-            contextWindow: number;
-            maxTokens: number;
-        };
         readonly "poolside/laguna-m.1": {
             id: string;
             name: string;
@@ -13450,6 +13806,40 @@ export declare const MODELS: {
             maxTokens: number;
         };
         readonly "poolside/laguna-m.1:free": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "poolside/laguna-xs-2.1": {
+            id: string;
+            name: string;
+            api: "openai-completions";
+            provider: string;
+            baseUrl: string;
+            reasoning: true;
+            input: "text"[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "poolside/laguna-xs-2.1:free": {
             id: string;
             name: string;
             api: "openai-completions";
@@ -15998,6 +16388,30 @@ export declare const MODELS: {
             contextWindow: number;
             maxTokens: number;
         };
+        readonly "anthropic/claude-fable-5": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
+            compat: {
+                forceAdaptiveThinking: true;
+            };
+            reasoning: true;
+            thinkingLevelMap: {
+                off: null;
+                xhigh: string;
+            };
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
         readonly "anthropic/claude-haiku-4.5": {
             id: string;
             name: string;
@@ -16180,6 +16594,23 @@ export declare const MODELS: {
             compat: {
                 forceAdaptiveThinking: true;
             };
+            reasoning: true;
+            input: ("image" | "text")[];
+            cost: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+            contextWindow: number;
+            maxTokens: number;
+        };
+        readonly "anthropic/claude-sonnet-5": {
+            id: string;
+            name: string;
+            api: "anthropic-messages";
+            provider: string;
+            baseUrl: string;
             reasoning: true;
             input: ("image" | "text")[];
             cost: {

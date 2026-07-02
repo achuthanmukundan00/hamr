@@ -152,7 +152,7 @@ export class FactStore {
 				db.exec(FACT_SCHEMA);
 				this.isAvailable = true;
 				this.insertFactStmt = db.prepare(
-					`INSERT INTO facts (content, tags) VALUES (@content, @tags) ON CONFLICT(content) DO UPDATE SET updated_at = datetime('now')`,
+					`INSERT INTO facts (content, tags) VALUES (@content, @tags) ON CONFLICT(content) DO UPDATE SET tags = excluded.tags, updated_at = datetime('now')`,
 				);
 				this.searchFtsStmt = db.prepare(
 					`SELECT f.fact_id, f.content, f.tags, f.trust_score, f.retrieval_count, f.helpful_count, f.created_at, f.updated_at
@@ -164,7 +164,7 @@ export class FactStore {
 				this.getFactByIdStmt = db.prepare(
 					`SELECT fact_id, content, tags, trust_score, retrieval_count, helpful_count, created_at, updated_at FROM facts WHERE fact_id = @id`,
 				);
-				this.resolveEntityStmt = db.prepare(`SELECT entity_id FROM entities WHERE name LIKE @name`);
+				this.resolveEntityStmt = db.prepare(`SELECT entity_id FROM entities WHERE name = @name COLLATE NOCASE`);
 				this.resolveEntityInsertStmt = db.prepare(`INSERT OR IGNORE INTO entities (name) VALUES (@name)`);
 				this.linkFactEntityStmt = db.prepare(
 					`INSERT OR IGNORE INTO fact_entities (fact_id, entity_id) VALUES (@factId, @entityId)`,
@@ -201,7 +201,13 @@ export class FactStore {
 		try {
 			this.db.exec("BEGIN");
 			const result = this.insertFactStmt.run({ content, tags });
-			const factId = Number(result.lastInsertRowid ?? 0) || null;
+			let factId = Number(result.lastInsertRowid ?? 0) || null;
+			if (!factId || factId <= 0) {
+				const row = this.db.prepare("SELECT fact_id FROM facts WHERE content = @content").get({ content }) as
+					| { fact_id: number }
+					| undefined;
+				factId = row?.fact_id ?? null;
+			}
 			if (factId && factId > 0) {
 				// Purge old entity links on upsert so stale links don't survive re-extraction
 				if (this.deleteFactEntitiesStmt) {
@@ -449,7 +455,7 @@ export class FactStore {
 				 FROM facts f
 				 JOIN fact_entities fe ON f.fact_id = fe.fact_id
 				 JOIN entities e ON fe.entity_id = e.entity_id
-				 WHERE e.name LIKE @entity AND f.trust_score >= @minTrust
+				 WHERE e.name = @entity COLLATE NOCASE AND f.trust_score >= @minTrust
 				 ORDER BY f.trust_score DESC LIMIT @limit`,
 				)
 				.all({ entity, minTrust: 0.0, limit }) as unknown as typeof rows;

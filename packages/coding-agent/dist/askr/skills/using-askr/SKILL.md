@@ -1,45 +1,20 @@
 ---
 name: using-askr
-description: Use when a task could be served by an askr skill, to find and apply the right one. Not for greetings or trivial replies.
+description: Use at session start or after compaction to locate the right agentic skills
 ---
 
-# Using Askr
+# Using AskR
 
-Askr skills are bundled with Hamr. When a skill clearly fits the task, use it before improvising.
+AskR is a compact skill router. Use the matching skill before improvising; do not load skills for trivial chat.
 
-## Core Rule
+| Need | Skill |
+|------|-------|
+| Ambiguous feature, product/UX/TUI design, architecture, visual plan, comparison, artifact review | `collaborative-design` |
+| Multi-step implementation plan, inline execution, subagents, or parallel work | `planning-and-execution` |
+| Feature/bug implementation or any final correctness claim | `test-driven-development-and-verification` |
+| Bug, failing test, flake, or unexpected behavior | `systematic-debugging` |
+| Branch/worktree setup, review handling, merge/PR/cleanup | `git-and-branch-lifecycle` |
+| Agent-facing CLI/tool design or review | `axi` |
+| User asks to gate/ship/validate safely with no-mistakes | `no-mistakes` |
 
-If a bundled skill clearly fits the task, use it before improvising.
-
-## What To Do
-
-1. Read only the context the task actually needs — don't sweep the repo for small or open-ended asks.
-2. Check the bundled skills for a direct match.
-3. Prefer the smallest workflow that still gives a correct result.
-4. Ask one clear question at a time when requirements are unclear.
-5. Keep work verifiable and file-scoped.
-
-## Defaults
-
-- Use `frontend-design` when designing a TUI, web app, or other UI-heavy system.
-- Design before code when the request is ambiguous.
-- Verify before declaring completion.
-- Review diffs before merging.
-
-## Bundled Skills
-
-| Skill | When |
-|-------|------|
-| `frontend-design` | Designing UI/TUI/web apps |
-| `subagent-driven-development` | Executing implementation plans with independent tasks |
-| `writing-plans` | Specs or requirements for multi-step tasks, before touching code |
-| `executing-plans` | Written plan to execute in a separate session |
-| `test-driven-development` | Implementing features or bugfixes |
-| `systematic-debugging` | Any bug, test failure, or unexpected behavior |
-| `requesting-code-review` | Completing tasks, major features, before merging |
-| `receiving-code-review` | Receiving code review feedback |
-| `verification-before-completion` | About to claim work is complete |
-| `dispatching-parallel-agents` | 2+ independent tasks |
-| `finishing-a-development-branch` | Implementation done, deciding how to integrate |
-| `using-git-worktrees` | Feature work needing isolation |
-| `writing-skills` | Creating or editing skills |
+Principle: keep AskR thin; use external AXIs like `lavish-axi` and `no-mistakes` for heavyweight collaboration and validation.
